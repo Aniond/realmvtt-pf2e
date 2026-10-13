@@ -1,0 +1,364 @@
+<script>
+  const wizardAbilities = ["str", "dex", "con", "int", "wis", "cha"];
+
+  function wizardGetAllAbilityOptions() {
+    return wizardAbilities.map((ability) => ({
+      label: getLabelForAbility(ability),
+      value: ability,
+    }));
+  }
+
+  // Fixed boosts, flaws and free boost count from the chosen Ancestry
+  function wizardGetAncestryInfo() {
+    const ancestry = record.data?.ancestries?.[0];
+    const ancestryName = ancestry?.data?.name || record.data?.ancestryName || "";
+    const boosts = Object.values(ancestry?.data?.boosts || {});
+    const flaws = Object.values(ancestry?.data?.flaws || {});
+
+    const fixedBoosts = boosts
+      .filter((boost) => Array.isArray(boost) && boost.length === 1 && boost[0])
+      .map((boost) => boost[0]);
+    const fixedFlaws = flaws
+      .filter((flaw) => Array.isArray(flaw) && flaw.length === 1 && flaw[0])
+      .map((flaw) => flaw[0]);
+    const freeBoostCount = boosts.filter(
+      (boost) => Array.isArray(boost) && boost.length > 1,
+    ).length;
+
+    // Matches the sheet: Humans and Ancestries with 2+ free boosts have no alternate option
+    const canUseAlternate =
+      !ancestryName.toLowerCase().startsWith("human") && freeBoostCount < 2;
+
+    return {
+      ancestryName,
+      fixedBoosts,
+      fixedFlaws,
+      canUseAlternate,
+    };
+  }
+
+  function wizardGetUseAlternate(info, overrideAlternate) {
+    if (!info.canUseAlternate) {
+      return false;
+    }
+    if (overrideAlternate !== undefined) {
+      return overrideAlternate === true || overrideAlternate === "true";
+    }
+    return record.data?.wizard?.alternateBoosts === true;
+  }
+
+  function wizardGetAncestryFreePicks(info, useAlternate) {
+    return useAlternate || !info.canUseAlternate ? 2 : 1;
+  }
+
+  function wizardGetAncestryBoostOptions() {
+    const info = wizardGetAncestryInfo();
+    const useAlternate = wizardGetUseAlternate(info);
+    // Cannot boost the same attribute twice from the Ancestry
+    const excluded = useAlternate ? [] : info.fixedBoosts;
+    return wizardGetAllAbilityOptions().filter(
+      (option) => !excluded.includes(option.value),
+    );
+  }
+
+  function wizardGetBackgroundBoostOptions(index) {
+    const backgroundBoosts =
+      record.data?.backgrounds?.[0]?.data?.boosts?.[`${index}`] || [];
+    if (backgroundBoosts.length === 0) {
+      return wizardGetAllAbilityOptions();
+    }
+    return backgroundBoosts.map((ability) => ({
+      label: getLabelForAbility(ability),
+      value: ability,
+    }));
+  }
+
+  function wizardGetKeyAbilityOptions() {
+    const results = [];
+    const classes = record.data?.classes || [];
+    for (const classObj of classes) {
+      for (const ability of classObj.data?.keyAbility || []) {
+        results.push(ability);
+      }
+      for (const feature of classObj.data?.features || []) {
+        for (const ability of feature.data?.keyOptions || []) {
+          results.push(ability);
+        }
+      }
+    }
+
+    const unique = [...new Set(results)].filter((ability) =>
+      wizardAbilities.includes(ability),
+    );
+    if (unique.length === 0) {
+      return wizardGetAllAbilityOptions();
+    }
+    return unique.map((ability) => ({
+      label: getLabelForAbility(ability),
+      value: ability,
+    }));
+  }
+
+  function wizardGetChosenBoosts(overrides) {
+    const wizard = { ...(record.data?.wizard || {}), ...(overrides || {}) };
+    let freeBoosts = wizard.freeBoosts || [];
+    if (!Array.isArray(freeBoosts)) {
+      freeBoosts = [freeBoosts];
+    }
+    return {
+      ancestryBoost1: wizard.ancestryBoost1 || "",
+      ancestryBoost2: wizard.ancestryBoost2 || "",
+      backgroundBoost1: wizard.backgroundBoost1 || "",
+      backgroundBoost2: wizard.backgroundBoost2 || "",
+      keyAbility: wizard.keyAbility || "",
+      freeBoosts: freeBoosts.filter((ability) => ability),
+      alternateBoosts: wizard.alternateBoosts,
+    };
+  }
+
+  function wizardGetBoostErrors(info, chosen, useAlternate) {
+    const errors = [];
+    const ancestryPicks = wizardGetAncestryFreePicks(info, useAlternate);
+    const ancestryChosen = [chosen.ancestryBoost1];
+    if (ancestryPicks === 2) {
+      ancestryChosen.push(chosen.ancestryBoost2);
+    }
+
+    if (ancestryChosen.some((ability) => !ability)) {
+      errors.push(`Choose ${ancestryPicks} Ancestry boost(s).`);
+    } else {
+      const ancestryAll = useAlternate
+        ? ancestryChosen
+        : [...info.fixedBoosts, ...ancestryChosen];
+      if (new Set(ancestryAll).size !== ancestryAll.length) {
+        errors.push("Ancestry boosts must be different attributes.");
+      }
+    }
+
+    if (!chosen.backgroundBoost1 || !chosen.backgroundBoost2) {
+      errors.push("Choose 2 Background boosts.");
+    } else if (chosen.backgroundBoost1 === chosen.backgroundBoost2) {
+      errors.push("Background boosts must be different attributes.");
+    }
+
+    if (!chosen.keyAbility) {
+      errors.push("Choose a Key Attribute.");
+    }
+
+    if (new Set(chosen.freeBoosts).size !== 4) {
+      errors.push("Choose 4 different Free boosts.");
+    }
+
+    return errors;
+  }
+
+  // Preview of final modifiers, using the same math as calculateAbilityBoosts
+  function wizardGetModifierSummary(info, chosen, useAlternate) {
+    const counts = { str: 0, dex: 0, con: 0, int: 0, wis: 0, cha: 0 };
+    const add = (ability, amount) => {
+      if (ability && counts.hasOwnProperty(ability)) {
+        counts[ability] += amount;
+      }
+    };
+
+    if (!useAlternate) {
+      info.fixedBoosts.forEach((ability) => add(ability, 1));
+      info.fixedFlaws.forEach((ability) => add(ability, -1));
+    }
+    add(chosen.ancestryBoost1, 1);
+    if (wizardGetAncestryFreePicks(info, useAlternate) === 2) {
+      add(chosen.ancestryBoost2, 1);
+    }
+    add(chosen.backgroundBoost1, 1);
+    add(chosen.backgroundBoost2, 1);
+    add(chosen.keyAbility, 1);
+    chosen.freeBoosts.forEach((ability) => add(ability, 1));
+
+    return wizardAbilities
+      .map((ability) => {
+        const modifier = counts[ability];
+        const sign = modifier >= 0 ? "+" : "";
+        return `${ability.toUpperCase()} ${sign}${modifier}`;
+      })
+      .join("   ");
+  }
+
+  function wizardRefreshBoostStep(overrides, overrideAlternate) {
+    const info = wizardGetAncestryInfo();
+    const useAlternate = wizardGetUseAlternate(info, overrideAlternate);
+    const chosen = wizardGetChosenBoosts(overrides);
+    const errors = wizardGetBoostErrors(info, chosen, useAlternate);
+
+    let ancestryInfo = info.ancestryName
+      ? `Ancestry: ${info.ancestryName}`
+      : "No Ancestry selected. All attributes are available.";
+    if (info.ancestryName && !useAlternate) {
+      const boosts = info.fixedBoosts.map(getLabelForAbility).join(", ");
+      const flaws = info.fixedFlaws.map(getLabelForAbility).join(", ");
+      if (boosts) {
+        ancestryInfo += `   |   Boosts: ${boosts}`;
+      }
+      if (flaws) {
+        ancestryInfo += `   |   Flaws: ${flaws}`;
+      }
+    }
+
+    const valuesToSet = {
+      "data.wizard.ancestryInfo": ancestryInfo,
+      "data.wizard.modifierSummary": wizardGetModifierSummary(
+        info,
+        chosen,
+        useAlternate,
+      ),
+      "data.wizard.boostError": errors.join(" "),
+      "fields.boostError.hidden": errors.length === 0,
+      "fields.alternateBoosts.hidden": !info.canUseAlternate,
+      "fields.ancestryBoost2.hidden":
+        wizardGetAncestryFreePicks(info, useAlternate) !== 2,
+    };
+
+    // Preselect the Key Attribute when the Class only allows one
+    if (!chosen.keyAbility) {
+      const keyOptions = wizardGetKeyAbilityOptions();
+      if (keyOptions.length === 1) {
+        valuesToSet["data.wizard.keyAbility"] = keyOptions[0].value;
+      }
+    }
+
+    api.setValues(valuesToSet);
+  }
+
+  function wizardOnBoostStepLoad() {
+    wizardRefreshBoostStep();
+  }
+
+  function wizardOnBoostChange(value, field) {
+    wizardRefreshBoostStep({ [field]: value });
+  }
+
+  function wizardOnAlternateBoostsChange(value) {
+    wizardRefreshBoostStep({ alternateBoosts: value }, value);
+  }
+
+  function onStepEnd() {
+    const info = wizardGetAncestryInfo();
+    const useAlternate = wizardGetUseAlternate(info);
+    const chosen = wizardGetChosenBoosts();
+    const usesSecondAncestryBoost = wizardGetAncestryFreePicks(info, useAlternate) === 2;
+
+    const valuesToSet = {
+      "data.alternateAncestryBoosts": useAlternate,
+      "data.ancestryBoost1": chosen.ancestryBoost1,
+      "data.ancestryBoost2": usesSecondAncestryBoost ? chosen.ancestryBoost2 : "",
+      "data.backgroundBoost1": chosen.backgroundBoost1,
+      "data.backgroundBoost2": chosen.backgroundBoost2,
+      "data.freeBoosts": chosen.freeBoosts,
+      "fields.alternateAncestryBoosts.hidden": !info.canUseAlternate,
+      "fields.ancestryBoost2.hidden": !usesSecondAncestryBoost,
+    };
+    if (chosen.keyAbility) {
+      valuesToSet["data.keyAbility"] = chosen.keyAbility;
+    }
+
+    api.setValues(valuesToSet, (updatedRecord) => {
+      // Recalculate attributes, saves, DCs and HP from the new boosts
+      onAddEditFeature(updatedRecord, undefined, true);
+    });
+  }
+</script>
+
+<p>
+  Finish your Attribute Modifiers. Every attribute starts at +0. Your Ancestry,
+  Background, and Class each grant boosts (+1), your Ancestry may impose a flaw
+  (-1), and you finish with four free boosts to four different attributes.
+  <br /><br />
+  A single source can only boost a given attribute once. No attribute can start
+  higher than +4.
+</p>
+
+<div style="display: flex; flex-direction: column; gap: 8px">
+  <stringfield
+    field="ancestryInfo"
+    width="100%"
+    variant="unstyled"
+    onload="wizardOnBoostStepLoad()"
+  ></stringfield>
+
+  <checkbox
+    field="alternateBoosts"
+    label="Use Alternate Ancestry Boosts (two free boosts, no flaw)"
+    size="xs"
+    hidden="true"
+    color="primary"
+    onchange="wizardOnAlternateBoostsChange(value)"
+  ></checkbox>
+
+  <div style="display: flex; flex-direction: row; gap: 4px">
+    <dropdown
+      label="Ancestry Boost"
+      field="ancestryBoost1"
+      placeholder="Choose Attribute"
+      optionsfunction="return wizardGetAncestryBoostOptions();"
+      onchange="wizardOnBoostChange(value, 'ancestryBoost1')"
+    ></dropdown>
+    <dropdown
+      label="Ancestry Boost"
+      field="ancestryBoost2"
+      placeholder="Choose Attribute"
+      hidden="true"
+      optionsfunction="return wizardGetAncestryBoostOptions();"
+      onchange="wizardOnBoostChange(value, 'ancestryBoost2')"
+    ></dropdown>
+  </div>
+
+  <div style="display: flex; flex-direction: row; gap: 4px">
+    <dropdown
+      label="Background Boost"
+      field="backgroundBoost1"
+      placeholder="Choose Attribute"
+      optionsfunction="return wizardGetBackgroundBoostOptions(0);"
+      onchange="wizardOnBoostChange(value, 'backgroundBoost1')"
+    ></dropdown>
+    <dropdown
+      label="Background Boost"
+      field="backgroundBoost2"
+      placeholder="Choose Attribute"
+      optionsfunction="return wizardGetBackgroundBoostOptions(1);"
+      onchange="wizardOnBoostChange(value, 'backgroundBoost2')"
+    ></dropdown>
+  </div>
+
+  <dropdown
+    label="Key Attribute (Class Boost)"
+    field="keyAbility"
+    placeholder="Choose Attribute"
+    optionsfunction="return wizardGetKeyAbilityOptions();"
+    onchange="wizardOnBoostChange(value, 'keyAbility')"
+  ></dropdown>
+
+  <dropdown
+    label="Free Boosts"
+    field="freeBoosts"
+    placeholder="Choose 4 Attributes"
+    options='[{"label": "Strength", "value": "str"}, {"label": "Dexterity", "value": "dex"}, {"label": "Constitution", "value": "con"}, {"label": "Intelligence", "value": "int"}, {"label": "Wisdom", "value": "wis"}, {"label": "Charisma", "value": "cha"}]'
+    multiselect="4"
+    onchange="wizardOnBoostChange(value, 'freeBoosts')"
+  ></dropdown>
+
+  <stringfield
+    label="Resulting Modifiers"
+    field="modifierSummary"
+    width="100%"
+    variant="unstyled"
+  ></stringfield>
+
+  <stringfield
+    label="Error"
+    field="boostError"
+    width="100%"
+    hidden="true"
+    color="red"
+    variant="unstyled"
+  ></stringfield>
+</div>
+

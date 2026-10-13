@@ -496,23 +496,174 @@
   }
 
   function onLevelUp() {
-    // Increase level by 1, max 20
-    const newLevel = Math.min(20, record.data?.level + 1);
-    const newXp = Math.max(0, record.data?.xp - 1000);
-    const showLevelUpBtn = newXp >= 1000 && newLevel < 20;
-    api.setValues(
-      {
-        "data.level": newLevel,
-        // Decrease XP by 1000
-        "data.xp": newXp,
-        // Hide the level up button if XP needed
-        "fields.levelUpBtn.hidden": !showLevelUpBtn,
-      },
-      (recordUpdated) => {
-        // Recalculate features including any choices we need to now make
-        onAddEditFeature(recordUpdated);
-      },
+    const currentLevel = parseInt(record.data?.level || "1", 10);
+    if (currentLevel >= 20) {
+      return;
+    }
+    const newLevel = currentLevel + 1;
+    const gains = getLevelUpGains(record, newLevel);
+
+    api.showConfirm(
+      `Level Up to ${newLevel}`,
+      `At level ${newLevel} you gain:
+${getLevelUpSummary(gains)}`,
+      "Level Up",
+      "Cancel",
+      () => applyLevelUp(newLevel, gains),
     );
+  }
+
+  function applyLevelUp(newLevel, gains) {
+    const newXp = Math.max(0, (record.data?.xp || 0) - 1000);
+    const showLevelUpBtn = newXp >= 1000 && newLevel < 20;
+    const valuesToSet = {
+      "data.level": newLevel,
+      // Decrease XP by 1000
+      "data.xp": newXp,
+      // Hide the level up button if XP needed
+      "fields.levelUpBtn.hidden": !showLevelUpBtn,
+    };
+    for (const boostLevel of [5, 10, 15, 20]) {
+      if (newLevel >= boostLevel) {
+        valuesToSet[`fields.freeBoostsLevel${boostLevel}.hidden`] = false;
+      }
+    }
+
+    api.setValues(valuesToSet, (recordUpdated) => {
+      // Recalculate HP, proficiencies and feat slots for the new level, then
+      // walk through this level's choices
+      onAddEditFeature(
+        recordUpdated,
+        () => {
+          const steps = [];
+          if (gains.attributeBoosts) {
+            steps.push((next) => promptLevelUpBoosts(newLevel, next));
+          }
+          if (gains.skillIncrease) {
+            steps.push((next) => promptLevelUpSkillIncrease(newLevel, next));
+          }
+          for (const featType of gains.featTypes) {
+            steps.push((next) => promptLevelUpFeat(featType, newLevel, next));
+          }
+          runLevelUpSteps(steps, 0, newLevel);
+        },
+        true,
+      );
+    });
+  }
+
+  function runLevelUpSteps(steps, index, newLevel) {
+    if (index >= steps.length) {
+      // Final pass, prompting for any class feature choices at this level
+      api.getRecord("characters", record._id, (updatedRecord) => {
+        onAddEditFeature(updatedRecord);
+        api.showNotification(
+          `${record.name || "Character"} is now level ${newLevel}.`,
+          "green",
+          "Level Up",
+        );
+      });
+      return;
+    }
+    steps[index](() => runLevelUpSteps(steps, index + 1, newLevel));
+  }
+
+  function promptLevelUpBoosts(newLevel, next) {
+    api.getRecord("characters", record._id, (latestRecord) => {
+      api.showPrompt(
+        `Level ${newLevel} Attribute Boosts`,
+        "Choose 4 different attributes. Above +4, a boost is a partial boost: two partial boosts raise the modifier by 1.",
+        "Choose 4 Attributes...",
+        getLevelUpBoostOptions(latestRecord),
+        null,
+        (selected) => {
+          const boosts = getPromptSelections(selected).slice(0, 4);
+          if (boosts.length === 0) {
+            next();
+            return;
+          }
+          api.setValues({ [`data.freeBoostsLevel${newLevel}`]: boosts }, () =>
+            next(),
+          );
+        },
+        "OK",
+        "Skip",
+        4,
+      );
+    });
+  }
+
+  function promptLevelUpSkillIncrease(newLevel, next) {
+    api.getRecord("characters", record._id, (latestRecord) => {
+      const options = getSkillIncreaseOptions(latestRecord, newLevel);
+      if (options.length === 0) {
+        next();
+        return;
+      }
+      api.showPrompt(
+        `Level ${newLevel} Skill Increase`,
+        "Raise one skill by one rank. Master requires level 7 and Legendary requires level 15. To raise a Lore skill instead, skip this and set it on the Skills tab.",
+        "Choose a Skill...",
+        options,
+        null,
+        (selected) => {
+          const skill = getPromptSelections(selected)[0];
+          if (!skill) {
+            next();
+            return;
+          }
+          const rank = parseInt(latestRecord.data?.[skill] || "0", 10) || 0;
+          api.setValues({ [`data.${skill}`]: `${rank + 1}` }, () => next());
+        },
+        "OK",
+        "Skip",
+        1,
+      );
+    });
+  }
+
+  function promptLevelUpFeat(featType, newLevel, next) {
+    api.getRecord("characters", record._id, (latestRecord) => {
+      const feats = latestRecord.data?.feats || [];
+      const slotIndex = feats.findIndex(
+        (feat) =>
+          feat.data?.type === "slot" &&
+          feat.data?.featSlotType === featType &&
+          parseInt(feat.data?.level, 10) === newLevel,
+      );
+      // Already filled, or the class has no slot for it
+      if (slotIndex === -1) {
+        next();
+        return;
+      }
+
+      api.showPrompt(
+        `Select a ${capitalize(featType)} Feat for Level ${newLevel}`,
+        "Select Feat",
+        "Select a Feat...",
+        null,
+        getFeatSlotQuery(latestRecord, featType, newLevel),
+        (selected) => {
+          const feat = getPromptSelections(selected)[0];
+          if (!feat || typeof feat !== "object") {
+            next();
+            return;
+          }
+          api.setValues(
+            {
+              [`data.feats.${slotIndex}`]: buildFilledFeatSlot(
+                feats[slotIndex],
+                feat,
+              ),
+            },
+            () => next(),
+          );
+        },
+        "OK",
+        "Skip",
+        1,
+      );
+    });
   }
 
   function updateAbilityBoosts(value, field) {
