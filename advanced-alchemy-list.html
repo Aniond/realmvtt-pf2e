@@ -1,17 +1,16 @@
 <script>
-  function onMarkCrafted(value) {
+  function onMarkCrafted() {
     const itemDataPath = getNearestParentDataPath(dataPath);
     const item = api.getValue(itemDataPath);
-    const name = item.data?.name || "";
 
-    const valuesToSet = {};
-
-    const marked = value === "unmarkCrafted";
-
-    valuesToSet[`${itemDataPath}.fields.markedNameBox.hidden`] = marked;
-    valuesToSet[`${itemDataPath}.fields.unmarkedNameBox.hidden`] = !marked;
-
-    api.setValues(valuesToSet);
+    // The struck-through name shows the item is crafted. Flip it and write the
+    // button's value in the same call, so the button doesn't snap back.
+    const crafted = item?.fields?.markedNameBox?.hidden === false;
+    api.setValues({
+      [`${itemDataPath}.data.craftingDeleteBtn`]: crafted ? "markCrafted" : "unmarkCrafted",
+      [`${itemDataPath}.fields.markedNameBox.hidden`]: crafted,
+      [`${itemDataPath}.fields.unmarkedNameBox.hidden`]: !crafted,
+    });
   }
 
   function onQuantityChange() {
@@ -76,6 +75,6 @@
     icon="IconHammer"
     options='[{"label": "Mark Crafted", "value": "markCrafted", "icon": "IconHammer"},
     {"label": "Unmark Crafted", "value": "unmarkCrafted", "icon": "IconHammerOff"}]'
-    onclick="onMarkCrafted(value)"
+    onclick="onMarkCrafted()"
   ></iconbutton>
 </div>

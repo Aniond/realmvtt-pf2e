@@ -119,7 +119,7 @@
   </div>
   <div
     style="
-      width: 150px;
+      width: 90px;
       flex-shrink: 0;
       display: flex;
       gap: 2px;
@@ -145,17 +145,13 @@
       options='[{"label": "Prepare with Advanced Alchemy", "value": "prepare", "icon": "IconFlask"}]'
       onclick="onPrepareItem()"
     ></iconbutton>
-    <div style="width: 80px; flex-shrink: 0">
-      <button
-        size="xs"
-        variant="light"
-        color="tertiary"
-        field="craftingDeleteBtn"
-        icon="IconHammer"
-        label="Craft"
-        width="100%"
-        onclick="onCraftItem()"
-      ></button>
-    </div>
+    <iconbutton
+      size="md"
+      variant="default"
+      field="craftBtn"
+      icon="IconHammer"
+      options='[{"label": "Craft", "value": "craft", "icon": "IconHammer"}]'
+      onclick="onCraftItem()"
+    ></iconbutton>
   </div>
 </div>
