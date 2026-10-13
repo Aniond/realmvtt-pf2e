@@ -1,0 +1,59 @@
+<script>
+  function getProjectId() {
+    const itemDataPath = getNearestParentDataPath(dataPath);
+    return api.getValue(itemDataPath)?._id;
+  }
+
+  function onWorkProject() {
+    workCraftProject(record._id, getProjectId());
+  }
+
+  function onFinishProject() {
+    finishCraftProject(record._id, getProjectId());
+  }
+
+  function onRetryProject() {
+    retryCraftProject(record._id, getProjectId());
+  }
+</script>
+
+<div style="display: flex; gap: 4px; align-items: center; min-height: 30px">
+  <div style="width: 30px; min-width: 30px">
+    <portrait width="30px" height="30px" name="portrait"></portrait>
+  </div>
+  <div style="flex-grow: 1; min-width: 0">
+    <label field="namefield" size="sm" variant="bold"></label>
+    <label field="statusLabel" size="xs" color="dimmed" textalign="left"></label>
+  </div>
+  <div style="display: flex; gap: 2px">
+    <button
+      size="xs"
+      variant="light"
+      field="workBtn"
+      hidden="true"
+      icon="IconCalendarPlus"
+      label="Work Days"
+      onclick="onWorkProject()"
+    ></button>
+    <button
+      size="xs"
+      variant="light"
+      color="green"
+      field="finishBtn"
+      hidden="true"
+      icon="IconCheck"
+      label="Finish"
+      onclick="onFinishProject()"
+    ></button>
+    <button
+      size="xs"
+      variant="light"
+      color="yellow"
+      field="retryBtn"
+      hidden="true"
+      icon="IconRefresh"
+      label="Try Again"
+      onclick="onRetryProject()"
+    ></button>
+  </div>
+</div>

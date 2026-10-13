@@ -816,7 +816,7 @@ function getIsTraitRarity(trait) {
     trait.toLowerCase().trim().startsWith("uncommon") ||
     trait.toLowerCase().trim().startsWith("common") ||
     trait.toLowerCase().trim().startsWith("rare") ||
-    trait.toLowerCase().trim().startsWith("unqiue")
+    trait.toLowerCase().trim().startsWith("unique")
   );
 }
 

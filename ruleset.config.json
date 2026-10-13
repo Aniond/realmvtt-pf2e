@@ -983,6 +983,70 @@
       "singleRow": false
     },
     {
+      "name": "Crafting Project List",
+      "type": "crafting_project_list",
+      "isList": true,
+      "minX": 500,
+      "minY": 60,
+      "tabs": [
+        {
+          "name": "Main",
+          "file": "crafting-project-list.html",
+          "fields": []
+        }
+      ],
+      "icon": "",
+      "showAddButton": false,
+      "showDeleteButton": true,
+      "addButtonText": "",
+      "allowedListTypes": [
+        "items"
+      ],
+      "newItemName": "",
+      "newItemUnidentifiedName": "",
+      "stackDuplicates": false,
+      "disableDrop": true,
+      "countFieldName": "",
+      "emptyListText": "No Crafting Projects",
+      "orderCriteria": [],
+      "maxLength": 0,
+      "filterCriteria": [],
+      "singleRow": false,
+      "hideFromCompendium": true
+    },
+    {
+      "name": "Crafting Salvage List",
+      "type": "crafting_salvage_list",
+      "isList": true,
+      "minX": 500,
+      "minY": 60,
+      "tabs": [
+        {
+          "name": "Main",
+          "file": "crafting-salvage-list.html",
+          "fields": []
+        }
+      ],
+      "icon": "",
+      "showAddButton": false,
+      "showDeleteButton": true,
+      "addButtonText": "",
+      "allowedListTypes": [
+        "items"
+      ],
+      "newItemName": "",
+      "newItemUnidentifiedName": "",
+      "stackDuplicates": false,
+      "disableDrop": true,
+      "countFieldName": "",
+      "emptyListText": "No Salvaged Parts",
+      "orderCriteria": [],
+      "maxLength": 0,
+      "filterCriteria": [],
+      "singleRow": false,
+      "hideFromCompendium": true
+    },
+    {
       "name": "Feats List",
       "type": "feats_list",
       "isList": true,
@@ -2544,6 +2608,10 @@
       {
         "name": "flatCheck",
         "file": "rollhandlers/flatCheck.js"
+      },
+      {
+        "name": "craftingEvent",
+        "file": "rollhandlers/craftingEvent.js"
       }
     ],
     "partySheet": {
@@ -5338,6 +5406,100 @@
         "name": "Variant: Gradual Ability Boosts",
         "key": "gradualAbilityBoosts",
         "description": "Gamemastery Guide pg. 182. Instead of four boosts at 5th, 10th, 15th and 20th level, characters gain one boost at each level of the set leading up to it.",
+        "values": [
+          {
+            "label": "No",
+            "value": "no"
+          },
+          {
+            "label": "Yes",
+            "value": "yes"
+          }
+        ]
+      },
+      {
+        "name": "Crafting: Rules Version",
+        "key": "craftingRules",
+        "description": "Which Craft rules the Crafting tab follows. Remaster (Player Core pg. 237): 2 days of setup, or 1 with the formula, and the formula is optional. Legacy (Core Rulebook pg. 244): the formula is required and setup takes 4 days.",
+        "values": [
+          {
+            "label": "Remaster (Player Core)",
+            "value": "remaster"
+          },
+          {
+            "label": "Legacy (Core Rulebook)",
+            "value": "legacy"
+          }
+        ]
+      },
+      {
+        "name": "Crafting: Complex Crafting",
+        "key": "complexCrafting",
+        "description": "Treasure Vault pg. 159. Setup time depends on the item's level and whether it's a consumable; experts and better can rush setup for a higher DC, or rush finishing with a flat check that risks a quirk or a ruined item.",
+        "values": [
+          {
+            "label": "No",
+            "value": "no"
+          },
+          {
+            "label": "Yes",
+            "value": "yes"
+          }
+        ]
+      },
+      {
+        "name": "Crafting: Critical Crafting",
+        "key": "criticalCrafting",
+        "description": "Treasure Vault pg. 162. Critical successes and failures when Crafting can have a special story effect chosen by the GM, as well as the normal result.",
+        "values": [
+          {
+            "label": "No",
+            "value": "no"
+          },
+          {
+            "label": "Yes",
+            "value": "yes"
+          }
+        ]
+      },
+      {
+        "name": "Crafting: Converting Magic Items",
+        "key": "convertingMagicItems",
+        "description": "Treasure Vault pg. 163. Adds the Deconstruct activity: break down a permanent item to put part of its value toward a new item.",
+        "values": [
+          {
+            "label": "No",
+            "value": "no"
+          },
+          {
+            "label": "Yes",
+            "value": "yes"
+          }
+        ]
+      },
+      {
+        "name": "Crafting: Nature Crafting (Grow)",
+        "key": "natureCrafting",
+        "description": "Treasure Vault pg. 165. Adds the Grow activity, a variant of Craft that grows items from living things with fertilizers worth half the Price over 4 days. Choose which skill Grow uses.",
+        "values": [
+          {
+            "label": "No",
+            "value": "no"
+          },
+          {
+            "label": "Yes, roll Crafting",
+            "value": "yes"
+          },
+          {
+            "label": "Yes, roll Nature",
+            "value": "nature"
+          }
+        ]
+      },
+      {
+        "name": "Crafting: Downtime Events",
+        "key": "craftingDowntimeEvents",
+        "description": "Treasure Vault pg. 160. Adds a button to roll a crafting downtime event (d20) on the Crafting tab.",
         "values": [
           {
             "label": "No",

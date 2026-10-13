@@ -1,7 +1,6 @@
 const rollName = data?.roll?.metadata?.rollName;
 const tooltip = data?.roll?.metadata?.tooltip;
 const minRoll = data?.roll?.metadata?.minRoll;
-const itemDataPath = data?.roll?.metadata?.itemDataPath;
 const successMessage = data?.roll?.metadata?.successMessage;
 const failureMessage = data?.roll?.metadata?.failureMessage;
 const criticalSuccessMessage = data?.roll?.metadata?.criticalSuccessMessage;
@@ -212,36 +211,14 @@ if (targets.length === 0) {
     }
   }
 
-  // Handle item crafting - copy to inventory on success or critical success
-  if (itemDataPath && (degreeOfSuccess === 1 || degreeOfSuccess === 2)) {
-    const craftedItem = api.getValueOnRecord(record, itemDataPath);
-    const traits = craftedItem.data?.traits || [];
-    const hasConsumableTrait = traits
-      .map((trait) => trait.toLowerCase())
-      .includes("consumable");
-    const isConsumable =
-      craftedItem.data?.type === "consumable" || hasConsumableTrait;
-    const hasUseBtn = craftedItem.data?.hasUseBtn || false;
-    if (craftedItem) {
-      const inventory = record.data?.inventory || [];
-      const newItem = {
-        ...craftedItem,
-        _id: generateUuid(),
-        data: {
-          ...craftedItem.data,
-          ammo: craftedItem.data?.craftingQuantity || 1,
-          count: craftedItem.data?.craftingQuantity || 1,
-          carried: "carried",
-        },
-        fields: {
-          ...craftedItem.fields,
-          ...getItemFields(craftedItem),
-        },
-      };
-      api.setValuesOnRecord(record, {
-        "data.inventory": [...inventory, newItem],
-      });
-    }
+  // Crafting activities (Craft, Grow, Deconstruct, rushed finishing) update
+  // the character's crafting projects and say what happened
+  if (data?.roll?.metadata?.craftingAction) {
+    message += handleCraftingRollOutcome(
+      record,
+      data.roll.metadata,
+      degreeOfSuccess,
+    );
   }
 }
 
