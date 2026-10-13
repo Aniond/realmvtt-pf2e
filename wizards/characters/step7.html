@@ -1,44 +1,335 @@
 <script>
-  function onStepEnd() {
-    const setStartingWealth = api.getValue("data.wizard.setStartingWealth");
-    if (setStartingWealth === false || setStartingWealth === "false") {
+  function wizardRefreshFunds(overrides) {
+    const wizard = { ...(record.data?.wizard || {}), ...(overrides || {}) };
+    const spent = getWizardSpentCp(wizard.items || [], wizard.kitSpentCp || 0);
+    const remaining = WIZARD_STARTING_WEALTH_CP - spent;
+
+    api.setValues({
+      "data.wizard.fundsLabel":
+        remaining >= 0
+          ? `${formatCp(remaining)} left of 15 gp`
+          : `Over budget by ${formatCp(-remaining)}`,
+    });
+  }
+
+  function wizardOnGearStepLoad() {
+    const kit = getClassKit(record);
+    const kitTaken = (record.data?.wizard?.kitSpentCp || 0) > 0;
+    const valuesToSet = {
+      "fields.classKitBox.hidden": !kit,
+      "fields.takeClassKit.hidden": !kit || kitTaken,
+      "fields.removeClassKit.hidden": !kit || !kitTaken,
+    };
+    if (kit) {
+      valuesToSet["data.wizard.classKitInfo"] = getClassKitDescription(kit);
+    }
+    api.setValues(valuesToSet);
+    wizardRefreshFunds();
+  }
+
+  // Looks up each item by name, using a placeholder when the item is missing
+  function wizardLookupItems(entries, index, found, callback) {
+    if (index >= entries.length) {
+      callback(found);
+      return;
+    }
+    const entry = entries[index];
+    api.getRecordByTypeAndName("items", entry.name, (item) => {
+      const itemRecord = item || {
+        _id: generateUuid(),
+        name: entry.name,
+        recordType: "items",
+        data: {
+          type: "equipment",
+          description:
+            "Added by the Character Wizard. No item record was found.",
+        },
+      };
+      found.push({ item: itemRecord, count: entry.count || 1 });
+      wizardLookupItems(entries, index + 1, found, callback);
+    });
+  }
+
+  function wizardAddClassKit(kit, options) {
+    const entries = [
+      ...kit.items,
+      ...options.flatMap((option) => option.items),
+    ];
+    const kitCost = options.reduce(
+      (total, option) => total + (option.priceCp || 0),
+      kit.priceCp,
+    );
+
+    api.getRecord("characters", record._id, (latestRecord) => {
+      const items = (latestRecord.data?.wizard?.items || []).filter(
+        (item) => !item.data?.fromClassKit,
+      );
+      const spent = getWizardSpentCp(items, 0);
+      if (spent + kitCost > WIZARD_STARTING_WEALTH_CP) {
+        api.showNotification(
+          `The ${kit.name} costs ${formatCp(kitCost)}, but you only have ${formatCp(
+            WIZARD_STARTING_WEALTH_CP - spent,
+          )} left.`,
+          "red",
+          "Not Enough Money",
+        );
+        return;
+      }
+
+      wizardLookupItems(entries, 0, [], (found) => {
+        let updatedItems = [...items];
+        for (const { item, count } of found) {
+          updatedItems = addWizardPurchase(
+            updatedItems,
+            buildWizardPurchase(item, count, true),
+          );
+        }
+        api.setValues(
+          {
+            "data.wizard.items": updatedItems,
+            "data.wizard.kitSpentCp": kitCost,
+            "fields.takeClassKit.hidden": true,
+            "fields.removeClassKit.hidden": false,
+          },
+          () =>
+            wizardRefreshFunds({ items: updatedItems, kitSpentCp: kitCost }),
+        );
+      });
+    });
+  }
+
+  function wizardTakeClassKit() {
+    const kit = getClassKit(record);
+    if (!kit) return;
+
+    if (!kit.options || kit.options.length === 0) {
+      wizardAddClassKit(kit, []);
       return;
     }
 
-    // Only grant starting wealth to a character with no coins yet
-    const hasCoins = ["pp", "gp", "sp", "cp"].some(
-      (coin) => parseInt(record.data?.[coin] || 0, 10) > 0,
+    // Options are extra items paid from leftover money, so any number can be taken
+    api.showPrompt(
+      kit.name,
+      "Add any kit options you want. Each one costs extra. Skip to take the base kit.",
+      "Choose options...",
+      kit.options.map((option, index) => ({
+        label: `${option.name} (+${formatCp(option.priceCp)})`,
+        value: `${index}`,
+      })),
+      null,
+      (selected) => {
+        const options = getPromptSelections(selected)
+          .map((choice) => kit.options[parseInt(choice, 10)])
+          .filter((option) => option);
+        wizardAddClassKit(kit, options);
+      },
+      "Add Kit",
+      "Skip",
+      kit.options.length,
     );
-    if (!hasCoins) {
-      api.setValues({ "data.gp": 15 });
-    }
+  }
+
+  function wizardRemoveClassKit() {
+    api.getRecord("characters", record._id, (latestRecord) => {
+      const items = (latestRecord.data?.wizard?.items || []).filter(
+        (item) => !item.data?.fromClassKit,
+      );
+      api.setValues(
+        {
+          "data.wizard.items": items,
+          "data.wizard.kitSpentCp": 0,
+          "fields.takeClassKit.hidden": false,
+          "fields.removeClassKit.hidden": true,
+        },
+        () => wizardRefreshFunds({ items, kitSpentCp: 0 }),
+      );
+    });
+  }
+
+  function wizardOnGearSelection(value) {
+    const selectedItems = value || [];
+    const cost = selectedItems.reduce(
+      (total, item) => total + getItemPriceCp(item),
+      0,
+    );
+    api.setValues({
+      "data.wizard.selectedItems": selectedItems,
+      "data.wizard.previewItemCost": formatCp(cost),
+    });
+  }
+
+  function wizardBuyItems() {
+    api.getRecord("characters", record._id, (latestRecord) => {
+      const wizard = latestRecord.data?.wizard || {};
+      const selectedItems = wizard.selectedItems || [];
+      if (selectedItems.length === 0) {
+        api.showNotification(
+          "Select one or more items to buy first.",
+          "yellow",
+          "No Item Selected",
+        );
+        return;
+      }
+
+      let items = [...(wizard.items || [])];
+      let remaining =
+        WIZARD_STARTING_WEALTH_CP -
+        getWizardSpentCp(items, wizard.kitSpentCp || 0);
+
+      for (const item of selectedItems) {
+        const price = getItemPriceCp(item);
+        if (price > remaining) {
+          api.showNotification(
+            `Unable to buy ${item.name} (${formatCp(price)}). You have ${formatCp(
+              remaining,
+            )} left.`,
+            "red",
+            "Not Enough Money",
+          );
+          continue;
+        }
+        remaining -= price;
+        items = addWizardPurchase(items, buildWizardPurchase(item));
+      }
+
+      api.setValues({ "data.wizard.items": items }, () =>
+        wizardRefreshFunds({ items }),
+      );
+    });
+  }
+
+  function wizardOnItemListChange() {
+    api.getRecord("characters", record._id, (latestRecord) => {
+      const wizard = latestRecord.data?.wizard || {};
+      // If every class kit item was deleted, refund the kit
+      const hasKitItems = (wizard.items || []).some(
+        (item) => item.data?.fromClassKit,
+      );
+      if (!hasKitItems && (wizard.kitSpentCp || 0) > 0) {
+        wizardRemoveClassKit();
+        return;
+      }
+      wizardRefreshFunds({ items: wizard.items || [] });
+    });
+  }
+
+  function onStepEnd() {
+    api.getRecord("characters", record._id, (latestRecord) => {
+      const wizard = latestRecord.data?.wizard || {};
+      const items = wizard.items || [];
+      const remaining = Math.max(
+        0,
+        WIZARD_STARTING_WEALTH_CP -
+          getWizardSpentCp(items, wizard.kitSpentCp || 0),
+      );
+      const coins = splitCp(remaining);
+
+      const valuesToSet = {
+        "data.gp": (parseInt(latestRecord.data?.gp || 0, 10) || 0) + coins.gp,
+        "data.sp": (parseInt(latestRecord.data?.sp || 0, 10) || 0) + coins.sp,
+        "data.cp": (parseInt(latestRecord.data?.cp || 0, 10) || 0) + coins.cp,
+      };
+      if (items.length > 0) {
+        valuesToSet["data.inventory"] = buildInventoryFromPurchases(
+          latestRecord.data?.inventory || [],
+          items,
+        );
+      }
+      // The gear now lives in the inventory; drop the wizard's copies
+      valuesToSet["data.wizard.items"] = [];
+      valuesToSet["data.wizard.selectedItems"] = [];
+      valuesToSet["data.wizard.recordselectlist"] = [];
+
+      api.setValues(valuesToSet, (updatedRecord) => {
+        updateTotalBulk(updatedRecord);
+        // Recalculate AC, Strikes and other gear-driven values
+        onAddEditFeature(updatedRecord, undefined, true);
+      });
+    });
   }
 </script>
 
 <p>
-  Your Ancestry, Background, Class, attributes, skills, languages, and feats
-  are set. Finish your character from the sheet:
+  Buy your starting equipment. A 1st-level character has 15 gp to spend on
+  armor, weapons, and gear. Whatever you don't spend is added to your coins.
 </p>
 
-<ul>
-  <li>
-    <b>Spells:</b> If your Class casts spells, drag your cantrips and spells
-    from the Spells Compendium to your Actions tab.
-  </li>
-  <li>
-    <b>Equipment:</b> A 1st-level character starts with 15 gp. Drag weapons,
-    armor, and gear from the Items Compendium to your Inventory tab and spend
-    it from there.
-  </li>
-  <li>
-    <b>Details:</b> From the Notes tab, set your Deity, age, appearance, and
-    other personal details.
-  </li>
-</ul>
+<div style="display: flex; flex-direction: column; gap: 8px">
+  <stringfield
+    label="Money"
+    field="fundsLabel"
+    width="100%"
+    variant="unstyled"
+    editable="false"
+    onload="wizardOnGearStepLoad()"
+  ></stringfield>
 
-<checkbox
-  field="setStartingWealth"
-  label="Give this character 15 gp of starting wealth"
-  defaultvalue="true"
-  color="primary"
-></checkbox>
+  <box field="classKitBox" hidden="true">
+    <divider label="Class Kit"></divider>
+    <stringfield
+      field="classKitInfo"
+      width="100%"
+      variant="unstyled"
+      editable="false"
+    ></stringfield>
+    <div style="display: flex; gap: 4px; margin-top: 4px">
+      <button
+        field="takeClassKit"
+        label="Take Class Kit"
+        icon="IconPackage"
+        variant="light"
+        color="primary"
+        onclick="wizardTakeClassKit()"
+      ></button>
+      <button
+        field="removeClassKit"
+        label="Remove Class Kit"
+        icon="IconTrash"
+        variant="light"
+        color="red"
+        hidden="true"
+        onclick="wizardRemoveClassKit()"
+      ></button>
+    </div>
+  </box>
+
+  <divider label="Shop"></divider>
+  <recordselectlist
+    width="100%"
+    height="360px"
+    size="sm"
+    field="recordselectlist"
+    label="Select Equipment to Buy"
+    onchange="wizardOnGearSelection(value);"
+    query='{"type": "items", "query": {"$or": [{"data.level": {"$lte": 1}}, {"data.level": {"$exists": false}}, {"data.level": null}]}}'
+    filters='[{"label": "Type", "field": "type", "options": [{"label": "Armor", "value": "armor"}, {"label": "Weapon", "value": "weapon"}, {"label": "Shield", "value": "shield"}, {"label": "Equipment", "value": "equipment"}, {"label": "Consumable", "value": "consumable"}, {"label": "Kit", "value": "kit"}, {"label": "Backpack", "value": "backpack"}]}]'
+    searchable="true"
+    selectable="true"
+  ></recordselectlist>
+
+  <div style="display: flex; gap: 8px; width: 100%; align-items: center">
+    <button
+      field="buyItems"
+      color="primary"
+      label="Buy Selected Items"
+      icon="IconShoppingCart"
+      variant="light"
+      onclick="wizardBuyItems()"
+    ></button>
+    <label label="Cost of Selected:" size="sm" variant="bold"></label>
+    <stringfield
+      field="previewItemCost"
+      size="sm"
+      variant="unstyled"
+      editable="false"
+    ></stringfield>
+  </div>
+
+  <divider label="Your Equipment"></divider>
+  <list
+    listtype="wizard_item_list"
+    field="items"
+    variant="outline-striped"
+    onchange="wizardOnItemListChange()"
+  ></list>
+</div>

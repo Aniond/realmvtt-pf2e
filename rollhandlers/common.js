@@ -13330,3 +13330,191 @@ function buildLanguagesList(languages) {
     data: { description: `Can speak the ${language} language.` },
   }));
 }
+
+// Character Creation Wizard helpers (Player Core: Step 8 buy equipment)
+
+const WIZARD_STARTING_WEALTH_CP = 1500; // 15 gp
+
+// Price of one purchase of an item (a bundle, like 10 arrows), in copper
+function getItemPriceCp(item) {
+  const price = item?.data?.price?.value || {};
+  return (
+    (parseInt(price.pp || 0, 10) || 0) * 1000 +
+    (parseInt(price.gp || 0, 10) || 0) * 100 +
+    (parseInt(price.sp || 0, 10) || 0) * 10 +
+    (parseInt(price.cp || 0, 10) || 0)
+  );
+}
+
+// How many units come in one purchase (arrows come in 10s)
+function getItemBundleSize(item) {
+  return Math.max(1, parseInt(item?.data?.bundleSize || 1, 10) || 1);
+}
+
+// Copper spent on bought items; class kit items are paid for by the kit price
+function getWizardSpentCp(items, kitSpentCp = 0) {
+  let spent = parseInt(kitSpentCp || 0, 10) || 0;
+  for (const item of items || []) {
+    if (item.data?.fromClassKit) continue;
+    const purchases = Math.ceil(
+      (parseFloat(item.data?.count || 1) || 1) / getItemBundleSize(item),
+    );
+    spent += getItemPriceCp(item) * purchases;
+  }
+  return spent;
+}
+
+function splitCp(totalCp) {
+  const cp = Math.max(0, Math.floor(totalCp || 0));
+  return { gp: Math.floor(cp / 100), sp: Math.floor((cp % 100) / 10), cp: cp % 10 };
+}
+
+function formatCp(totalCp) {
+  const coins = splitCp(totalCp);
+  const parts = [];
+  if (coins.gp) parts.push(`${coins.gp} gp`);
+  if (coins.sp) parts.push(`${coins.sp} sp`);
+  if (coins.cp || parts.length === 0) parts.push(`${coins.cp} cp`);
+  return parts.join(", ");
+}
+
+// An item as stored in the wizard's shopping list
+function buildWizardPurchase(item, count, fromClassKit = false) {
+  const bundleSize = Math.max(1, parseInt(item?.data?.count || 1, 10) || 1);
+  return {
+    ...item,
+    _id: generateUuid(),
+    data: {
+      ...item.data,
+      fromId: item.data?.fromId || item._id,
+      bundleSize,
+      count: count ?? bundleSize,
+      fromClassKit,
+      priceLabel: fromClassKit
+        ? "Class Kit"
+        : `${formatCp(getItemPriceCp(item))}${bundleSize > 1 ? ` per ${bundleSize}` : ""}`,
+    },
+  };
+}
+
+// Add a purchase to the list, stacking with the same item
+function addWizardPurchase(items, purchase) {
+  const list = [...(items || [])];
+  const index = list.findIndex(
+    (item) =>
+      item.data?.fromId === purchase.data?.fromId &&
+      !!item.data?.fromClassKit === !!purchase.data?.fromClassKit &&
+      item.data?.type !== "kit",
+  );
+  if (index === -1 || purchase.data?.type === "kit") {
+    list.push(purchase);
+  } else {
+    list[index] = {
+      ...list[index],
+      data: {
+        ...list[index].data,
+        count:
+          (parseFloat(list[index].data?.count || 0) || 0) +
+          (parseFloat(purchase.data?.count || 0) || 0),
+      },
+    };
+  }
+  return list;
+}
+
+// Turn wizard purchases into inventory entries (mirrors characters-inventory
+// onDropItem: kits are unpacked, matching items stack by fromId)
+function buildInventoryFromPurchases(inventory, purchases) {
+  const result = [...(inventory || [])];
+
+  const addOne = (item, count) => {
+    // Items packed in kits have no record id, so those stack by name
+    const fromId = item.data?.fromId || item._id;
+    const index = result.findIndex((i) =>
+      fromId ? i.data?.fromId === fromId : !i.data?.fromId && i.name === item.name,
+    );
+    if (index !== -1 && item.data?.type !== "backpack") {
+      result[index] = {
+        ...result[index],
+        data: {
+          ...result[index].data,
+          count: (parseFloat(result[index].data?.count || 0) || 0) + count,
+        },
+      };
+      return;
+    }
+    const data = { ...item.data, fromId, count, carried: "carried" };
+    delete data.bundleSize;
+    delete data.fromClassKit;
+    delete data.priceLabel;
+    result.push({
+      ...item,
+      _id: generateUuid(),
+      icon: "IconMoneybag",
+      data,
+      fields: { ...(item.fields || {}), ...getItemFields(item) },
+    });
+  };
+
+  for (const purchase of purchases || []) {
+    const count = parseFloat(purchase.data?.count || 1) || 1;
+    if (purchase.data?.type === "kit") {
+      const kits = Math.max(1, Math.round(count));
+      for (let i = 0; i < kits; i++) {
+        for (const packed of purchase.data?.items || []) {
+          addOne(packed, parseFloat(packed.data?.count || 1) || 1);
+        }
+      }
+    } else {
+      addOne(purchase, count);
+    }
+  }
+  return result;
+}
+
+// Class kits (Player Core pg. 268, Player Core 2 pg. 277). Options are extra
+// items bought with leftover money, on top of the kit price. Later classes
+// (such as Gunslinger and Inventor) have no kit.
+const PF2E_CLASS_KITS = {
+  "alchemist": {"name": "Alchemist Kit", "source": "Player Core 2 pg. 277", "priceCp": 832, "items": [{"name": "Studded Leather Armor", "count": 1}, {"name": "Dagger", "count": 1}, {"name": "Sling", "count": 1}, {"name": "Sling Bullets", "count": 20}, {"name": "Adventurer's Pack", "count": 1}, {"name": "Alchemist's Toolkit", "count": 1}, {"name": "Caltrops", "count": 2}], "options": [{"name": "Repair Toolkit", "priceCp": 200, "items": [{"name": "Repair Toolkit", "count": 1}]}]},
+  "barbarian": {"name": "Barbarian Kit", "source": "Player Core 2 pg. 277", "priceCp": 400, "items": [{"name": "Hide Armor", "count": 1}, {"name": "Javelin", "count": 4}, {"name": "Adventurer's Pack", "count": 1}, {"name": "Grappling Hook", "count": 1}], "options": [{"name": "Greataxe", "priceCp": 200, "items": [{"name": "Greataxe", "count": 1}]}, {"name": "Greatclub", "priceCp": 100, "items": [{"name": "Greatclub", "count": 1}]}, {"name": "Greatsword", "priceCp": 200, "items": [{"name": "Greatsword", "count": 1}]}, {"name": "Battle Axe and Steel Shield", "priceCp": 300, "items": [{"name": "Battle Axe", "count": 1}, {"name": "Steel Shield", "count": 1}]}]},
+  "bard": {"name": "Bard Kit", "source": "Player Core pg. 268", "priceCp": 752, "items": [{"name": "Studded Leather Armor", "count": 1}, {"name": "Dagger", "count": 1}, {"name": "Rapier", "count": 1}, {"name": "Sling", "count": 1}, {"name": "Sling Bullets", "count": 20}, {"name": "Adventurer's Pack", "count": 1}, {"name": "Musical Instrument (Handheld)", "count": 1}], "options": []},
+  "champion": {"name": "Champion Kit", "source": "Player Core 2 pg. 277", "priceCp": 870, "items": [{"name": "Chain Mail", "count": 1}, {"name": "Dagger", "count": 1}, {"name": "Javelin", "count": 4}, {"name": "Adventurer's Pack", "count": 1}, {"name": "Crowbar", "count": 1}, {"name": "Grappling Hook", "count": 1}], "options": [{"name": "Steel Shield", "priceCp": 200, "items": [{"name": "Steel Shield", "count": 1}]}], "shopNote": "Also buy your deity's favored weapon in the shop below."},
+  "cleric": {"name": "Cleric Kit", "source": "Player Core pg. 268", "priceCp": 170, "items": [{"name": "Explorer's Clothing", "count": 1}, {"name": "Adventurer's Pack", "count": 1}, {"name": "Religious Symbol (Wooden)", "count": 1}], "options": [{"name": "Chain Mail", "priceCp": 600, "items": [{"name": "Chain Mail", "count": 1}]}, {"name": "Healer's Toolkit", "priceCp": 500, "items": [{"name": "Healer's Toolkit", "count": 1}]}], "shopNote": "Also buy your deity's favored weapon in the shop below."},
+  "druid": {"name": "Druid Kit", "source": "Player Core pg. 268", "priceCp": 400, "items": [{"name": "Hide Armor", "count": 1}, {"name": "Javelin", "count": 4}, {"name": "Spear", "count": 1}, {"name": "Adventurer's Pack", "count": 1}, {"name": "Primal Symbol", "count": 1}], "options": [{"name": "Healer's Toolkit", "priceCp": 500, "items": [{"name": "Healer's Toolkit", "count": 1}]}]},
+  "fighter": {"name": "Fighter Kit", "source": "Player Core pg. 268", "priceCp": 580, "items": [{"name": "Scale Mail", "count": 1}, {"name": "Dagger", "count": 1}, {"name": "Adventurer's Pack", "count": 1}, {"name": "Grappling Hook", "count": 1}], "options": [{"name": "Greatsword", "priceCp": 200, "items": [{"name": "Greatsword", "count": 1}]}, {"name": "Longbow with 20 Arrows", "priceCp": 620, "items": [{"name": "Longbow", "count": 1}, {"name": "Arrows", "count": 20}]}, {"name": "Longsword and Steel Shield", "priceCp": 300, "items": [{"name": "Longsword", "count": 1}, {"name": "Steel Shield", "count": 1}]}]},
+  "investigator": {"name": "Investigator Kit", "source": "Player Core 2 pg. 277", "priceCp": 920, "items": [{"name": "Studded Leather Armor", "count": 1}, {"name": "Crossbow", "count": 1}, {"name": "Bolts", "count": 20}, {"name": "Sap", "count": 1}, {"name": "Shortsword", "count": 1}, {"name": "Adventurer's Pack", "count": 1}, {"name": "Crowbar", "count": 1}], "options": [{"name": "Alchemist's Toolkit", "priceCp": 300, "items": [{"name": "Alchemist's Toolkit", "count": 1}]}, {"name": "Manacles (Simple)", "priceCp": 300, "items": [{"name": "Manacles (Simple)", "count": 1}]}, {"name": "Writing Set", "priceCp": 100, "items": [{"name": "Writing Set", "count": 1}]}]},
+  "monk": {"name": "Monk Kit", "source": "Player Core 2 pg. 277", "priceCp": 530, "items": [{"name": "Explorer's Clothing", "count": 1}, {"name": "Dart", "count": 10}, {"name": "Adventurer's Pack", "count": 1}, {"name": "Climbing Kit", "count": 1}, {"name": "Grappling Hook", "count": 1}, {"name": "Smoke Ball (Lesser)", "count": 1}], "options": [{"name": "Staff", "priceCp": 0, "items": [{"name": "Staff", "count": 1}]}, {"name": "Longspear", "priceCp": 50, "items": [{"name": "Longspear", "count": 1}]}]},
+  "oracle": {"name": "Oracle Kit", "source": "Player Core 2 pg. 277", "priceCp": 552, "items": [{"name": "Studded Leather Armor", "count": 1}, {"name": "Mace", "count": 1}, {"name": "Sling", "count": 1}, {"name": "Sling Bullets", "count": 20}, {"name": "Adventurer's Pack", "count": 1}], "options": [{"name": "Steel Shield", "priceCp": 200, "items": [{"name": "Steel Shield", "count": 1}]}, {"name": "Healer's Toolkit", "priceCp": 500, "items": [{"name": "Healer's Toolkit", "count": 1}]}]},
+  "ranger": {"name": "Ranger Kit", "source": "Player Core pg. 268", "priceCp": 370, "items": [{"name": "Leather Armor", "count": 1}, {"name": "Dagger", "count": 1}, {"name": "Adventurer's Pack", "count": 1}], "options": [{"name": "Longbow with 20 Arrows", "priceCp": 620, "items": [{"name": "Longbow", "count": 1}, {"name": "Arrows", "count": 20}]}, {"name": "Longsword and Steel Shield", "priceCp": 300, "items": [{"name": "Longsword", "count": 1}, {"name": "Steel Shield", "count": 1}]}, {"name": "2 Shortswords", "priceCp": 180, "items": [{"name": "Shortsword", "count": 2}]}]},
+  "rogue": {"name": "Rogue Kit", "source": "Player Core pg. 268", "priceCp": 620, "items": [{"name": "Leather Armor", "count": 1}, {"name": "Dagger", "count": 1}, {"name": "Rapier", "count": 1}, {"name": "Adventurer's Pack", "count": 1}], "options": [{"name": "Thieves' Toolkit", "priceCp": 300, "items": [{"name": "Thieves' Toolkit", "count": 1}]}]},
+  "sorcerer": {"name": "Sorcerer Kit", "source": "Player Core 2 pg. 277", "priceCp": 242, "items": [{"name": "Explorer's Clothing", "count": 1}, {"name": "Dagger", "count": 1}, {"name": "Sling", "count": 1}, {"name": "Sling Bullets", "count": 20}, {"name": "Adventurer's Pack", "count": 1}, {"name": "Caltrops", "count": 2}], "options": []},
+  "swashbuckler": {"name": "Swashbuckler Kit", "source": "Player Core 2 pg. 277", "priceCp": 870, "items": [{"name": "Leather Armor", "count": 1}, {"name": "Hand Crossbow", "count": 1}, {"name": "Bolts", "count": 20}, {"name": "Rapier", "count": 1}, {"name": "Adventurer's Pack", "count": 1}], "options": [{"name": "Buckler", "priceCp": 100, "items": [{"name": "Buckler", "count": 1}]}, {"name": "Dueling Cape", "priceCp": 50, "items": [{"name": "Dueling Cape", "count": 1}]}, {"name": "Clothing (Fine)", "priceCp": 200, "items": [{"name": "Clothing (Fine)", "count": 1}]}, {"name": "Grappling Hook", "priceCp": 10, "items": [{"name": "Grappling Hook", "count": 1}]}, {"name": "Main-Gauche", "priceCp": 50, "items": [{"name": "Main-Gauche", "count": 1}]}]},
+  "witch": {"name": "Witch Kit", "source": "Player Core pg. 268", "priceCp": 182, "items": [{"name": "Explorer's Clothing", "count": 1}, {"name": "Sickle", "count": 1}, {"name": "Sling", "count": 1}, {"name": "Sling Bullets", "count": 20}, {"name": "Staff", "count": 1}, {"name": "Adventurer's Pack", "count": 1}], "options": [{"name": "Cookware", "priceCp": 100, "items": [{"name": "Cookware", "count": 1}]}, {"name": "Healer's Toolkit", "priceCp": 500, "items": [{"name": "Healer's Toolkit", "count": 1}]}]},
+  "wizard": {"name": "Wizard Kit", "source": "Player Core pg. 268", "priceCp": 260, "items": [{"name": "Explorer's Clothing", "count": 1}, {"name": "Staff", "count": 1}, {"name": "Adventurer's Pack", "count": 1}, {"name": "Writing Set", "count": 1}], "options": [{"name": "Crossbow with 20 Bolts", "priceCp": 320, "items": [{"name": "Crossbow", "count": 1}, {"name": "Bolts", "count": 20}]}]},
+};
+
+function getClassKit(record) {
+  const className = (
+    record.data?.classes?.[0]?.name ||
+    record.data?.className ||
+    ""
+  ).toLowerCase();
+  return PF2E_CLASS_KITS[className] || null;
+}
+
+function getClassKitDescription(kit) {
+  const contents = kit.items
+    .map((item) => (item.count > 1 ? `${item.name} (${item.count})` : item.name))
+    .join(", ");
+  let text = `${kit.name} (${formatCp(kit.priceCp)}): ${contents}.`;
+  if (kit.options.length > 0) {
+    text += ` Options: ${kit.options
+      .map((option) => `${option.name} (+${formatCp(option.priceCp)})`)
+      .join(", ")}.`;
+  }
+  if (kit.shopNote) {
+    text += ` ${kit.shopNote}`;
+  }
+  return text;
+}
