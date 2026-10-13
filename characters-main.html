@@ -451,6 +451,28 @@
         });
       });
     }
+
+    // A GM may turn variant rules on or off after this character was built
+    // (Free Archetype or Ancestry Paragon on a character who already leveled
+    // up): recalculate once so the new feat slots, panels and totals show
+    if ((record.data?.variantRulesKey || "") !== getVariantRulesKey()) {
+      const oldFeats = record.data?.feats || [];
+      onAddEditFeature(
+        record,
+        () => {
+          api.getRecord("characters", record._id, (updatedRecord) => {
+            const message = describeNewFeatSlots(
+              oldFeats,
+              updatedRecord.data?.feats || [],
+            );
+            if (message) {
+              api.showNotification(message, "blue", "Variant Rules");
+            }
+          });
+        },
+        true,
+      );
+    }
   }
 
   function onLevelChange(value) {
