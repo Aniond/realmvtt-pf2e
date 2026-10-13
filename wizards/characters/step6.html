@@ -1,0 +1,122 @@
+<script>
+  function wizardFindFeatSlot(feats, featType) {
+    return feats.findIndex(
+      (feat) =>
+        feat.data?.featSlotType === featType &&
+        parseInt(feat.data?.level, 10) === 1,
+    );
+  }
+
+  function wizardOnFeatsStepLoad() {
+    const gains = getLevelUpGains(record, 1);
+    const feats = record.data?.feats || [];
+    const valuesToSet = {
+      "fields.chooseAncestryFeat.hidden": !gains.featTypes.includes("ancestry"),
+      "fields.ancestryFeatName.hidden": !gains.featTypes.includes("ancestry"),
+      "fields.chooseClassFeat.hidden": !gains.featTypes.includes("class"),
+      "fields.classFeatName.hidden": !gains.featTypes.includes("class"),
+    };
+
+    // Show feats already chosen, if any
+    for (const featType of ["ancestry", "class"]) {
+      const slot = feats[wizardFindFeatSlot(feats, featType)];
+      if (slot && slot.data?.type !== "slot") {
+        valuesToSet[`data.wizard.${featType}FeatName`] = slot.name;
+      }
+    }
+
+    api.setValues(valuesToSet);
+  }
+
+  function wizardChooseFeat(featType) {
+    api.getRecord("characters", record._id, (latestRecord) => {
+      const feats = latestRecord.data?.feats || [];
+      const slotIndex = wizardFindFeatSlot(feats, featType);
+      if (slotIndex === -1) {
+        api.showNotification(
+          `Your Class has no level 1 ${capitalize(featType)} feat slot.`,
+          "yellow",
+          "No Feat Slot",
+        );
+        return;
+      }
+
+      api.showPrompt(
+        `Select a ${capitalize(featType)} Feat for Level 1`,
+        "Select Feat",
+        "Select a Feat...",
+        null,
+        getFeatSlotQuery(latestRecord, featType, 1),
+        (selected) => {
+          const feat = getPromptSelections(selected)[0];
+          if (!feat || typeof feat !== "object") {
+            return;
+          }
+          api.setValues(
+            {
+              [`data.feats.${slotIndex}`]: buildFilledFeatSlot(
+                feats[slotIndex],
+                feat,
+              ),
+              [`data.wizard.${featType}FeatName`]: feat.name,
+            },
+            (updatedRecord) => {
+              // Apply the feat, prompting for any choices it has
+              onAddEditFeature(updatedRecord);
+            },
+          );
+        },
+        "OK",
+        "Cancel",
+        1,
+      );
+    });
+  }
+</script>
+
+<p>
+  Choose your 1st-level feats.
+  <br /><br />
+  Your Ancestry feat represents an ability you learned early in life. Most
+  Classes also grant a Class feat at 1st level. Your Background's skill feat
+  was added automatically.
+</p>
+
+<div style="display: flex; flex-direction: column; gap: 8px">
+  <div style="display: flex; flex-direction: row; gap: 8px; align-items: flex-end">
+    <stringfield
+      label="Ancestry Feat"
+      field="ancestryFeatName"
+      placeholder="None chosen"
+      width="100%"
+      readonly="true"
+      onload="wizardOnFeatsStepLoad()"
+    ></stringfield>
+    <button
+      label="Choose"
+      field="chooseAncestryFeat"
+      variant="filled"
+      onclick="wizardChooseFeat('ancestry')"
+    ></button>
+  </div>
+
+  <div style="display: flex; flex-direction: row; gap: 8px; align-items: flex-end">
+    <stringfield
+      label="Class Feat"
+      field="classFeatName"
+      placeholder="None chosen"
+      width="100%"
+      readonly="true"
+    ></stringfield>
+    <button
+      label="Choose"
+      field="chooseClassFeat"
+      variant="filled"
+      onclick="wizardChooseFeat('class')"
+    ></button>
+  </div>
+</div>
+
+<p>
+  You can change these later from the Feats tab.
+</p>

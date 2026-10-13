@@ -71,8 +71,51 @@
       },
       "disableDrop": false,
       "wizard": {
-        "enabled": false,
-        "steps": []
+        "enabled": true,
+        "steps": [
+          {
+            "name": "Select Ancestry",
+            "file": "wizards/characters/step1.html",
+            "next": "Go to Background Selection",
+            "previous": ""
+          },
+          {
+            "name": "Select Background",
+            "file": "wizards/characters/step2.html",
+            "next": "Go to Class Selection",
+            "previous": ""
+          },
+          {
+            "name": "Select Class",
+            "file": "wizards/characters/step3.html",
+            "next": "Go to Attribute Modifiers",
+            "previous": ""
+          },
+          {
+            "name": "Finish Attribute Modifiers",
+            "file": "wizards/characters/step4.html",
+            "next": "Go to Skills & Languages",
+            "previous": ""
+          },
+          {
+            "name": "Skills & Languages",
+            "file": "wizards/characters/step5.html",
+            "next": "Go to Feats",
+            "previous": ""
+          },
+          {
+            "name": "Level 1 Feats",
+            "file": "wizards/characters/step6.html",
+            "next": "Go to Finishing Details",
+            "previous": ""
+          },
+          {
+            "name": "Finishing Details",
+            "file": "wizards/characters/step7.html",
+            "next": "Done",
+            "previous": ""
+          }
+        ]
       },
       "hideFromCompendium": false,
       "pdfExport": {

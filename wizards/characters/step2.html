@@ -1,0 +1,41 @@
+<script>
+  function onStepEnd() {
+    const chosenBackground = api.getValue("data.wizard.selectBackground");
+    let backgroundId = "";
+    if (chosenBackground) {
+      try {
+        const backgroundObject = JSON.parse(chosenBackground);
+        backgroundId = backgroundObject._id;
+      } catch (e) {
+        console.error("Error getting background ID", e);
+      }
+    }
+
+    // Get and set the Background
+    if (backgroundId) {
+      api.getRecord("backgrounds", backgroundId, (backgroundRecord) => {
+        // Call drop record
+        api.dropRecord(backgroundRecord);
+      });
+    }
+  }
+</script>
+
+<p>
+  Select your Character's Background.
+  <br /><br />
+  All available Backgrounds in the current Campaign will be shown in the
+  dropdown below.
+  <br /><br />
+  Your Background makes you trained in a skill and a Lore skill, and grants a
+  skill feat. Its two attribute boosts (one from two listed attributes, one
+  free) are chosen in the Attribute step.
+</p>
+
+<div>
+  <dropdown
+    label="Select Background"
+    field="selectBackground"
+    optionsquery='{"type": "backgrounds", "query": {}}'
+  ></dropdown>
+</div>

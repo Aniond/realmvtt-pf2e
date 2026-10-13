@@ -1,0 +1,43 @@
+<script>
+  function onStepEnd() {
+    const chosenAncestry = api.getValue("data.wizard.selectAncestry");
+    let ancestryId = "";
+    if (chosenAncestry) {
+      try {
+        const ancestryObject = JSON.parse(chosenAncestry);
+        ancestryId = ancestryObject._id;
+      } catch (e) {
+        console.error("Error getting ancestry ID", e);
+      }
+    }
+
+    // Get and set the Ancestry (the sheet then prompts for a Heritage)
+    if (ancestryId) {
+      api.getRecord("ancestry", ancestryId, (ancestryRecord) => {
+        // Call drop record
+        api.dropRecord(ancestryRecord);
+      });
+    }
+  }
+</script>
+
+<p>
+  Select your Character's Ancestry.
+  <br /><br />
+  All available Ancestries in the current Campaign will be shown in the
+  dropdown below.
+  <br /><br />
+  After completing this step, select a Heritage from the prompt that appears.
+  Heritages for your Ancestry and Versatile Heritages are both offered.
+  <br /><br />
+  Your Ancestry sets your Hit Points, size, Speed, and starting languages.
+  Ancestry boosts and flaws are applied in the Attribute step.
+</p>
+
+<div>
+  <dropdown
+    label="Select Ancestry"
+    field="selectAncestry"
+    optionsquery='{"type": "ancestry", "query": {}}'
+  ></dropdown>
+</div>

@@ -1,0 +1,141 @@
+<script>
+  function wizardToList(value) {
+    if (!value) return [];
+    return (Array.isArray(value) ? value : [value]).filter((item) => item);
+  }
+
+  function wizardGetSkillOptions() {
+    return getWizardSkillPicks(record).options;
+  }
+
+  function wizardGetLanguageOptions() {
+    return getWizardLanguages(record).options;
+  }
+
+  function wizardRefreshSkillsStep(overrides) {
+    const wizard = { ...(record.data?.wizard || {}), ...(overrides || {}) };
+    const skills = getWizardSkillPicks(record);
+    const languages = getWizardLanguages(record);
+    const chosenSkills = wizardToList(wizard.classSkills);
+    const chosenLanguages = wizardToList(wizard.extraLanguages);
+
+    const trainedLabels = skills.trained.map(capitalize).join(", ") || "None";
+    const errors = [];
+    if (chosenSkills.length !== skills.count) {
+      errors.push(
+        `Choose ${skills.count} skill(s); ${chosenSkills.length} chosen.`,
+      );
+    }
+    if (chosenLanguages.length > languages.extraCount) {
+      errors.push(
+        `You can learn ${languages.extraCount} extra language(s); ${chosenLanguages.length} chosen.`,
+      );
+    }
+
+    api.setValues({
+      "data.wizard.skillInfo": `Already trained: ${trainedLabels}. Choose ${skills.count} more (class skills + Intelligence).`,
+      "data.wizard.languageInfo": `Known: ${
+        languages.known.join(", ") || "None"
+      }. Extra languages: ${languages.extraCount}.`,
+      "data.wizard.skillsError": errors.join(" "),
+      "fields.skillsError.hidden": errors.length === 0,
+      "fields.extraLanguages.hidden": languages.extraCount === 0,
+    });
+  }
+
+  function wizardOnSkillsStepLoad() {
+    wizardRefreshSkillsStep();
+  }
+
+  function onStepEnd() {
+    const skills = getWizardSkillPicks(record);
+    const languages = getWizardLanguages(record);
+    const chosenSkills = wizardToList(record.data?.wizard?.classSkills)
+      .filter((skill) => skills.options.some((option) => option.value === skill))
+      .slice(0, skills.count);
+    const chosenLanguages = wizardToList(
+      record.data?.wizard?.extraLanguages,
+    ).slice(0, languages.extraCount);
+
+    const valuesToSet = {};
+    for (const skill of chosenSkills) {
+      valuesToSet[`data.${skill}`] = "1";
+    }
+
+    // Keep any languages already on the sheet
+    const allLanguages = [
+      ...new Set([
+        ...wizardToList(record.data?.languages),
+        ...languages.known,
+        ...chosenLanguages,
+      ]),
+    ];
+    if (allLanguages.length > 0) {
+      valuesToSet["data.languages"] = allLanguages;
+      valuesToSet["data.languagesList"] = buildLanguagesList(allLanguages);
+    }
+
+    if (Object.keys(valuesToSet).length > 0) {
+      api.setValues(valuesToSet, (updatedRecord) => {
+        // Recalculate skill modifiers
+        onAddEditFeature(updatedRecord, undefined, true);
+      });
+    }
+  }
+</script>
+
+<p>
+  Choose your trained skills and languages.
+  <br /><br />
+  Your Background and Class have already trained some skills. Your Class lets
+  you become trained in more skills, plus a number equal to your Intelligence
+  modifier. If a skill you would gain is already trained, pick another instead.
+</p>
+
+<div style="display: flex; flex-direction: column; gap: 8px">
+  <stringfield
+    field="skillInfo"
+    width="100%"
+    variant="unstyled"
+    onload="wizardOnSkillsStepLoad()"
+  ></stringfield>
+
+  <dropdown
+    label="Trained Skills"
+    field="classSkills"
+    placeholder="Choose Skills..."
+    multiselect="16"
+    optionsfunction="return wizardGetSkillOptions();"
+    onchange="wizardRefreshSkillsStep({ classSkills: value })"
+  ></dropdown>
+
+  <stringfield
+    field="languageInfo"
+    width="100%"
+    variant="unstyled"
+  ></stringfield>
+
+  <dropdown
+    label="Extra Languages"
+    field="extraLanguages"
+    placeholder="Choose Languages..."
+    multiselect="10"
+    hidden="true"
+    optionsfunction="return wizardGetLanguageOptions();"
+    onchange="wizardRefreshSkillsStep({ extraLanguages: value })"
+  ></dropdown>
+
+  <stringfield
+    label="Error"
+    field="skillsError"
+    width="100%"
+    hidden="true"
+    color="red"
+    variant="unstyled"
+  ></stringfield>
+</div>
+
+<p>
+  Lore skills from your Background are already added. To pick a Lore skill
+  instead of a regular skill, add it from the Skills tab later.
+</p>

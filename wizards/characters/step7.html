@@ -1,0 +1,44 @@
+<script>
+  function onStepEnd() {
+    const setStartingWealth = api.getValue("data.wizard.setStartingWealth");
+    if (setStartingWealth === false || setStartingWealth === "false") {
+      return;
+    }
+
+    // Only grant starting wealth to a character with no coins yet
+    const hasCoins = ["pp", "gp", "sp", "cp"].some(
+      (coin) => parseInt(record.data?.[coin] || 0, 10) > 0,
+    );
+    if (!hasCoins) {
+      api.setValues({ "data.gp": 15 });
+    }
+  }
+</script>
+
+<p>
+  Your Ancestry, Background, Class, attributes, skills, languages, and feats
+  are set. Finish your character from the sheet:
+</p>
+
+<ul>
+  <li>
+    <b>Spells:</b> If your Class casts spells, drag your cantrips and spells
+    from the Spells Compendium to your Actions tab.
+  </li>
+  <li>
+    <b>Equipment:</b> A 1st-level character starts with 15 gp. Drag weapons,
+    armor, and gear from the Items Compendium to your Inventory tab and spend
+    it from there.
+  </li>
+  <li>
+    <b>Details:</b> From the Notes tab, set your Deity, age, appearance, and
+    other personal details.
+  </li>
+</ul>
+
+<checkbox
+  field="setStartingWealth"
+  label="Give this character 15 gp of starting wealth"
+  defaultvalue="true"
+  color="primary"
+></checkbox>

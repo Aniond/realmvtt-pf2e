@@ -13066,3 +13066,267 @@ function elementalBlast() {
     );
   }
 }
+
+// Guided Level Up (Player Core: Leveling Up). Pure helpers used by the
+// character sheet's Level Up flow.
+
+const LEVEL_UP_BOOST_LEVELS = [5, 10, 15, 20];
+const PROFICIENCY_RANK_NAMES = [
+  "Untrained",
+  "Trained",
+  "Expert",
+  "Master",
+  "Legendary",
+];
+
+// What a character gains on reaching newLevel, read from their class record
+function getLevelUpGains(record, newLevel) {
+  const classObj = record.data?.classes?.[0];
+  const toLevels = (levels) =>
+    (levels || []).map((level) => parseInt(level, 10));
+
+  const featTypes = [];
+  for (const [featType, levelsField] of [
+    ["ancestry", "ancestryFeatLevels"],
+    ["class", "classFeatLevels"],
+    ["skill", "skillFeatLevels"],
+    ["general", "generalFeatLevels"],
+  ]) {
+    if (toLevels(classObj?.data?.[levelsField]).includes(newLevel)) {
+      featTypes.push(featType);
+    }
+  }
+
+  const conMod = parseInt(record.data?.conMod ?? record.data?.con ?? 0, 10) || 0;
+  const classHp = parseInt(classObj?.data?.hp || 0, 10) || 0;
+
+  const classFeatures = (classObj?.data?.features || [])
+    .filter((feature) => parseInt(feature.data?.level, 10) === newLevel)
+    .map((feature) => feature.name)
+    .filter((name) => name);
+
+  return {
+    level: newLevel,
+    className: classObj?.name || record.data?.className || "",
+    hp: classHp + conMod,
+    attributeBoosts: LEVEL_UP_BOOST_LEVELS.includes(newLevel),
+    skillIncrease: toLevels(classObj?.data?.skillIncreaseLevels).includes(
+      newLevel,
+    ),
+    featTypes,
+    classFeatures,
+  };
+}
+
+function getLevelUpSummary(gains) {
+  const lines = [];
+  if (gains.hp > 0) {
+    lines.push(`+${gains.hp} maximum Hit Points`);
+  }
+  lines.push("+1 to all proficiency bonuses");
+  if (gains.classFeatures.length > 0) {
+    lines.push(`Class features: ${gains.classFeatures.join(", ")}`);
+  }
+  if (gains.attributeBoosts) {
+    lines.push("4 attribute boosts");
+  }
+  if (gains.skillIncrease) {
+    lines.push("1 skill increase");
+  }
+  for (const featType of gains.featTypes) {
+    lines.push(`${capitalize(featType)} feat`);
+  }
+  return lines.join("\n");
+}
+
+// Highest skill rank reachable by a skill increase at this level
+function getMaxSkillIncreaseRank(level) {
+  if (level >= 15) return 4;
+  if (level >= 7) return 3;
+  return 2;
+}
+
+function getSkillIncreaseOptions(record, newLevel) {
+  const maxRank = getMaxSkillIncreaseRank(newLevel);
+  const options = [];
+  for (const skill of Object.keys(getPathfinderSkills())) {
+    const rank = parseInt(record.data?.[skill] || "0", 10) || 0;
+    if (rank < maxRank) {
+      options.push({
+        label: `${capitalize(skill)}: ${PROFICIENCY_RANK_NAMES[rank]} to ${
+          PROFICIENCY_RANK_NAMES[rank + 1]
+        }`,
+        value: skill,
+      });
+    }
+  }
+  return options;
+}
+
+function getLevelUpBoostOptions(record) {
+  return ["str", "dex", "con", "int", "wis", "cha"].map((ability) => {
+    const modifier = parseInt(record.data?.[`${ability}Mod`] || "0", 10) || 0;
+    const sign = modifier >= 0 ? "+" : "";
+    // Above +4 a boost only counts as a partial boost
+    const note = modifier >= 4 ? ", partial boost" : "";
+    return {
+      label: `${getLabelForAbility(ability)} (${sign}${modifier}${note})`,
+      value: ability,
+    };
+  });
+}
+
+// Compendium query for feats that fit a feat slot (mirrors feats-list.html)
+function getFeatSlotQuery(record, featSlotType, featSlotLevel) {
+  const className =
+    record.data?.classes?.[0]?.name || record.data?.className || "";
+  const ancestryName =
+    record.data?.ancestries?.[0]?.name || record.data?.ancestryName || "";
+  const heritageName =
+    record.data?.heritages?.[0]?.name || record.data?.heritageName || "";
+
+  const seen = new Set();
+  const ancestryTraits = [ancestryName, heritageName, ...(record.data?.traits || [])]
+    .filter((trait) => trait && trait.trim())
+    .filter((trait) => {
+      const lowerTrait = trait.toLowerCase();
+      if (seen.has(lowerTrait)) {
+        return false;
+      }
+      seen.add(lowerTrait);
+      return true;
+    });
+
+  return {
+    type: "feats",
+    query: {
+      $or: [
+        { "data.level": { $lte: featSlotLevel } },
+        { "data.level": { $exists: false } },
+        { "data.level": null },
+      ],
+      ...(featSlotType === "general"
+        ? { "data.type": { $in: ["general", "skill"] } }
+        : { "data.type": featSlotType }),
+      ...(featSlotType === "class" && className
+        ? {
+            "data.traits": {
+              $elemMatch: { $regex: `^${className}$`, $options: "i" },
+            },
+          }
+        : featSlotType === "ancestry" && ancestryTraits.length > 0
+          ? {
+              "data.traits": {
+                $elemMatch: {
+                  $regex: `^(${ancestryTraits.join("|")})$`,
+                  $options: "i",
+                },
+              },
+            }
+          : {}),
+    },
+  };
+}
+
+// The feat as stored in a filled slot (mirrors feats-list.html onDropFeat)
+function buildFilledFeatSlot(featSlot, feat) {
+  return {
+    ...feat,
+    _id: featSlot._id,
+    data: {
+      ...feat.data,
+      level: featSlot.data?.level,
+      featSlotType: featSlot.data?.featSlotType,
+      slotOrder: featSlot.data?.slotOrder,
+    },
+    fields: {
+      ...(feat.fields || {}),
+      featDetails: { hidden: false },
+      featSlot: { hidden: true },
+    },
+  };
+}
+
+// api.showPrompt hands back values or records, singly or as an array
+function getPromptSelections(selected) {
+  if (selected === undefined || selected === null || selected === "") {
+    return [];
+  }
+  const list = Array.isArray(selected) ? selected : [selected];
+  return list
+    .map((item) =>
+      item && typeof item === "object" && "value" in item && !item._id
+        ? item.value
+        : item,
+    )
+    .filter((item) => item !== undefined && item !== null && item !== "");
+}
+
+// Character Creation Wizard helpers (Player Core: Step 7 skills, languages)
+
+// Int modifier straight from the boosts, so it is right before the sheet recalculates
+function getWizardIntMod(record) {
+  const fromBoosts = calculateAbilityBoosts(record)?.int?.modifier;
+  if (typeof fromBoosts === "number") {
+    return fromBoosts;
+  }
+  return parseInt(record.data?.intMod ?? record.data?.int ?? 0, 10) || 0;
+}
+
+// Class skill picks: the class's additional trained skills plus Int modifier
+function getWizardSkillPicks(record) {
+  const classObj = record.data?.classes?.[0];
+  const intMod = getWizardIntMod(record);
+  const additional =
+    parseInt(classObj?.data?.trainedSkillsAdditional || 0, 10) || 0;
+  const count = Math.max(0, additional + intMod);
+
+  const skills = Object.keys(getPathfinderSkills());
+  const trained = skills.filter(
+    (skill) => (parseInt(record.data?.[skill] || "0", 10) || 0) >= 1,
+  );
+  const options = skills
+    .filter((skill) => !trained.includes(skill))
+    .map((skill) => ({ label: capitalize(skill), value: skill }));
+
+  return { count, trained, options };
+}
+
+function cleanLanguageName(language) {
+  return (language || "").replace(/\s*\([^)]*\)$/, "").trim();
+}
+
+// Ancestry languages, plus one extra per point of positive Int modifier
+function getWizardLanguages(record) {
+  const ancestry = record.data?.ancestries?.[0]?.data || {};
+  const known = [
+    ...new Set((ancestry.langauges || ancestry.languages || []).map(cleanLanguageName)),
+  ].filter((language) => language);
+
+  const intMod = getWizardIntMod(record);
+  const extraCount =
+    Math.max(0, intMod) +
+    (parseInt(ancestry.additionalLanguages?.count || 0, 10) || 0);
+
+  // Ancestry's listed languages first, then every common language
+  const ancestryChoices = (ancestry.additionalLanguages?.value || []).map(
+    cleanLanguageName,
+  );
+  const commonChoices = getLanguageOptions()
+    .filter((option) => /\(Common\)$/.test(option.label))
+    .map((option) => option.value);
+  const options = [...new Set([...ancestryChoices, ...commonChoices])]
+    .filter((language) => language && !known.includes(language))
+    .map((language) => ({ label: language, value: language }));
+
+  return { known, extraCount, options };
+}
+
+function buildLanguagesList(languages) {
+  return languages.map((language) => ({
+    _id: generateUuid(),
+    name: language,
+    identified: true,
+    data: { description: `Can speak the ${language} language.` },
+  }));
+}
