@@ -1082,7 +1082,11 @@ api.getRecord('${record.recordType}', '${record._id}', (record) => {
 
 function getSpellSaveMacro(record, spell, spellCastingEntry, dataPathToSpell) {
   const saveType = spell?.data?.defense?.save?.statistic;
-  const saveDC = spellCastingEntry?.data?.dc || 0;
+  // NPC spell DCs are stored numbers; Proficiency without Level subtracts the
+  // creature's level (0 for characters, whose DC is already calculated)
+  let saveDC =
+    (spellCastingEntry?.data?.dc || 0) +
+    getNpcProficiencyWithoutLevelAdjustment(record);
   const spellDCMods = getEffectsAndModifiersForToken(
     record,
     ["spellDCBonus", "spellDCPenalty"],
@@ -1108,7 +1112,9 @@ function getSpellAttackMacro(
 
   const spellName = spell?.name || "Spell";
   const defenseStatistic = defense.passive.statistic; // ac, fortitude-dc, reflex-dc, or will-dc
-  const spellAttackMod = spellCastingEntry?.data?.mod || 0;
+  const spellAttackMod =
+    (spellCastingEntry?.data?.mod || 0) +
+    getNpcProficiencyWithoutLevelAdjustment(record);
   const range = (spell?.data?.range || "").toLowerCase().trim();
 
   // Determine if spell is melee

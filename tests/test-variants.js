@@ -363,4 +363,40 @@ section("Turning variants on for existing characters");
   useVariants();
 }
 
+section("Proficiency without Level for creatures");
+{
+  const npc = (level, data = {}) => ({
+    _id: "npc",
+    recordType: "npcs",
+    data: { level, fortitudeMod: 12, attributes: { ac: { value: 22 } }, ...data },
+  });
+  const pcRecord = { _id: "pc", recordType: "characters", data: { level: 5, fortitudeMod: 9, ac: 21 } };
+
+  useVariants();
+  assert("off: no change", ctx.getNpcProficiencyWithoutLevelAdjustment(npc(5)), 0);
+  assert("off: NPC AC as written", ctx.getArmorClassForToken(npc(5)), 22);
+
+  useVariants("proficiencyWithoutLevel");
+  assert("NPC subtracts its level", ctx.getNpcProficiencyWithoutLevelAdjustment(npc(5)), -5);
+  assert("characters are already handled", ctx.getNpcProficiencyWithoutLevelAdjustment(pcRecord), 0);
+  assert("NPC token reads its record", ctx.getNpcProficiencyWithoutLevelAdjustment({ recordType: "tokens", record: { data: { level: 7 } } }), -7);
+  assert("level -1 creature adds 1", ctx.getNpcProficiencyWithoutLevelAdjustment(npc(-1)), 1);
+  assert("NPC AC drops by level", ctx.getArmorClassForToken(npc(5)), 17);
+  assert("NPC save DC drops by level", ctx.getSaveDCForToken(npc(5), "fortitude"), 10 + 12 - 5);
+  assert("character AC unchanged", ctx.getArmorClassForToken(pcRecord), 21);
+  assert("character save DC unchanged", ctx.getSaveDCForToken(pcRecord, "fortitude"), 19);
+
+  // Rolls show the adjustment as its own line
+  const captured = [];
+  const promptRoll = ctx.api.promptRoll;
+  ctx.api.promptRoll = (name, dice, modifiers) => captured.push({ name, modifiers });
+  ctx.rollSave(npc(5), "fortitude");
+  ctx.rollSkill(npc(5, { skills: [{ name: "Athletics", data: { mod: 14 } }] }), "athletics");
+  ctx.api.promptRoll = promptRoll;
+  const pwlLine = (roll) => (roll?.modifiers || []).find((m) => m.name === "Proficiency without Level");
+  assert("save roll shows -level", pwlLine(captured[0])?.value, -5);
+  assert("skill roll shows -level", pwlLine(captured[1])?.value, -5);
+  useVariants();
+}
+
 process.exitCode = summary() > 0 ? 1 : 0;

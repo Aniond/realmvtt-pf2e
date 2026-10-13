@@ -3358,7 +3358,8 @@ function getSaveDCForToken(token, saveType) {
 
   const saveValue = parseInt(token.data?.[`${saveType}Mod`] || "0", 10);
 
-  let saveDC = 10 + saveValue;
+  // Proficiency without Level: creatures subtract their level
+  let saveDC = 10 + saveValue + getNpcProficiencyWithoutLevelAdjustment(token);
 
   saveMods.forEach((mod) => {
     const value = parseInt(mod.value || 0, 10);
@@ -3391,6 +3392,8 @@ function getArmorClassForToken(token, targetIsOffGuardDueToFlanking = false) {
 
   // NPCs store in attributes.ac.value, PCs store in ac, fall back to 10 as the default
   let ac = tokenData?.attributes?.ac?.value || tokenData?.ac || 10;
+  // Proficiency without Level: creatures subtract their level
+  ac += getNpcProficiencyWithoutLevelAdjustment(token);
 
   // Check if there's already a circumstance penalty
   const existingCircumstancePenalty = acModifiers.find(
@@ -6580,6 +6583,12 @@ function rollSave(record, type, dc = null, isSpell = false, isMacro = false) {
     });
   }
 
+  // Proficiency without Level: creatures subtract their level
+  const pwlSaveModifier = getNpcProficiencyWithoutLevelModifier(record);
+  if (pwlSaveModifier) {
+    modifiers.push(pwlSaveModifier);
+  }
+
   // Get any additional modifiers from effects
   const additionalMods = getEffectsAndModifiersForToken(
     record,
@@ -6809,6 +6818,12 @@ function rollSkill(
       value: skillMod,
       active: true,
     });
+  }
+
+  // Proficiency without Level: creatures subtract their level
+  const pwlSkillModifier = getNpcProficiencyWithoutLevelModifier(record);
+  if (pwlSkillModifier) {
+    modifiers.push(pwlSkillModifier);
   }
 
   // Build context object for action-based predicates
@@ -9527,6 +9542,10 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber = 1) {
         value: attackBonus,
         active: true,
       });
+    }
+    const pwlModifier = getNpcProficiencyWithoutLevelModifier(record);
+    if (pwlModifier) {
+      modifiers.push(pwlModifier);
     }
   } else {
     // PC weapon proficiency and potency runes
@@ -14031,4 +14050,30 @@ function describeNewFeatSlots(oldFeats, newFeats) {
     .map((type) => `${after[type] - (before[type] || 0)} ${capitalize(type)}`);
   if (added.length === 0) return "";
   return `New feat slots from your campaign's variant rules: ${added.join(", ")}. Fill them on the Feats tab.`;
+}
+
+// Proficiency without Level (GM Core pg. 85) for creatures and hazards: every
+// statistic that includes proficiency (attacks, AC, saves, Perception, skills,
+// spell attacks and DCs) drops by the creature's level. NPC stat blocks store
+// finished numbers, so this is applied when they're used. HP, damage and other
+// statistics without proficiency don't change. Returns 0 for characters.
+function getNpcProficiencyWithoutLevelAdjustment(record, variants = getVariantRules()) {
+  if (!variants.proficiencyWithoutLevel || !record) return 0;
+  const isNpc = record.recordType === "npcs" || record.recordType === "tokens";
+  if (!isNpc) return 0;
+  const data = record.data === undefined ? record.record?.data : record.data;
+  return -(parseInt(data?.level || 0, 10) || 0);
+}
+
+// The adjustment as a roll modifier, or null when there is none
+function getNpcProficiencyWithoutLevelModifier(record) {
+  const value = getNpcProficiencyWithoutLevelAdjustment(record);
+  if (value === 0) return null;
+  return {
+    name: "Proficiency without Level",
+    type: "",
+    value,
+    isPenalty: value < 0,
+    active: true,
+  };
 }
