@@ -141,7 +141,8 @@
       errors.push("Background boosts must be different attributes.");
     }
 
-    if (!chosen.keyAbility) {
+    // Level 0 Characters have no class, so no key attribute boost yet
+    if (!chosen.keyAbility && !getVariantRules().levelZero) {
       errors.push("Choose a Key Attribute.");
     }
 
@@ -212,13 +213,14 @@
       ),
       "data.wizard.boostError": errors.join(" "),
       "fields.boostError.hidden": errors.length === 0,
+      "fields.keyAbility.hidden": getVariantRules().levelZero,
       "fields.alternateBoosts.hidden": !info.canUseAlternate,
       "fields.ancestryBoost2.hidden":
         wizardGetAncestryFreePicks(info, useAlternate) !== 2,
     };
 
     // Preselect the Key Attribute when the Class only allows one
-    if (!chosen.keyAbility) {
+    if (!chosen.keyAbility && !getVariantRules().levelZero) {
       const keyOptions = wizardGetKeyAbilityOptions();
       if (keyOptions.length === 1) {
         valuesToSet["data.wizard.keyAbility"] = keyOptions[0].value;

@@ -114,7 +114,7 @@ section("getFeatSlotQuery");
   assert(
     "class feat trait",
     classQuery["data.traits"].$elemMatch.$regex,
-    "^Fighter$",
+    "^(Fighter|Archetype)$",
   );
 
   const generalQuery = ctx.getFeatSlotQuery(pc, "general", 3).query;

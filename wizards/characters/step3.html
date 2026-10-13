@@ -1,5 +1,32 @@
 <script>
+  function wizardOnClassStepLoad() {
+    // Level 0 Characters: no class until 1st level
+    const levelZero = getVariantRules().levelZero;
+    api.setValues({
+      "fields.selectClass.hidden": levelZero,
+      "fields.classStepInfo.hidden": levelZero,
+      "fields.levelZeroInfo.hidden": !levelZero,
+    });
+  }
+
   function onStepEnd() {
+    if (getVariantRules().levelZero) {
+      api.setValues(
+        {
+          "data.classes": [buildLevelZeroClass()],
+          "data.className": "Level 0",
+          "data.level": 0,
+          "data.keyAbility": "",
+          "fields.classes.hidden": false,
+          "fields.classDetailsLabel.hidden": true,
+        },
+        (updatedRecord) => {
+          onAddEditFeature(updatedRecord, undefined, true);
+        },
+      );
+      return;
+    }
+
     const chosenClass = api.getValue("data.wizard.selectClass");
     let classId = "";
     if (chosenClass) {
@@ -21,23 +48,39 @@
   }
 </script>
 
-<p>
-  Select your Character's Class.
-  <br /><br />
-  All available Classes in the current Campaign will be shown in the dropdown
-  below.
-  <br /><br />
-  After completing this step, make any class choices from the prompts that
-  appear (such as skills or class features). Your Class sets your starting
-  level to 1, adds its Hit Points to your Ancestry's, and sets your Perception,
-  save, skill, weapon, and armor proficiencies. Your Key Attribute boost is
-  chosen in the Attribute step.
-</p>
+<box field="classStepInfo">
+  <p>
+    Select your Character's Class.
+    <br /><br />
+    All available Classes in the current Campaign will be shown in the
+    dropdown below.
+    <br /><br />
+    After completing this step, make any class choices from the prompts that
+    appear (such as skills or class features). Your Class sets your starting
+    level to 1, adds its Hit Points to your Ancestry's, and sets your
+    Perception, save, skill, weapon, and armor proficiencies. Your Key
+    Attribute boost is chosen in the Attribute step.
+  </p>
+</box>
+
+<box field="levelZeroInfo" hidden="true">
+  <p>
+    Your GM is using Level 0 Characters (GM Core). You start at level 0 with
+    only your Ancestry and Background, and choose a Class when you reach 1st
+    level.
+    <br /><br />
+    Until then you are trained in Perception, all saving throws, unarmed
+    attacks, unarmored defense, one simple weapon, and 2 + Intelligence
+    modifier skills. Your Hit Points are your Ancestry's Hit Points plus your
+    Constitution modifier, and you start with 5 gp.
+  </p>
+</box>
 
 <div>
   <dropdown
     label="Select Class"
     field="selectClass"
     optionsquery='{"type": "class", "query": {}}'
+    onload="wizardOnClassStepLoad()"
   ></dropdown>
 </div>

@@ -56,6 +56,24 @@
       return;
     }
 
+    const isArchetypeFeat = (feat?.data?.traits || []).some(
+      (trait) => `${trait}`.toLowerCase() === "archetype"
+    );
+    if (featSlotType === "archetype" && !isArchetypeFeat) {
+      api.showNotification(
+        `This slot only accepts Archetype feats.`,
+        "red",
+        "Feat Type Mismatch"
+      );
+      return;
+    }
+
+    // Remind about the dedication rule, but let the GM decide
+    const dedicationWarning = getDedicationWarning(updatedRecord, feat);
+    if (dedicationWarning) {
+      api.showNotification(dedicationWarning, "yellow", "Dedication Feat");
+    }
+
     if (
       featSlotType === "general" &&
       featType !== "general" &&
@@ -158,22 +176,6 @@
     const featSlotType = featSlot?.data?.featSlotType;
     const featSlotLevel = parseInt(featSlot?.data?.level || "0", 10);
 
-    const classes = record?.data?.classes || [];
-    const className = classes?.[0]?.name || record?.data?.className || "";
-    const ancestries = record?.data?.ancestries || [];
-    const ancestryName =
-      ancestries?.[0]?.name || record?.data?.ancestryName || "";
-    const heritage = record?.data?.heritages || [];
-    const heritageName =
-      heritage?.[0]?.name || record?.data?.heritageName || "";
-    const ourTraits = record?.data?.traits || [];
-
-    const options = [];
-
-    if (featSlotType === "ancestry") {
-      options.push({ label: "Ancestry Feat", value: "ancestry" });
-    }
-
     const optionSelection = (values) => {
       if (values.length > 0) {
         const feat = values[0];
@@ -181,54 +183,9 @@
       }
     };
 
-    // Collect all traits for ancestry feats and remove duplicates (case insensitive)
-    const ancestryTraits = [];
-    if (ancestryName) ancestryTraits.push(ancestryName);
-    if (heritageName) ancestryTraits.push(heritageName);
-    ancestryTraits.push(...ourTraits);
-
-    // Remove duplicates case-insensitively
-    const seen = new Set();
-    const uniqueAncestryTraits = ancestryTraits
-      .filter((trait) => trait && trait.trim())
-      .filter((trait) => {
-        const lowerTrait = trait.toLowerCase();
-        if (seen.has(lowerTrait)) {
-          return false;
-        }
-        seen.add(lowerTrait);
-        return true;
-      });
-
-    const optionsQuery = {
-      type: "feats",
-      query: {
-        $or: [
-          { "data.level": { $lte: featSlotLevel } },
-          { "data.level": { $exists: false } },
-          { "data.level": null },
-        ],
-        ...(featSlotType === "general"
-          ? { "data.type": { $in: ["general", "skill"] } }
-          : { "data.type": featSlotType }),
-        ...(featSlotType === "class" && className
-          ? {
-              "data.traits": {
-                $elemMatch: { $regex: `^${className}$`, $options: "i" },
-              },
-            }
-          : featSlotType === "ancestry" && uniqueAncestryTraits.length > 0
-          ? {
-              "data.traits": {
-                $elemMatch: {
-                  $regex: `^(${uniqueAncestryTraits.join("|")})$`,
-                  $options: "i",
-                },
-              },
-            }
-          : {}),
-      },
-    };
+    // Shared with the level up flow; archetype feats are allowed in class
+    // slots, and archetype slots (Free Archetype) take only archetype feats
+    const optionsQuery = getFeatSlotQuery(record, featSlotType, featSlotLevel);
 
     api.showPrompt(
       `Select a ${capitalize(featSlotType)} Feat for Level ${featSlotLevel}`,

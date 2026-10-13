@@ -2,12 +2,14 @@
   function wizardRefreshFunds(overrides) {
     const wizard = { ...(record.data?.wizard || {}), ...(overrides || {}) };
     const spent = getWizardSpentCp(wizard.items || [], wizard.kitSpentCp || 0);
-    const remaining = WIZARD_STARTING_WEALTH_CP - spent;
+    // 15 gp, or 5 gp for Level 0 characters
+    const budget = getWizardStartingWealthCp(record);
+    const remaining = budget - spent;
 
     api.setValues({
       "data.wizard.fundsLabel":
         remaining >= 0
-          ? `${formatCp(remaining)} left of 15 gp`
+          ? `${formatCp(remaining)} left of ${formatCp(budget)}`
           : `Over budget by ${formatCp(-remaining)}`,
     });
   }
@@ -65,10 +67,11 @@
         (item) => !item.data?.fromClassKit,
       );
       const spent = getWizardSpentCp(items, 0);
-      if (spent + kitCost > WIZARD_STARTING_WEALTH_CP) {
+      const budget = getWizardStartingWealthCp(latestRecord);
+      if (spent + kitCost > budget) {
         api.showNotification(
           `The ${kit.name} costs ${formatCp(kitCost)}, but you only have ${formatCp(
-            WIZARD_STARTING_WEALTH_CP - spent,
+            budget - spent,
           )} left.`,
           "red",
           "Not Enough Money",
@@ -173,7 +176,7 @@
 
       let items = [...(wizard.items || [])];
       let remaining =
-        WIZARD_STARTING_WEALTH_CP -
+        getWizardStartingWealthCp(latestRecord) -
         getWizardSpentCp(items, wizard.kitSpentCp || 0);
 
       for (const item of selectedItems) {
@@ -219,7 +222,7 @@
       const items = wizard.items || [];
       const remaining = Math.max(
         0,
-        WIZARD_STARTING_WEALTH_CP -
+        getWizardStartingWealthCp(latestRecord) -
           getWizardSpentCp(items, wizard.kitSpentCp || 0),
       );
       const coins = splitCp(remaining);
@@ -251,7 +254,8 @@
 
 <p>
   Buy your starting equipment. A 1st-level character has 15 gp to spend on
-  armor, weapons, and gear. Whatever you don't spend is added to your coins.
+  armor, weapons, and gear (a Level 0 character has 5 gp). Whatever you don't
+  spend is added to your coins.
 </p>
 
 <div style="display: flex; flex-direction: column; gap: 8px">

@@ -197,6 +197,8 @@
           classObj.data?.keyAbility?.length > 0
             ? classObj.data?.keyAbility[0]
             : "none",
+        // Shown again if the Level 0 creation wizard hid it
+        "fields.keyAbility.hidden": false,
       },
       (updatedRecord) => {
         // Recalculate ability scores for bonuses and such
@@ -330,7 +332,7 @@
     // Check if we need to show/hide the level up button
     // If we're not doing a change to boost fields, check if we need to show/hide the level up button
     if (
-      record.data?.xp >= 1000 &&
+      record.data?.xp >= getXpToNextLevel(record) &&
       record.data?.level < 20 &&
       record.fields?.levelUpBtn?.hidden !== false
     ) {
@@ -452,33 +454,12 @@
   }
 
   function onLevelChange(value) {
-    const valuesToSet = {
-      "fields.freeBoostsLevel5.hidden": true,
-      "fields.freeBoostsLevel10.hidden": true,
-      "fields.freeBoostsLevel15.hidden": true,
-      "fields.freeBoostsLevel20.hidden": true,
-    };
-
-    if (value >= 5) {
-      valuesToSet["fields.freeBoostsLevel5.hidden"] = false;
-    } else {
-      valuesToSet["data.freeBoostsLevel5"] = [];
-    }
-    if (value >= 10) {
-      valuesToSet["fields.freeBoostsLevel10.hidden"] = false;
-    } else {
-      valuesToSet["data.freeBoostsLevel10"] = [];
-    }
-    if (value >= 15) {
-      valuesToSet["fields.freeBoostsLevel15.hidden"] = false;
-    } else {
-      valuesToSet["data.freeBoostsLevel15"] = [];
-    }
-    if (value >= 20) {
-      valuesToSet["fields.freeBoostsLevel20.hidden"] = false;
-    } else {
-      valuesToSet["data.freeBoostsLevel20"] = [];
-    }
+    // Show the boost sets this level has reached and drop boosts above it
+    // (Gradual Ability Boosts fills a set one level at a time)
+    const valuesToSet = getFreeBoostFieldsForLevel(
+      record,
+      parseInt(value || "0", 10),
+    );
 
     api.setValues(valuesToSet, (updatedRecord) => {
       // Update everything using the new level, prompting for choices if
@@ -488,7 +469,7 @@
   }
 
   function onXPChange(value) {
-    if (value >= 1000 && record.data?.level < 20) {
+    if (value >= getXpToNextLevel(record) && record.data?.level < 20) {
       api.setHidden("levelUpBtn", false);
     } else {
       api.setHidden("levelUpBtn", true);
@@ -496,6 +477,11 @@
   }
 
   function onLevelUp() {
+    // Level 0 Characters take a class on reaching 1st level
+    if (isLevelZeroCharacter(record)) {
+      levelUpFromZero();
+      return;
+    }
     const currentLevel = parseInt(record.data?.level || "1", 10);
     if (currentLevel >= 20) {
       return;
@@ -513,8 +499,162 @@ ${getLevelUpSummary(gains)}`,
     );
   }
 
+  // Level 0 Characters (GM Core): reaching 1st level means choosing a class
+  function levelUpFromZero() {
+    api.showConfirm(
+      "Level Up to 1",
+      "Choose your class. You gain its key attribute boost, Hit Points, proficiencies, class features, and 1st-level feats.",
+      "Choose Class",
+      "Cancel",
+      () => {
+        api.showPrompt(
+          "Choose a Class",
+          "Select your class for 1st level",
+          "Select Class...",
+          null,
+          { type: "class", query: {} },
+          (selected) => {
+            const classRecord = getPromptSelections(selected)[0];
+            if (classRecord && typeof classRecord === "object") {
+              applyClassAtFirstLevel(classRecord);
+            }
+          },
+          "OK",
+          "Cancel",
+          1,
+        );
+      },
+    );
+  }
+
+  // Mirrors onDropClass, then walks through the 1st-level choices
+  function applyClassAtFirstLevel(classRecord) {
+    const classObj = { ...classRecord, data: { ...classRecord.data } };
+    const traits = classObj.data?.traits || [];
+    const nonRarityTraits = traits.filter((trait) => !getIsTraitRarity(trait));
+    classObj.data.traits = nonRarityTraits;
+    const traitsObjects = nonRarityTraits.map((trait) => ({
+      _id: generateUuid(),
+      name: trait,
+      identified: true,
+      data: {},
+    }));
+    const newTraits = [
+      ...new Set([...(record.data?.traits || []), ...nonRarityTraits]),
+    ];
+    const newTraitsList = [
+      ...(record.data?.traitsList || []),
+      ...traitsObjects,
+    ].filter(
+      (trait, index, self) =>
+        self.findIndex((t) => t.name === trait.name) === index,
+    );
+    const keyOptions = classObj.data?.keyAbility || [];
+    const newXp = Math.max(
+      0,
+      (record.data?.xp || 0) - getXpToNextLevel(record),
+    );
+
+    api.setValues(
+      {
+        "data.level": 1,
+        "data.xp": newXp,
+        "fields.levelUpBtn.hidden": newXp < 1000,
+        "data.classes": [classObj],
+        "data.className": classObj.name,
+        "data.traitsList": newTraitsList,
+        "data.traits": newTraits,
+        "data.keyAbility": keyOptions.length === 1 ? keyOptions[0] : "",
+        // The creation wizard hid the key attribute while at level 0
+        "fields.keyAbility.hidden": false,
+        "fields.classes.hidden": false,
+        "fields.classDetailsLabel.hidden": true,
+      },
+      (recordUpdated) => {
+        // Recalculate HP, proficiencies and feat slots, then the choices
+        onAddEditFeature(
+          recordUpdated,
+          () => {
+            const steps = [];
+            if (keyOptions.length > 1) {
+              steps.push((next) => promptFirstLevelKeyAttribute(keyOptions, next));
+            }
+            const skillPicks = getLevelZeroClassSkillPicks(classObj);
+            if (skillPicks > 0) {
+              steps.push((next) => promptFirstLevelSkills(skillPicks, next));
+            }
+            // The ancestry feat was chosen at level 0, so its slot is skipped
+            for (const featType of getLevelUpGains(recordUpdated, 1).featTypes) {
+              steps.push((next) => promptLevelUpFeat(featType, 1, next));
+            }
+            runLevelUpSteps(steps, 0, 1);
+          },
+          true,
+        );
+      },
+    );
+  }
+
+  function promptFirstLevelKeyAttribute(keyOptions, next) {
+    api.showPrompt(
+      "Key Attribute",
+      "Choose your class's key attribute. It gains your class's attribute boost.",
+      "Choose an Attribute...",
+      keyOptions.map((ability) => ({
+        label: getLabelForAbility(ability),
+        value: ability,
+      })),
+      null,
+      (selected) => {
+        const ability = getPromptSelections(selected)[0];
+        if (!ability) {
+          next();
+          return;
+        }
+        api.setValues({ "data.keyAbility": ability }, () => next());
+      },
+      "OK",
+      "Skip",
+      1,
+    );
+  }
+
+  function promptFirstLevelSkills(count, next) {
+    api.getRecord("characters", record._id, (latestRecord) => {
+      const options = getWizardSkillPicks(latestRecord).options;
+      if (options.length === 0) {
+        next();
+        return;
+      }
+      api.showPrompt(
+        "Class Skills",
+        `Your class trains you in ${count} more skill${
+          count === 1 ? "" : "s"
+        }. The skills you chose at level 0 count toward your class's total.`,
+        "Choose Skills...",
+        options,
+        null,
+        (selected) => {
+          const skills = getPromptSelections(selected).slice(0, count);
+          if (skills.length === 0) {
+            next();
+            return;
+          }
+          const valuesToSet = {};
+          for (const skill of skills) {
+            valuesToSet[`data.${skill}`] = "1";
+          }
+          api.setValues(valuesToSet, () => next());
+        },
+        "OK",
+        "Skip",
+        count,
+      );
+    });
+  }
+
   function applyLevelUp(newLevel, gains) {
-    const newXp = Math.max(0, (record.data?.xp || 0) - 1000);
+    const newXp = Math.max(0, (record.data?.xp || 0) - getXpToNextLevel(record));
     const showLevelUpBtn = newXp >= 1000 && newLevel < 20;
     const valuesToSet = {
       "data.level": newLevel,
@@ -523,11 +663,7 @@ ${getLevelUpSummary(gains)}`,
       // Hide the level up button if XP needed
       "fields.levelUpBtn.hidden": !showLevelUpBtn,
     };
-    for (const boostLevel of [5, 10, 15, 20]) {
-      if (newLevel >= boostLevel) {
-        valuesToSet[`fields.freeBoostsLevel${boostLevel}.hidden`] = false;
-      }
-    }
+    Object.assign(valuesToSet, getFreeBoostFieldsForLevel(record, newLevel));
 
     api.setValues(valuesToSet, (recordUpdated) => {
       // Recalculate HP, proficiencies and feat slots for the new level, then
@@ -537,13 +673,22 @@ ${getLevelUpSummary(gains)}`,
         () => {
           const steps = [];
           if (gains.attributeBoosts) {
-            steps.push((next) => promptLevelUpBoosts(newLevel, next));
+            steps.push((next) => promptLevelUpBoosts(newLevel, gains, next));
           }
           if (gains.skillIncrease) {
             steps.push((next) => promptLevelUpSkillIncrease(newLevel, next));
           }
           for (const featType of gains.featTypes) {
             steps.push((next) => promptLevelUpFeat(featType, newLevel, next));
+          }
+          // Automatic Bonus Progression choices
+          for (const pick of gains.abp?.skillPicks || []) {
+            steps.push((next) =>
+              promptAbpSkillPotency(record._id, newLevel, pick, next),
+            );
+          }
+          if (gains.abp?.apex) {
+            steps.push((next) => promptAbpApex(record._id, next));
           }
           runLevelUpSteps(steps, 0, newLevel);
         },
@@ -568,8 +713,43 @@ ${getLevelUpSummary(gains)}`,
     steps[index](() => runLevelUpSteps(steps, index + 1, newLevel));
   }
 
-  function promptLevelUpBoosts(newLevel, next) {
+  function promptLevelUpBoosts(newLevel, gains, next) {
+    const setLevel = gains.boostSetLevel || newLevel;
+    const field = `freeBoostsLevel${setLevel}`;
+
     api.getRecord("characters", record._id, (latestRecord) => {
+      const current = latestRecord.data?.[field];
+      const existing = Array.isArray(current) ? current : current ? [current] : [];
+
+      // Gradual Ability Boosts: one boost, not repeating one already in this set
+      if (gains.boostCount === 1) {
+        api.showPrompt(
+          `Level ${newLevel} Attribute Boost`,
+          `Choose 1 attribute. You can't boost the same attribute twice in this set (levels ${
+            setLevel - 3
+          } to ${setLevel}). Above +4, a boost is a partial boost.`,
+          "Choose an Attribute...",
+          getLevelUpBoostOptions(latestRecord).filter(
+            (option) => !existing.includes(option.value),
+          ),
+          null,
+          (selected) => {
+            const boost = getPromptSelections(selected)[0];
+            if (!boost) {
+              next();
+              return;
+            }
+            api.setValues({ [`data.${field}`]: [...existing, boost] }, () =>
+              next(),
+            );
+          },
+          "OK",
+          "Skip",
+          1,
+        );
+        return;
+      }
+
       api.showPrompt(
         `Level ${newLevel} Attribute Boosts`,
         "Choose 4 different attributes. Above +4, a boost is a partial boost: two partial boosts raise the modifier by 1.",
@@ -582,9 +762,7 @@ ${getLevelUpSummary(gains)}`,
             next();
             return;
           }
-          api.setValues({ [`data.freeBoostsLevel${newLevel}`]: boosts }, () =>
-            next(),
-          );
+          api.setValues({ [`data.${field}`]: boosts }, () => next());
         },
         "OK",
         "Skip",
@@ -648,6 +826,10 @@ ${getLevelUpSummary(gains)}`,
           if (!feat || typeof feat !== "object") {
             next();
             return;
+          }
+          const dedicationWarning = getDedicationWarning(latestRecord, feat);
+          if (dedicationWarning) {
+            api.showNotification(dedicationWarning, "yellow", "Dedication Feat");
           }
           api.setValues(
             {

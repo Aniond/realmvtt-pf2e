@@ -2185,13 +2185,30 @@ function getEffectsAndModifiersForToken(
   // Add modifiers for armor penalties and runes
   const bestArmor = getBestEquippedArmor(target);
   const checkPenalty = getCheckPenaltyForArmor(target, bestArmor);
-  const resilientBonus = getResilientArmorBonus(target, bestArmor);
+  // Automatic Bonus Progression replaces resilient runes with potency bonuses
+  const resilientBonus = isAbpCharacter(target)
+    ? null
+    : getResilientArmorBonus(target, bestArmor);
   if (checkPenalty) {
     results.push(...checkPenalty);
   }
   if (resilientBonus) {
     results.push(...resilientBonus);
   }
+  // Under ABP, equipment no longer grants item bonuses (effects such as
+  // elixirs and mutagens still do)
+  if (isAbpCharacter(target)) {
+    results = results.filter(
+      (r) =>
+        !(
+          r.type === "item" &&
+          !r.isEffect &&
+          `${r.modifierType || ""}`.endsWith("Bonus") &&
+          !(parseFloat(r.value) < 0)
+        ),
+    );
+  }
+  results.push(...getAbpModifiers(target));
 
   // Process AdjustModifier rules - these modify existing modifiers by slug
   const adjustModifiers = results.filter(
@@ -3151,9 +3168,11 @@ function onItemEquippedFor(itemDataPath, newValue) {
 // Gets the AC for an armor item
 function getACForArmor(item) {
   let ac = item?.data?.acBonus || 0;
-  // Check for potency runes
-  const potencyRune = parseInt(item?.data?.runes?.potency || 0, 10);
-  ac += potencyRune;
+  // Check for potency runes (Automatic Bonus Progression replaces them)
+  if (!getVariantRules().automaticBonusProgression) {
+    const potencyRune = parseInt(item?.data?.runes?.potency || 0, 10);
+    ac += potencyRune;
+  }
   return ac;
 }
 
@@ -3437,7 +3456,10 @@ function updateAttribute({
     const ancestryHp = record.data?.ancestries?.[0]?.data?.hp || 0;
     const classHp = record.data?.classes?.[0]?.data?.hp || 0;
     const level = record.data?.level || 0;
-    const totalHp = extraHitpoints + ancestryHp + (conMod + classHp) * level;
+    // Level 0 Characters (GM Core): ancestry HP + Constitution modifier
+    const totalHp = isLevelZeroCharacter(record)
+      ? extraHitpoints + ancestryHp + conMod
+      : extraHitpoints + ancestryHp + (conMod + classHp) * level;
     valuesToSet[`data.hitpoints`] = totalHp;
     // If curhp is not set, set it to hitpoints
     if (record.data?.curhp === undefined) {
@@ -3520,9 +3542,8 @@ function updateAttribute({
     bestArmor?.armor?.group,
   );
   // Prof bonus is prof * 2 + level, if we're proficient, else we don't add level
-  if (armorProf > 0) {
-    ac += armorProf * 2 + (record?.data?.level || 0);
-  }
+  // (Proficiency without Level drops the level, and untrained is -2)
+  ac += getProficiencyBonusForRank(armorProf || 0, record?.data?.level || 0);
 
   const acBonus = getEffectsAndModifiersForToken(
     record,
@@ -4641,40 +4662,31 @@ function promptForChoices(record, choicesToMake, index, depth = 0) {
   }
 }
 
+// Proficiency bonus for a rank at a level. With Proficiency without Level
+// (GM Core pg. 85) the level isn't added and untrained is -2.
+function getProficiencyBonusForRank(
+  training,
+  characterLevel,
+  variants = getVariantRules(),
+) {
+  const rank = parseInt(training, 10);
+  if (!(rank >= 0 && rank <= 4)) {
+    return 0;
+  }
+  if (variants.proficiencyWithoutLevel) {
+    return rank === 0 ? -2 : rank * 2;
+  }
+  return rank === 0 ? 0 : rank * 2 + (parseInt(characterLevel, 10) || 0);
+}
+
 // Helper function to calculate proficiency bonus
 function calculateProficiencyBonus(record, training) {
   const characterLevel = parseInt(record.data?.level || "0", 10);
-  switch (parseInt(training, 10)) {
-    case 0:
-      return 0;
-    case 1:
-      return 2 + characterLevel;
-    case 2:
-      return 4 + characterLevel;
-    case 3:
-      return 6 + characterLevel;
-    case 4:
-      return 8 + characterLevel;
-    default:
-      return 0;
-  }
+  return getProficiencyBonusForRank(training, characterLevel);
 }
 
 function calculateProficiencyBonusForLevel(characterLevel, training) {
-  switch (parseInt(training, 10)) {
-    case 0:
-      return 0;
-    case 1:
-      return 2 + characterLevel;
-    case 2:
-      return 4 + characterLevel;
-    case 3:
-      return 6 + characterLevel;
-    case 4:
-      return 8 + characterLevel;
-    default:
-      return 0;
-  }
+  return getProficiencyBonusForRank(training, characterLevel);
 }
 
 function showAlchemistFields(record, valuesToSet) {
@@ -4769,60 +4781,140 @@ function updateSpellcastingEntries(record, valuesToSet) {
 }
 
 // Called by onAddEditFeature to set the feat slots for the character based on their feats
+// Campaign variant rules (GM Core and Gamemastery Guide), turned on in the
+// campaign settings
+function getVariantRules() {
+  const isOn = (key) => {
+    try {
+      return typeof api?.getSetting === "function" && api.getSetting(key) === "yes";
+    } catch (e) {
+      return false;
+    }
+  };
+  return {
+    automaticBonusProgression: isOn("automaticBonusProgression"),
+    freeArchetype: isOn("freeArchetype"),
+    levelZero: isOn("levelZeroCharacters"),
+    proficiencyWithoutLevel: isOn("proficiencyWithoutLevel"),
+    ancestryParagon: isOn("ancestryParagon"),
+    gradualBoosts: isOn("gradualAbilityBoosts"),
+  };
+}
+
+const FEAT_SLOT_TYPES = ["ancestry", "class", "archetype", "general", "skill"];
+
+// The levels at which a character gains each kind of feat. A level listed
+// twice grants two slots at that level.
+function getFeatSlotLevels(record, variants = getVariantRules()) {
+  const classObj = record.data?.classes?.[0];
+  const toLevels = (levels) =>
+    (levels || []).map((level) => parseInt(level, 10)).filter((l) => !isNaN(l));
+
+  const levels = {
+    ancestry: toLevels(classObj?.data?.ancestryFeatLevels),
+    class: toLevels(classObj?.data?.classFeatLevels),
+    archetype: [],
+    general: toLevels(classObj?.data?.generalFeatLevels),
+    skill: toLevels(classObj?.data?.skillFeatLevels),
+  };
+
+  // Ancestry Paragon: two ancestry feats at 1st level, then one at every odd level
+  if (variants.ancestryParagon) {
+    levels.ancestry = [1, 1, 3, 5, 7, 9, 11, 13, 15, 17, 19];
+  }
+
+  // Free Archetype: an extra feat at 2nd level and every even level after,
+  // only for archetype feats
+  if (variants.freeArchetype) {
+    levels.archetype = [2, 4, 6, 8, 10, 12, 14, 16, 18, 20];
+  }
+
+  return levels;
+}
+
+const FEAT_SLOT_NAMES = {
+  ancestry: "Ancestry Feat Slot",
+  class: "Class Feat Slot",
+  archetype: "Archetype Feat Slot",
+  general: "General Feat Slot",
+  skill: "Skill Feat Slot",
+};
+
 function setFeatSlots(record, valuesToSet) {
   const classes = record.data?.classes || [];
-  const classObj = classes?.[0];
-  const ancestryFeatLevels = (classObj?.data?.ancestryFeatLevels || []).map(
-    (level) => parseInt(level, 10),
-  );
-  const classFeatLevels = (classObj?.data?.classFeatLevels || []).map((level) =>
-    parseInt(level, 10),
-  );
-  const generalFeatLevels = (classObj?.data?.generalFeatLevels || []).map(
-    (level) => parseInt(level, 10),
-  );
-  const skillFeatLevels = (classObj?.data?.skillFeatLevels || []).map((level) =>
-    parseInt(level, 10),
-  );
+  const variants = getVariantRules();
+  const slotLevels = getFeatSlotLevels(record, variants);
+  // Level 0 characters already choose their 1st-level ancestry feat
+  const characterLevel = isLevelZeroCharacter(record)
+    ? 1
+    : parseInt(record.data?.level || "1", 10);
 
-  // Get current feats to check what slots already exist
+  // Show the Archetype Feats section only when Free Archetype is on
+  if (record.fields?.archetypeFeatsBox?.hidden !== !variants.freeArchetype) {
+    valuesToSet["fields.archetypeFeatsBox.hidden"] = !variants.freeArchetype;
+  }
+
+  // Without a class there is nothing to build slots from
+  if (classes.length === 0) {
+    return;
+  }
+
   const oldFeats = record.data?.feats || [];
-  let currentFeats = [...(record.data?.feats || [])];
+  const isSlot = (feat) => feat.data?.type === "slot";
+  const slotKey = (type, level) => `${type}:${level}`;
 
-  // Get character's current level
-  const characterLevel = parseInt(record.data?.level || "1", 10);
+  // How many slots each type and level should have at this character level
+  const wanted = {};
+  for (const type of FEAT_SLOT_TYPES) {
+    for (const level of slotLevels[type]) {
+      if (level <= characterLevel) {
+        const key = slotKey(type, level);
+        wanted[key] = (wanted[key] || 0) + 1;
+      }
+    }
+  }
 
-  // Filter out empty feat slots that we are not high enough to have,
-  // incase we set the level lower
-  currentFeats = currentFeats.filter((feat) => {
-    const featLevel = feat.data?.level || 0;
-    const isSlot = feat.data?.type === "slot";
-    const shouldKeep = featLevel <= characterLevel || !isSlot;
-    return shouldKeep;
+  // Keep every chosen feat. Keep empty slots only while they are still owed,
+  // so lowering the level or turning a variant off removes the extras.
+  const filledCounts = {};
+  for (const feat of oldFeats) {
+    if (!isSlot(feat)) {
+      const key = slotKey(feat.data?.featSlotType, parseInt(feat.data?.level, 10));
+      filledCounts[key] = (filledCounts[key] || 0) + 1;
+    }
+  }
+  const keptSlotCounts = {};
+  const currentFeats = oldFeats.filter((feat) => {
+    if (!isSlot(feat)) return true;
+    const key = slotKey(feat.data?.featSlotType, parseInt(feat.data?.level, 10));
+    const room = (wanted[key] || 0) - (filledCounts[key] || 0);
+    if ((keptSlotCounts[key] || 0) < room) {
+      keptSlotCounts[key] = (keptSlotCounts[key] || 0) + 1;
+      return true;
+    }
+    return false;
   });
 
-  // Create feat slots for each type
+  // Add any slots still missing
   const featSlots = [];
   let slotOrder = 0;
-
-  // Ancestry feat slots - only for levels up to current character level
-  ancestryFeatLevels.forEach((level) => {
-    if (level <= characterLevel) {
-      const existingSlot = currentFeats.find(
-        (feat) =>
-          feat.data?.featSlotType === "ancestry" && feat.data?.level === level,
-      );
-
-      if (!existingSlot) {
+  for (const type of FEAT_SLOT_TYPES) {
+    const levelsDone = new Set();
+    for (const level of slotLevels[type]) {
+      if (level > characterLevel || levelsDone.has(level)) continue;
+      levelsDone.add(level);
+      const key = slotKey(type, level);
+      const have = (filledCounts[key] || 0) + (keptSlotCounts[key] || 0);
+      for (let i = have; i < (wanted[key] || 0); i++) {
         featSlots.push({
           _id: generateUuid(),
-          name: "Ancestry Feat Slot",
+          name: FEAT_SLOT_NAMES[type],
           recordType: "feats",
-          unidentifiedName: "Ancestry Feat Slot",
+          unidentifiedName: FEAT_SLOT_NAMES[type],
           data: {
             type: "slot",
             level: level,
-            featSlotType: "ancestry",
+            featSlotType: type,
             slotOrder: slotOrder++,
           },
           fields: {
@@ -4832,94 +4924,7 @@ function setFeatSlots(record, valuesToSet) {
         });
       }
     }
-  });
-
-  // Class feat slots - only for levels up to current character level
-  classFeatLevels.forEach((level) => {
-    if (level <= characterLevel) {
-      const existingSlot = currentFeats.find(
-        (feat) =>
-          feat.data?.featSlotType === "class" && feat.data?.level === level,
-      );
-
-      if (!existingSlot) {
-        featSlots.push({
-          _id: generateUuid(),
-          name: "Class Feat Slot",
-          recordType: "feats",
-          unidentifiedName: "Class Feat Slot",
-          data: {
-            type: "slot",
-            level: level,
-            featSlotType: "class",
-            slotOrder: slotOrder++,
-          },
-          fields: {
-            featSlot: { hidden: false },
-            featDetails: { hidden: true },
-          },
-        });
-      }
-    }
-  });
-
-  // General feat slots - only for levels up to current character level
-  generalFeatLevels.forEach((level) => {
-    if (level <= characterLevel) {
-      const existingSlot = currentFeats.find(
-        (feat) =>
-          feat.data?.featSlotType === "general" && feat.data?.level === level,
-      );
-
-      if (!existingSlot) {
-        featSlots.push({
-          _id: generateUuid(),
-          name: "General Feat Slot",
-          recordType: "feats",
-          unidentifiedName: "General Feat Slot",
-          data: {
-            type: "slot",
-            level: level,
-            featSlotType: "general",
-            slotOrder: slotOrder++,
-          },
-          fields: {
-            featSlot: { hidden: false },
-            featDetails: { hidden: true },
-          },
-        });
-      }
-    }
-  });
-
-  // Skill feat slots - only for levels up to current character level
-  skillFeatLevels.forEach((level) => {
-    if (level <= characterLevel) {
-      const existingSlot = currentFeats.find(
-        (feat) =>
-          feat.data?.featSlotType === "skill" && feat.data?.level === level,
-      );
-
-      if (!existingSlot) {
-        featSlots.push({
-          _id: generateUuid(),
-          name: "Skill Feat Slot",
-          recordType: "feats",
-          unidentifiedName: "Skill Feat Slot",
-          data: {
-            type: "slot",
-            level: level,
-            featSlotType: "skill",
-            slotOrder: slotOrder++,
-          },
-          fields: {
-            featSlot: { hidden: false },
-            featDetails: { hidden: true },
-          },
-        });
-      }
-    }
-  });
+  }
 
   // Update feats array with filtered feats and any new slots
   const updatedFeats = [...currentFeats, ...featSlots];
@@ -5531,6 +5536,7 @@ function updateProficiencies(record, valuesToSet) {
 
 // Calculate Pathfinder 2e ability boosts
 function calculateAbilityBoosts(record) {
+  const apexAttribute = getAbpBonuses(record)?.apex || "";
   const boosts = {
     ancestryBoost1: record.data?.ancestryBoost1,
     ancestryBoost2: record.data?.ancestryBoost2,
@@ -5629,6 +5635,12 @@ function calculateAbilityBoosts(record) {
         // Negative boostCount (from flaws) - each flaw reduces by 1
         modifier = boostCount;
       }
+    }
+
+    // Automatic Bonus Progression attribute apex (17th level): the chosen
+    // attribute rises by 1 or to +4, whichever is higher
+    if (attribute === apexAttribute) {
+      modifier = Math.max(modifier + 1, 4);
     }
 
     boostResults[attribute] = {
@@ -6297,6 +6309,7 @@ function onAddEditFeature(
   // Check for feats that the character gets at their current level, and add (or remove empty slots)
   // to make sure it matches
   setFeatSlots(record, valuesToSet);
+  updateVariantRuleFields(record, valuesToSet);
 
   // Check all spellcasting entries and update DC and Mod
   updateSpellcastingEntries(record, valuesToSet);
@@ -8260,7 +8273,7 @@ function getWeaponDamageInfo(record, weapon) {
 
   // Check for striking runes and create modifier
   // Striking runes add extra weapon damage dice of the same type
-  const strikingRune = parseInt(weapon.data?.runes?.striking || "0", 10);
+  const strikingRune = getStrikingRuneForRecord(record, weapon);
   let strikingRuneMod = null;
 
   if (strikingRune > 0 && weapon.data?.damage?.die) {
@@ -8271,7 +8284,9 @@ function getWeaponDamageInfo(record, weapon) {
     };
 
     strikingRuneMod = {
-      name: strikingNames[strikingRune] || "Striking",
+      name: getAbpBonuses(record)
+        ? "Devastating Attacks"
+        : strikingNames[strikingRune] || "Striking",
       value: `${strikingRune}${weapon.data.damage.die}`,
       active: true,
       type: damageType,
@@ -9354,7 +9369,7 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber = 1) {
 
   if (scatterRadius > 0) {
     // Get the striking rune level to count total dice
-    const strikingRune = parseInt(weapon.data?.runes?.striking || "0", 10);
+    const strikingRune = getStrikingRuneForRecord(record, weapon);
     const totalDice = countWeaponDamageDice(weapon, strikingRune);
 
     if (totalDice > 0) {
@@ -9531,20 +9546,34 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber = 1) {
       // Calculate the modifier
       const level = parseInt(record.data?.level || "0", 10);
       let statMod = parseInt(record.data?.[`${abilityScore}`] || "0", 10);
-      let modifier = weaponProficiency * 2 + level + statMod;
+      let modifier = getProficiencyBonusForRank(weaponProficiency, level) + statMod;
       modifiers.push({
         name: `${weaponCategory} (${proficiencyName})`,
         type: "",
         value: modifier,
         active: true,
       });
+    } else if (getVariantRules().proficiencyWithoutLevel) {
+      // Proficiency without Level: untrained is -2
+      modifiers.push({
+        name: `${weaponCategory} (Untrained)`,
+        type: "",
+        value: -2,
+        active: true,
+      });
     }
 
-    // Get bonuses for potency runes
-    const potencyRune = parseInt(weapon.data?.runes?.potency || "0", 10);
+    // Get bonuses for potency runes (Automatic Bonus Progression replaces
+    // them with attack potency for all weapons and unarmed attacks)
+    const abp = getAbpBonuses(record);
+    const potencyRune = abp
+      ? abp.attack
+      : parseInt(weapon.data?.runes?.potency || "0", 10);
     if (potencyRune > 0) {
       modifiers.push({
-        name: `Weapon Potency +${potencyRune}`,
+        name: abp
+          ? `Attack Potency +${potencyRune}`
+          : `Weapon Potency +${potencyRune}`,
         value: potencyRune,
         isPenalty: false,
         active: true,
@@ -10216,7 +10245,7 @@ function performDamageRoll(record, weapon, weaponDataPath, isCritical) {
 
   if (scatterRadius > 0) {
     // Get the striking rune level to count total dice
-    const strikingRune = parseInt(weapon.data?.runes?.striking || "0", 10);
+    const strikingRune = getStrikingRuneForRecord(record, weapon);
     const totalDice = countWeaponDamageDice(weapon, strikingRune);
 
     if (totalDice > 0) {
@@ -13080,20 +13109,45 @@ const PROFICIENCY_RANK_NAMES = [
 ];
 
 // What a character gains on reaching newLevel, read from their class record
-function getLevelUpGains(record, newLevel) {
+// The free attribute boosts a level grants. Normally four at 5th, 10th, 15th
+// and 20th level; with Gradual Ability Boosts one at each level of the set
+// leading up to those levels (2nd-5th, 7th-10th, 12th-15th, 17th-20th).
+// setLevel names the freeBoostsLevel<N> field the boosts are stored in.
+function getAttributeBoostGain(level, variants = getVariantRules()) {
+  if (variants.gradualBoosts) {
+    for (const setLevel of LEVEL_UP_BOOST_LEVELS) {
+      if (level >= setLevel - 3 && level <= setLevel) {
+        return { count: 1, setLevel };
+      }
+    }
+    return { count: 0, setLevel: null };
+  }
+  if (LEVEL_UP_BOOST_LEVELS.includes(level)) {
+    return { count: 4, setLevel: level };
+  }
+  return { count: 0, setLevel: null };
+}
+
+// First level at which a free boost set can hold boosts
+function getBoostSetStartLevel(setLevel, variants = getVariantRules()) {
+  return variants.gradualBoosts ? setLevel - 3 : setLevel;
+}
+
+// What a character gains on reaching newLevel, read from their class record
+// and the campaign's variant rules
+function getLevelUpGains(record, newLevel, variants = getVariantRules()) {
   const classObj = record.data?.classes?.[0];
   const toLevels = (levels) =>
     (levels || []).map((level) => parseInt(level, 10));
 
+  // One entry per feat slot gained, so a type can appear twice
+  const slotLevels = getFeatSlotLevels(record, variants);
   const featTypes = [];
-  for (const [featType, levelsField] of [
-    ["ancestry", "ancestryFeatLevels"],
-    ["class", "classFeatLevels"],
-    ["skill", "skillFeatLevels"],
-    ["general", "generalFeatLevels"],
-  ]) {
-    if (toLevels(classObj?.data?.[levelsField]).includes(newLevel)) {
-      featTypes.push(featType);
+  for (const featType of ["ancestry", "class", "archetype", "skill", "general"]) {
+    for (const level of slotLevels[featType]) {
+      if (level === newLevel) {
+        featTypes.push(featType);
+      }
     }
   }
 
@@ -13105,16 +13159,21 @@ function getLevelUpGains(record, newLevel) {
     .map((feature) => feature.name)
     .filter((name) => name);
 
+  const boosts = getAttributeBoostGain(newLevel, variants);
+
   return {
     level: newLevel,
     className: classObj?.name || record.data?.className || "",
     hp: classHp + conMod,
-    attributeBoosts: LEVEL_UP_BOOST_LEVELS.includes(newLevel),
+    attributeBoosts: boosts.count > 0,
+    boostCount: boosts.count,
+    boostSetLevel: boosts.setLevel,
     skillIncrease: toLevels(classObj?.data?.skillIncreaseLevels).includes(
       newLevel,
     ),
     featTypes,
     classFeatures,
+    abp: getAbpLevelGains(record, newLevel, variants),
   };
 }
 
@@ -13128,14 +13187,24 @@ function getLevelUpSummary(gains) {
     lines.push(`Class features: ${gains.classFeatures.join(", ")}`);
   }
   if (gains.attributeBoosts) {
-    lines.push("4 attribute boosts");
+    const count = gains.boostCount || 4;
+    lines.push(`${count} attribute boost${count === 1 ? "" : "s"}`);
   }
   if (gains.skillIncrease) {
     lines.push("1 skill increase");
   }
+  const featCounts = {};
   for (const featType of gains.featTypes) {
-    lines.push(`${capitalize(featType)} feat`);
+    featCounts[featType] = (featCounts[featType] || 0) + 1;
   }
+  for (const [featType, count] of Object.entries(featCounts)) {
+    lines.push(
+      count === 1
+        ? `${capitalize(featType)} feat`
+        : `${count} ${capitalize(featType)} feats`,
+    );
+  }
+  lines.push(...(gains.abp?.changes || []));
   return lines.join("\n");
 }
 
@@ -13207,11 +13276,24 @@ function getFeatSlotQuery(record, featSlotType, featSlotLevel) {
       ],
       ...(featSlotType === "general"
         ? { "data.type": { $in: ["general", "skill"] } }
-        : { "data.type": featSlotType }),
-      ...(featSlotType === "class" && className
+        : featSlotType === "archetype"
+          ? { "data.type": { $in: ["class", "skill"] } }
+          : { "data.type": featSlotType }),
+      // Archetype feats can be taken in place of class feats (Player Core);
+      // archetype slots (Free Archetype) take only archetype feats
+      ...(featSlotType === "archetype"
         ? {
             "data.traits": {
-              $elemMatch: { $regex: `^${className}$`, $options: "i" },
+              $elemMatch: { $regex: "^Archetype$", $options: "i" },
+            },
+          }
+        : featSlotType === "class" && className
+        ? {
+            "data.traits": {
+              $elemMatch: {
+                $regex: `^(${className}|Archetype)$`,
+                $options: "i",
+              },
             },
           }
         : featSlotType === "ancestry" && ancestryTraits.length > 0
@@ -13292,8 +13374,12 @@ function getWizardIntMod(record) {
 function getWizardSkillPicks(record) {
   const classObj = record.data?.classes?.[0];
   const intMod = getWizardIntMod(record);
-  const additional =
-    parseInt(classObj?.data?.trainedSkillsAdditional || 0, 10) || 0;
+  // Level 0 Characters get 2 + Int skills before they have a class
+  const levelZero =
+    getVariantRules().levelZero && (!classObj || classObj.data?.isLevelZero);
+  const additional = levelZero
+    ? 2
+    : parseInt(classObj?.data?.trainedSkillsAdditional || 0, 10) || 0;
   const count = Math.max(0, additional + intMod);
 
   const skills = Object.keys(getPathfinderSkills());
@@ -13532,4 +13618,360 @@ function getClassKitDescription(kit) {
     text += ` ${kit.shopNote}`;
   }
   return text;
+}
+
+// Player Core archetype rule: after taking a dedication feat, you can't take
+// another until you have two other feats from that archetype. Returns a warning,
+// or "" when the feat is fine. Follow-up feats are found by their prerequisites
+// naming the dedication, so this is a reminder rather than a hard check.
+function getDedicationWarning(record, feat) {
+  const hasTrait = (f, trait) =>
+    (f?.data?.traits || []).some((t) => `${t}`.toLowerCase() === trait);
+  if (!hasTrait(feat, "dedication")) return "";
+
+  const chosen = [
+    ...(record.data?.feats || []),
+    ...(record.data?.bonusFeats || []),
+  ].filter((f) => f.data?.type !== "slot" && f.name);
+
+  for (const dedication of chosen) {
+    if (!hasTrait(dedication, "dedication") || dedication.name === feat.name) {
+      continue;
+    }
+    const dedicationName = dedication.name.toLowerCase();
+    const followUps = chosen.filter(
+      (f) =>
+        f !== dedication &&
+        `${f.data?.prerequisites || ""}`.toLowerCase().includes(dedicationName),
+    ).length;
+    if (followUps < 2) {
+      const archetype = dedication.name.replace(/\s*dedication$/i, "");
+      return `You can't take another dedication feat until you have two other feats from the ${archetype} archetype (you have ${followUps}). Your GM may waive this.`;
+    }
+  }
+  return "";
+}
+
+// Show, hide and trim the free boost sets (freeBoostsLevel5/10/15/20) for a
+// character level. A set holds 4 boosts once its level is reached; with Gradual
+// Ability Boosts it holds one per level reached within the set.
+function getFreeBoostFieldsForLevel(record, level, variants = getVariantRules()) {
+  const valuesToSet = {};
+  for (const setLevel of LEVEL_UP_BOOST_LEVELS) {
+    const start = getBoostSetStartLevel(setLevel, variants);
+    const allowed = variants.gradualBoosts
+      ? Math.max(0, Math.min(4, level - start + 1))
+      : level >= setLevel
+        ? 4
+        : 0;
+    valuesToSet[`fields.freeBoostsLevel${setLevel}.hidden`] = allowed === 0;
+
+    const current = record.data?.[`freeBoostsLevel${setLevel}`];
+    const boosts = Array.isArray(current) ? current : current ? [current] : [];
+    if (boosts.length > allowed) {
+      valuesToSet[`data.freeBoostsLevel${setLevel}`] = boosts.slice(0, allowed);
+    }
+  }
+  return valuesToSet;
+}
+
+// Automatic Bonus Progression (GM Core pg. 83). Characters gain potency
+// bonuses by level instead of from potency, striking and resilient runes.
+// Tables list [level, value] from highest to lowest.
+const ABP_ATTACK_POTENCY = [[16, 3], [10, 2], [2, 1]];
+const ABP_DEFENSE_POTENCY = [[18, 3], [11, 2], [5, 1]];
+const ABP_PERCEPTION_POTENCY = [[19, 3], [13, 2], [7, 1]];
+const ABP_SAVE_POTENCY = [[20, 3], [14, 2], [8, 1]];
+const ABP_DEVASTATING_DICE = [[19, 4], [12, 3], [4, 2]];
+const ABP_APEX_LEVEL = 17;
+
+function getAbpTableValue(table, level) {
+  for (const [atLevel, value] of table) {
+    if (level >= atLevel) return value;
+  }
+  return 0;
+}
+
+// Player characters only; creatures keep their own statistics
+function isAbpCharacter(record, variants = getVariantRules()) {
+  return (
+    variants.automaticBonusProgression &&
+    !!record &&
+    record.recordType !== "npcs" &&
+    record.recordType !== "tokens"
+  );
+}
+
+// The ABP bonuses a character has at their level, or null when ABP is off
+function getAbpBonuses(record, variants = getVariantRules()) {
+  if (!isAbpCharacter(record, variants)) return null;
+  const level = parseInt(record.data?.level || "0", 10) || 0;
+  const skills = {};
+  for (const [skill, bonus] of Object.entries(record.data?.abpSkillPotency || {})) {
+    const value = parseInt(bonus, 10) || 0;
+    if (value > 0) skills[skill] = Math.min(3, value);
+  }
+  return {
+    attack: getAbpTableValue(ABP_ATTACK_POTENCY, level),
+    defense: getAbpTableValue(ABP_DEFENSE_POTENCY, level),
+    perception: getAbpTableValue(ABP_PERCEPTION_POTENCY, level),
+    save: getAbpTableValue(ABP_SAVE_POTENCY, level),
+    devastatingDice: getAbpTableValue(ABP_DEVASTATING_DICE, level),
+    skills,
+    apex: level >= ABP_APEX_LEVEL ? record.data?.abpApex || "" : "",
+  };
+}
+
+// ABP bonuses as modifiers. They are potency bonuses, a type of their own that
+// stacks with item, status and circumstance bonuses, so they are untyped here.
+function getAbpModifiers(record) {
+  const abp = getAbpBonuses(record);
+  if (!abp) return [];
+  const modifier = (name, value, modifierType, field = "all") => ({
+    value,
+    isPenalty: false,
+    valueType: "number",
+    name,
+    type: "",
+    modifierType,
+    field,
+    active: true,
+  });
+  const results = [];
+  if (abp.defense > 0) {
+    results.push(modifier(`Defense Potency +${abp.defense}`, abp.defense, "armorClassBonus"));
+  }
+  if (abp.save > 0) {
+    results.push(modifier(`Saving Throw Potency +${abp.save}`, abp.save, "saveBonus"));
+  }
+  if (abp.perception > 0) {
+    results.push(
+      modifier(`Perception Potency +${abp.perception}`, abp.perception, "perceptionBonus"),
+    );
+  }
+  for (const [skill, bonus] of Object.entries(abp.skills)) {
+    results.push(modifier(`Skill Potency +${bonus}`, bonus, "skillBonus", skill));
+  }
+  return results;
+}
+
+// Striking runes give extra weapon dice. ABP's devastating attacks replace them
+// (2/3/4 dice act as striking/greater/major striking); if a rune is still on
+// the weapon the higher count wins. Bombs scale with item level, so they don't
+// get devastating attacks.
+function getStrikingRuneForRecord(record, weapon) {
+  const rune = parseInt(weapon?.data?.runes?.striking || "0", 10) || 0;
+  const abp = getAbpBonuses(record);
+  const isBomb = `${weapon?.data?.group || ""}`.toLowerCase() === "bomb";
+  if (abp && !isBomb) {
+    return Math.max(rune, abp.devastatingDice - 1);
+  }
+  return rune;
+}
+
+// ABP skill potency choices by level (GM Core pg. 83). Each entry is one pick:
+// choose a skill whose skill potency is one lower and raise it to `to`.
+// Upgrades come before the new +1 skill.
+const ABP_SKILL_POTENCY = {
+  3: [{ to: 1 }],
+  6: [{ to: 1 }],
+  9: [{ to: 2 }],
+  13: [{ to: 2 }, { to: 1 }],
+  15: [{ to: 2 }, { to: 1 }],
+  17: [{ to: 3 }, { to: 1 }],
+  20: [{ to: 3 }, { to: 2 }, { to: 1 }],
+};
+
+// What ABP grants at a level, for the Level Up summary and prompts
+function getAbpLevelGains(record, level, variants = getVariantRules()) {
+  if (!isAbpCharacter(record, variants)) return null;
+  const changes = [];
+  const describe = (table, label, format = (v) => `+${v}`) => {
+    const now = getAbpTableValue(table, level);
+    if (now > getAbpTableValue(table, level - 1)) {
+      changes.push(`${label} ${format(now)}`);
+    }
+  };
+  describe(ABP_ATTACK_POTENCY, "Attack potency");
+  describe(ABP_DEVASTATING_DICE, "Devastating attacks:", (v) => `${v} weapon dice`);
+  describe(ABP_DEFENSE_POTENCY, "Defense potency");
+  describe(ABP_PERCEPTION_POTENCY, "Perception potency");
+  describe(ABP_SAVE_POTENCY, "Saving throw potency");
+  const skillPicks = ABP_SKILL_POTENCY[level] || [];
+  for (const pick of skillPicks) {
+    changes.push(`Skill potency: raise a skill to +${pick.to}`);
+  }
+  const apex = level === ABP_APEX_LEVEL;
+  if (apex) {
+    changes.push("Attribute apex");
+  }
+  return { changes, skillPicks, apex };
+}
+
+// Skills that can take a skill potency pick raising them to `to`
+function getAbpSkillPotencyOptions(record, to) {
+  const current = record.data?.abpSkillPotency || {};
+  return Object.keys(getPathfinderSkills())
+    .filter((skill) => (parseInt(current[skill] || 0, 10) || 0) === to - 1)
+    .map((skill) => ({
+      label: `${capitalize(skill)}${to > 1 ? ` (+${to - 1} to +${to})` : ""}`,
+      value: skill,
+    }));
+}
+
+function promptAbpSkillPotency(recordId, level, pick, next) {
+  api.getRecord("characters", recordId, (latestRecord) => {
+    const options = getAbpSkillPotencyOptions(latestRecord, pick.to);
+    if (options.length === 0) {
+      next();
+      return;
+    }
+    api.showPrompt(
+      `Level ${level} Skill Potency`,
+      pick.to === 1
+        ? "Choose a skill to gain a +1 potency bonus (Automatic Bonus Progression)."
+        : `Choose a skill with +${pick.to - 1} skill potency to raise it to +${pick.to}.`,
+      "Choose a Skill...",
+      options,
+      null,
+      (selected) => {
+        const skill = getPromptSelections(selected)[0];
+        if (!skill) {
+          next();
+          return;
+        }
+        api.setValues(
+          {
+            "data.abpSkillPotency": {
+              ...(latestRecord.data?.abpSkillPotency || {}),
+              [skill]: pick.to,
+            },
+          },
+          () => next(),
+        );
+      },
+      "OK",
+      "Skip",
+      1,
+    );
+  });
+}
+
+function promptAbpApex(recordId, next) {
+  api.getRecord("characters", recordId, (latestRecord) => {
+    api.showPrompt(
+      "Attribute Apex",
+      "Choose an attribute. Its modifier increases by 1, or to +4 if that is higher (Automatic Bonus Progression).",
+      "Choose an Attribute...",
+      getLevelUpBoostOptions(latestRecord),
+      null,
+      (selected) => {
+        const attribute = getPromptSelections(selected)[0];
+        if (!attribute) {
+          next();
+          return;
+        }
+        api.setValues({ "data.abpApex": attribute }, () => next());
+      },
+      "OK",
+      "Skip",
+      1,
+    );
+  });
+}
+
+// All ABP skill potency picks owed up to a level, in order
+function getAbpSkillPicksUpToLevel(level) {
+  const picks = [];
+  for (let atLevel = 1; atLevel <= level; atLevel++) {
+    for (const pick of ABP_SKILL_POTENCY[atLevel] || []) {
+      picks.push({ level: atLevel, ...pick });
+    }
+  }
+  return picks;
+}
+
+// Keeps the sheet's variant rule displays current (called from onAddEditFeature)
+function updateVariantRuleFields(record, valuesToSet) {
+  const abp = getAbpBonuses(record);
+  if (record.fields?.abpBox?.hidden !== !abp) {
+    valuesToSet["fields.abpBox.hidden"] = !abp;
+  }
+  if (!abp) return;
+
+  const skills = Object.entries(abp.skills).map(
+    ([skill, bonus]) => `${capitalize(skill)} +${bonus}`,
+  );
+  let summary =
+    `Attack +${abp.attack}, AC +${abp.defense}, Perception +${abp.perception}, ` +
+    `Saves +${abp.save}, weapon damage dice ${Math.max(1, abp.devastatingDice)}. ` +
+    `Skill potency: ${skills.length > 0 ? skills.join(", ") : "none chosen"}.`;
+  if (abp.apex) {
+    summary += ` Attribute apex: ${getLabelForAbility(abp.apex)}.`;
+  }
+  if (record.data?.abpSummary !== summary) {
+    valuesToSet["data.abpSummary"] = summary;
+  }
+}
+
+// Level 0 Characters (GM Core pg. 84). Until they take a class at 1st level,
+// characters carry this stand-in class: trained in Perception, all saves,
+// unarmed attacks, unarmored defense and one simple weapon, with 2 + Int skills.
+function buildLevelZeroClass(simpleWeapon = "") {
+  return {
+    _id: generateUuid(),
+    name: "Level 0",
+    recordType: "class",
+    identified: true,
+    data: {
+      isLevelZero: true,
+      hp: 0,
+      keyAbility: [],
+      savingThrows: { fortitude: "1", reflex: "1", will: "1" },
+      attacks: {
+        unarmed: "1",
+        simple: "0",
+        martial: "0",
+        advanced: "0",
+        other: { name: simpleWeapon, rank: simpleWeapon ? "1" : "0" },
+      },
+      defenses: { light: "0", medium: "0", heavy: "0", unarmored: "1" },
+      classDC: "0",
+      perception: "1",
+      spellcasting: "0",
+      trainedSkillsAdditional: 2,
+      trainedSkills: [],
+      // The 1st-level ancestry feat is chosen at level 0
+      ancestryFeatLevels: ["1"],
+      classFeatLevels: [],
+      generalFeatLevels: [],
+      skillFeatLevels: [],
+      skillIncreaseLevels: [],
+      features: [],
+      traits: [],
+    },
+  };
+}
+
+function isLevelZeroCharacter(record) {
+  return !!record?.data?.classes?.[0]?.data?.isLevelZero;
+}
+
+// Level 0 characters advance at the fast speed (800 XP)
+function getXpToNextLevel(record) {
+  return isLevelZeroCharacter(record) ? 800 : 1000;
+}
+
+// Starting money: 15 gp, or 5 gp for Level 0 characters
+function getWizardStartingWealthCp(record) {
+  return isLevelZeroCharacter(record) || getVariantRules().levelZero
+    ? 500
+    : WIZARD_STARTING_WEALTH_CP;
+}
+
+// Extra trained skills when a Level 0 character takes a class. The level 0
+// "2 + Int" skills count toward the class's own allotment, so the total
+// matches a normal 1st-level character.
+function getLevelZeroClassSkillPicks(classObj) {
+  return Math.max(0, (parseInt(classObj?.data?.trainedSkillsAdditional || 0, 10) || 0) - 2);
 }
