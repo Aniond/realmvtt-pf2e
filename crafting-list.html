@@ -1,72 +1,62 @@
 <script>
-  function onCraftItem() {
+  function getFormulaIndex() {
     const itemDataPath = getNearestParentDataPath(dataPath);
-    const item = api.getValue(itemDataPath);
-    const dc = item.data?.craftingDC || 0;
-
-    const craftingOutcomes = {
-      criticalSuccess:
-        "**Critical Success** Your attempt is successful. Each additional day spent Crafting reduces the materials needed to complete the item by an amount based on your level + 1 and your proficiency rank in Crafting.",
-      success:
-        "**Success** Your attempt is successful. Each additional day spent Crafting reduces the materials needed to complete the item by an amount based on your level and your proficiency rank.",
-      failure:
-        "**Failure** You fail to complete the item. You can salvage the raw materials you supplied for their full value. If you want to try again, you must start over.",
-      criticalFailure:
-        "**Critical Failure** You fail to complete the item. You ruin 10% of the raw materials you supplied, but you can salvage the rest. If you want to try again, you must start over.",
-    };
-    rollSkill(
-      record,
-      "crafting",
-      dc,
-      false,
-      0,
-      1,
-      "int",
-      false,
-      false,
-      undefined,
-      {
-        itemDataPath: itemDataPath,
-        criticalSuccessMessage: craftingOutcomes.criticalSuccess,
-        successMessage: craftingOutcomes.success,
-        failureMessage: craftingOutcomes.failure,
-        criticalFailureMessage: craftingOutcomes.criticalFailure,
-      }
-    );
+    return parseInt(itemDataPath.split(".").pop(), 10);
   }
 
-  function convertCurrencyToString(totalCp) {
-    // Convert copper pieces to gold pieces (100 cp = 1 gp)
-    const gp = totalCp / 100;
-
-    // If it's a whole number, show no decimals
-    if (gp % 1 === 0) {
-      return `${gp} gp`;
+  function onFormulaRowLoad() {
+    // Show Grow when Nature Crafting is on, and Prepare for alchemists on
+    // alchemical consumables
+    const itemDataPath = getNearestParentDataPath(dataPath);
+    const item = api.getValue(itemDataPath);
+    const hideGrow = !getCraftingOptions().grow;
+    const hidePrepare = !(
+      getAlchemistClass(record) &&
+      itemHasTrait(item, "alchemical") &&
+      isConsumableItem(item)
+    );
+    const valuesToSet = {};
+    if (item?.fields?.growBtn?.hidden !== hideGrow) {
+      valuesToSet[`${itemDataPath}.fields.growBtn.hidden`] = hideGrow;
     }
+    if (item?.fields?.prepareBtn?.hidden !== hidePrepare) {
+      valuesToSet[`${itemDataPath}.fields.prepareBtn.hidden`] = hidePrepare;
+    }
+    if (Object.keys(valuesToSet).length > 0) {
+      api.setValues(valuesToSet);
+    }
+  }
 
-    // Otherwise show up to 2 decimal places
-    return `${gp.toFixed(2)} gp`;
+  function onCraftItem() {
+    startCraftProject(record._id, getFormulaIndex(), "craft");
+  }
+
+  function onGrowItem() {
+    startCraftProject(record._id, getFormulaIndex(), "grow");
+  }
+
+  function onPrepareItem() {
+    prepareAdvancedAlchemy(record._id, getFormulaIndex());
   }
 
   function onQuantityChange() {
+    // Consumables craft in batches of up to 4 (8 alchemical with Efficient
+    // Alchemy); ammunition in its listed bundle
     const itemDataPath = getNearestParentDataPath(dataPath);
     const item = api.getValue(itemDataPath);
-    const quantity = item.data?.craftingQuantity || 1;
-
-    // Calculate crafting cost based on new quantity
-    const price = item.data?.price?.value || {};
-    const cpPerItem =
-      (price.pp || 0) * 1000 +
-      (price.gp || 0) * 100 +
-      (price.sp || 0) * 10 +
-      (price.cp || 0);
-    const totalCp = cpPerItem * quantity;
-    const craftingCost = convertCurrencyToString(totalCp);
-
-    // Update the crafting cost
-    api.setValues({
-      [`${itemDataPath}.data.craftingCost`]: craftingCost,
-    });
+    const craftable = getCraftableItem(item);
+    const batch = getCraftBatch(
+      craftable,
+      item.data?.craftingQuantity,
+      getCraftBatchMax(record, craftable),
+    );
+    const valuesToSet = {
+      [`${itemDataPath}.data.craftingCost`]: formatCp(batch.priceCp),
+    };
+    if (batch.quantity !== item.data?.craftingQuantity) {
+      valuesToSet[`${itemDataPath}.data.craftingQuantity`] = batch.quantity;
+    }
+    api.setValues(valuesToSet);
   }
 </script>
 
@@ -96,6 +86,7 @@
       field="craftingDC"
       hidecontrols="true"
       placeholder="0"
+      onload="onFormulaRowLoad()"
     >
     </numberfield>
   </div>
@@ -105,7 +96,7 @@
       width="100%"
       variant="tooltip-underline"
       textalign="center"
-      label="Cost"
+      label="Price of the batch"
       field="craftingCost"
       editable="false"
       placeholder="0 gp"
@@ -119,13 +110,14 @@
       variant="tooltip"
       label="Quantity"
       minvalue="1"
+      maxvalue="8"
       field="craftingQuantity"
       onchange="onQuantityChange()"
-      placeholder="0"
+      placeholder="1"
     >
     </numberfield>
   </div>
-  <div style="width: 90px">
+  <div style="width: 90px; display: flex; gap: 2px">
     <button
       size="xs"
       variant="light"
@@ -135,5 +127,23 @@
       label="Craft"
       onclick="onCraftItem()"
     ></button>
+    <iconbutton
+      size="sm"
+      variant="light"
+      field="growBtn"
+      hidden="true"
+      icon="IconPlant"
+      options='[{"label": "Grow (Nature Crafting)", "value": "grow", "icon": "IconPlant"}]'
+      onclick="onGrowItem()"
+    ></iconbutton>
+    <iconbutton
+      size="sm"
+      variant="light"
+      field="prepareBtn"
+      hidden="true"
+      icon="IconFlask"
+      options='[{"label": "Prepare with Advanced Alchemy", "value": "prepare", "icon": "IconFlask"}]'
+      onclick="onPrepareItem()"
+    ></iconbutton>
   </div>
 </div>

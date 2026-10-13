@@ -1140,7 +1140,10 @@ ${getLevelUpSummary(gains)}`,
 
     let needToAddVials = false;
     let numVersatileVials = 0;
-    if (hasAlchemistClass) {
+    // Versatile vials are a remaster (Player Core 2) feature; legacy
+    // alchemists use infused reagents instead
+    const alchemistClass = getAlchemistClass(record);
+    if (hasAlchemistClass && !isLegacyClass(alchemistClass)) {
       // Make sure versatilie vials is refreshed
       // During your daily preparations, you can create a number of versatile vials up to 2 + your Intelligence modifier
       const int = record.data?.int || 0;
