@@ -292,26 +292,69 @@ section("Advanced Alchemy: Mark and Unmark Crafted");
 {
   const row = fs.readFileSync(`${__dirname}/../advanced-alchemy-list.html`, "utf8");
   const script = row.match(/<script>([\s\S]*?)<\/script>/)[1];
-  const item = { name: "Bottled Lightning (Lesser)", data: { quantity: 2, craftingDeleteBtn: "unmarkCrafted" }, fields: { markedNameBox: { hidden: false }, unmarkedNameBox: { hidden: true } } };
   let written = {};
-  ctx.api.getValue = () => JSON.parse(JSON.stringify(item));
   ctx.api.setValues = (values) => {
     written = values;
   };
   ctx.dataPath = "data.advancedAlchemyItems.0.data.craftingDeleteBtn";
   new vm.Script(script, { filename: "advanced-alchemy-list.html" }).runInContext(ctx);
-  ctx.onMarkCrafted();
   const path = "data.advancedAlchemyItems.0";
-  assert("unmarking writes the button's value too", written[`${path}.data.craftingDeleteBtn`], "markCrafted");
+
+  // value is the option the button showed when clicked
+  ctx.onMarkCrafted("unmarkCrafted");
+  assert("unmarking writes the button's next value too", written[`${path}.data.craftingDeleteBtn`], "markCrafted");
   assert("and clears the strikethrough", written[`${path}.fields.markedNameBox.hidden`], true);
-  item.fields = { markedNameBox: { hidden: true }, unmarkedNameBox: { hidden: false } };
-  item.data.craftingDeleteBtn = "markCrafted";
-  ctx.onMarkCrafted();
+  assert("and shows the plain name", written[`${path}.fields.unmarkedNameBox.hidden`], false);
+  ctx.onMarkCrafted("markCrafted");
   assert("marking writes unmarkCrafted", written[`${path}.data.craftingDeleteBtn`], "unmarkCrafted");
   assert("and strikes the name", written[`${path}.fields.markedNameBox.hidden`], false);
-  item.fields = {};
-  ctx.onMarkCrafted();
-  assert("a new row counts as not crafted", written[`${path}.data.craftingDeleteBtn`], "unmarkCrafted");
+  ctx.onMarkCrafted(undefined);
+  assert("a new row (no value yet) gets marked", written[`${path}.data.craftingDeleteBtn`], "unmarkCrafted");
+
+  // A row the old bug left out of sync: the button says Unmark Crafted but the
+  // name isn't struck. The click follows the button, so both writes agree.
+  ctx.onMarkCrafted("unmarkCrafted");
+  assert("an out-of-sync row follows its button", written[`${path}.data.craftingDeleteBtn`], "markCrafted");
+  assert("and ends in sync", written[`${path}.fields.markedNameBox.hidden`], true);
+
+  // Quantity edits rebuild the label the way the Crafting tab does
+  ctx.api.setValues = (values, callback) => {
+    apply(values);
+    if (callback) callback(copy());
+  };
+  crafter({
+    level: 1,
+    int: 4,
+    classes: [{ name: "Alchemist", data: { publication: { remaster: false } } }],
+    advancedAlchemyItems: [
+      { ...bomb(), data: { ...bomb().data, quantity: 2 } },
+      { ...bomb("Lesser"), _id: "frost", name: "Frost Vial (Lesser)", data: { ...bomb().data, quantity: 2 } },
+    ],
+  });
+  ctx.record = copy();
+  ctx.onQuantityChange();
+  assert("legacy label counts batches of 2", record.data.totalDailyCraftingLabel, "Infused reagents remaining: 3 out of 5, each making 2 of one item");
+  record.data.advancedAlchemyItems[0].data.quantity = 10;
+  record.data.advancedAlchemyItems[1].data.quantity = -1;
+  ctx.record = copy();
+  ctx.onQuantityChange();
+  assert("a negative quantity becomes 1", record.data.advancedAlchemyItems[1].data.quantity, 1);
+  assert("over the limit is noted", record.data.totalDailyCraftingLabel, "Infused reagents remaining: -1 out of 5, each making 2 of one item (over the limit)");
+  crafter({ advancedAlchemyItems: [{ ...bomb(), data: { ...bomb().data, quantity: 3 } }] });
+  ctx.record = copy();
+  ctx.onQuantityChange();
+  assert("remaster label", record.data.totalDailyCraftingLabel, "Remaining: 5 out of 8");
+}
+
+section("crafted copies drop the formula row's buttons");
+{
+  const entry = ctx.buildFormulaEntry(bomb());
+  entry.data.craftBtn = "craft";
+  entry.data.growBtn = "grow";
+  entry.data.prepareBtn = "prepare";
+  const item = ctx.getCraftableItem(entry);
+  assert("no button values on the crafted item", [item.data.craftBtn, item.data.growBtn, item.data.prepareBtn].every((v) => v === undefined), true);
+  assert("the formula row keeps them", entry.data.craftBtn, "craft");
 }
 
 process.exitCode = summary() > 0 ? 1 : 0;

@@ -14583,6 +14583,10 @@ function getCraftableItem(formulaEntry) {
   delete data.craftingDC;
   delete data.craftingQuantity;
   delete data.craftingCost;
+  // The formula row's button values
+  delete data.craftBtn;
+  delete data.growBtn;
+  delete data.prepareBtn;
   return { ...formulaEntry, data };
 }
 

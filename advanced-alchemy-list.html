@@ -1,11 +1,12 @@
 <script>
-  function onMarkCrafted() {
+  function onMarkCrafted(value) {
     const itemDataPath = getNearestParentDataPath(dataPath);
-    const item = api.getValue(itemDataPath);
 
-    // The struck-through name shows the item is crafted. Flip it and write the
-    // button's value in the same call, so the button doesn't snap back.
-    const crafted = item?.fields?.markedNameBox?.hidden === false;
+    // value is the option the button showed when clicked, which is also the
+    // value the button cycles from. Write the button's next value with the
+    // strikethrough in one call, so the two writes agree and neither snaps
+    // back, even on a row an earlier version left out of sync.
+    const crafted = value === "unmarkCrafted";
     api.setValues({
       [`${itemDataPath}.data.craftingDeleteBtn`]: crafted ? "markCrafted" : "unmarkCrafted",
       [`${itemDataPath}.fields.markedNameBox.hidden`]: crafted,
@@ -14,30 +15,24 @@
   }
 
   function onQuantityChange() {
-    // Recalculate the total and label
-    const items = record.data?.advancedAlchemyItems || [];
-    let total = 0;
+    // Default a missing or negative quantity to 1 and rebuild the label the
+    // way the Crafting tab does (legacy alchemists count batches of 2)
+    api.getRecord(record.recordType, record._id, (updatedRecord) => {
+      const items = updatedRecord.data?.advancedAlchemyItems || [];
+      const valuesToSet = {};
 
-    const valuesToSet = {};
+      items.forEach((item, index) => {
+        if (item.data?.quantity === undefined || item.data?.quantity < 0) {
+          valuesToSet[`data.advancedAlchemyItems.${index}.data.quantity`] = 1;
+        }
+      });
 
-    items.forEach((item, index) => {
-      let quantity = item.data?.quantity || 0;
-      if (item.data?.quantity === undefined || item.data?.quantity < 0) {
-        valuesToSet[`data.advancedAlchemyItems.${index}.data.quantity`] = 1;
-        quantity = 1;
-      }
-      total += quantity;
+      valuesToSet["data.totalDailyCraftingLabel"] = getAdvancedAlchemyLabel(
+        getAdvancedAlchemyAllowance(updatedRecord),
+      );
+
+      api.setValues(valuesToSet);
     });
-
-    // Recalc label
-    const numDailyCrafting = record.data?.numDailyCrafting ?? 0;
-    const labelToSet = `Remaining: ${
-      numDailyCrafting - total
-    } out of ${numDailyCrafting}`;
-
-    valuesToSet["data.totalDailyCraftingLabel"] = labelToSet;
-
-    api.setValues(valuesToSet);
   }
 </script>
 
@@ -75,6 +70,6 @@
     icon="IconHammer"
     options='[{"label": "Mark Crafted", "value": "markCrafted", "icon": "IconHammer"},
     {"label": "Unmark Crafted", "value": "unmarkCrafted", "icon": "IconHammerOff"}]'
-    onclick="onMarkCrafted()"
+    onclick="onMarkCrafted(value)"
   ></iconbutton>
 </div>
