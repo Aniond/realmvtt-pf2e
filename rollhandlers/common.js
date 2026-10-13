@@ -13247,6 +13247,21 @@ function buildFilledFeatSlot(featSlot, feat) {
   };
 }
 
+// Index in feats of the nth slot of a feat type at a level, whether it is
+// still empty or already holds a feat. -1 if the character has no such slot.
+function findFeatSlotIndex(feats, featSlotType, level, nth = 0) {
+  const indexes = [];
+  (feats || []).forEach((feat, index) => {
+    if (
+      feat.data?.featSlotType === featSlotType &&
+      parseInt(feat.data?.level, 10) === level
+    ) {
+      indexes.push(index);
+    }
+  });
+  return indexes[nth] ?? -1;
+}
+
 // api.showPrompt hands back values or records, singly or as an array
 function getPromptSelections(selected) {
   if (selected === undefined || selected === null || selected === "") {

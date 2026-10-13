@@ -93,12 +93,13 @@
 </p>
 
 <div style="display: flex; flex-direction: column; gap: 8px">
-  <stringfield
+  <label
     field="skillInfo"
+    size="sm"
     width="100%"
-    variant="unstyled"
+    textalign="left"
     onload="wizardOnSkillsStepLoad()"
-  ></stringfield>
+  ></label>
 
   <dropdown
     label="Trained Skills"
@@ -109,11 +110,12 @@
     onchange="wizardRefreshSkillsStep({ classSkills: value })"
   ></dropdown>
 
-  <stringfield
+  <label
     field="languageInfo"
+    size="sm"
     width="100%"
-    variant="unstyled"
-  ></stringfield>
+    textalign="left"
+  ></label>
 
   <dropdown
     label="Extra Languages"
@@ -125,14 +127,14 @@
     onchange="wizardRefreshSkillsStep({ extraLanguages: value })"
   ></dropdown>
 
-  <stringfield
-    label="Error"
+  <label
     field="skillsError"
+    size="sm"
     width="100%"
+    textalign="left"
     hidden="true"
     color="red"
-    variant="unstyled"
-  ></stringfield>
+  ></label>
 </div>
 
 <p>

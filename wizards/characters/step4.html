@@ -277,12 +277,13 @@
 </p>
 
 <div style="display: flex; flex-direction: column; gap: 8px">
-  <stringfield
+  <label
     field="ancestryInfo"
+    size="sm"
     width="100%"
-    variant="unstyled"
+    textalign="left"
     onload="wizardOnBoostStepLoad()"
-  ></stringfield>
+  ></label>
 
   <checkbox
     field="alternateBoosts"
@@ -352,13 +353,13 @@
     variant="unstyled"
   ></stringfield>
 
-  <stringfield
-    label="Error"
+  <label
     field="boostError"
+    size="sm"
     width="100%"
+    textalign="left"
     hidden="true"
     color="red"
-    variant="unstyled"
-  ></stringfield>
+  ></label>
 </div>
 

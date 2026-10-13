@@ -152,4 +152,4 @@ section("buildFilledFeatSlot and getPromptSelections");
   assert("cancel gives empty", ctx.getPromptSelections(null).length, 0);
 }
 
-summary();
+process.exitCode = summary();
