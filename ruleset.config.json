@@ -106,12 +106,18 @@
           {
             "name": "Level 1 Feats",
             "file": "wizards/characters/step6.html",
+            "next": "Go to Equipment",
+            "previous": ""
+          },
+          {
+            "name": "Buy Equipment",
+            "file": "wizards/characters/step7.html",
             "next": "Go to Finishing Details",
             "previous": ""
           },
           {
             "name": "Finishing Details",
-            "file": "wizards/characters/step7.html",
+            "file": "wizards/characters/step8.html",
             "next": "Done",
             "previous": ""
           }
@@ -1358,6 +1364,43 @@
       ],
       "disableDrop": true,
       "hideFromCompendium": false
+    },
+    {
+      "name": "Wizard Item List",
+      "type": "wizard_item_list",
+      "isList": true,
+      "minX": 500,
+      "minY": 60,
+      "tabs": [
+        {
+          "name": "Main",
+          "file": "wizard-item-list.html",
+          "fields": []
+        }
+      ],
+      "icon": "",
+      "showAddButton": false,
+      "showDeleteButton": true,
+      "addButtonText": "",
+      "allowedListTypes": [
+        "items"
+      ],
+      "newItemName": "",
+      "newItemUnidentifiedName": "",
+      "stackDuplicates": false,
+      "disableDrop": true,
+      "countFieldName": "count",
+      "emptyListText": "No Items Bought",
+      "orderCriteria": [
+        {
+          "field": "namefield",
+          "descending": false
+        }
+      ],
+      "maxLength": 0,
+      "filterCriteria": [],
+      "singleRow": false,
+      "hideFromCompendium": true
     },
     {
       "name": "Item List",
