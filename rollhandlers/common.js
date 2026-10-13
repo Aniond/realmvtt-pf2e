@@ -14191,10 +14191,14 @@ function isConsumableItem(item) {
   return item?.data?.type === "consumable" || itemHasTrait(item, "consumable");
 }
 
-// A character has a feat (or a feature granting it) by name
+// A character has a feat (or a feature granting it) by name. A trailing tag
+// such as "(Alchemist)" is ignored, as the modules name some feats
+// "Efficient Alchemy (Alchemist)".
 function hasFeatNamed(record, featName) {
-  const wanted = featName.toLowerCase();
-  const named = (entry) => `${entry?.name || ""}`.toLowerCase() === wanted;
+  const baseName = (name) =>
+    `${name || ""}`.toLowerCase().replace(/\s*\([^)]*\)\s*$/, "").trim();
+  const wanted = baseName(featName);
+  const named = (entry) => baseName(entry?.name) === wanted;
   const features = [
     ...(record.data?.classes || []),
     ...(record.data?.ancestries || []),

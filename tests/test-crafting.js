@@ -242,6 +242,12 @@ section("Alchemists, remaster and legacy");
   assert("remaster label", ctx.getAdvancedAlchemyLabel(remaster), "Remaining: 2 out of 7");
   assert("Efficient Alchemy: 6 + Int", ctx.getAdvancedAlchemyAllowance(alchemist(true, { bonusFeats: [feat("Efficient Alchemy")] })).limit, 9);
   assert(
+    "module's feat name \"Efficient Alchemy (Alchemist)\" counts",
+    ctx.getAdvancedAlchemyAllowance(alchemist(true, { feats: [feat("Efficient Alchemy (Alchemist)")] })).limit,
+    9,
+  );
+  assert("Advanced Efficient Alchemy isn't plain Efficient Alchemy", ctx.hasFeatNamed(alchemist(true, { feats: [feat("Advanced Efficient Alchemy")] }), "Efficient Alchemy"), false);
+  assert(
     "Advanced Efficient Alchemy at 16th: 10 + Int",
     ctx.getAdvancedAlchemyAllowance(alchemist(true, { level: 16, bonusFeats: [feat("Advanced Efficient Alchemy")] })).limit,
     13,
