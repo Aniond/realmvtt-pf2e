@@ -305,4 +305,62 @@ section("Level 0 Characters");
   useVariants();
 }
 
+section("Turning variants on for existing characters");
+{
+  useVariants();
+  assert("no variants, empty key", ctx.getVariantRulesKey(), "");
+  useVariants("freeArchetype", "ancestryParagon");
+  assert("key lists the variants", ctx.getVariantRulesKey(), "ancestryParagon,freeArchetype");
+
+  // A level 6 character built before Free Archetype: the sheet notices the change
+  const built = character(6, { variantRulesKey: "" });
+  const values = {};
+  ctx.updateVariantRuleFields(built, values);
+  assert("new key saved on recalculation", values["data.variantRulesKey"], "ancestryParagon,freeArchetype");
+  const same = {};
+  ctx.updateVariantRuleFields(character(6, { variantRulesKey: "ancestryParagon,freeArchetype" }), same);
+  assert("unchanged key not rewritten", same["data.variantRulesKey"], undefined);
+
+  // The recalculation adds the slots it was missing, and says so
+  const before = slotsOf(character(6));
+  const after = slotsOf(character(6, { feats: before }));
+  useVariants();
+  const plain = slotsOf(character(6));
+  useVariants("freeArchetype", "ancestryParagon");
+  const upgraded = slotsOf(character(6, { feats: plain }));
+  assert("archetype slots added", count(upgraded, "archetype"), 3);
+  assert("paragon ancestry slots at 1, 1, 3, 5", count(upgraded, "ancestry"), 4);
+  assert(
+    "player is told what to fill",
+    ctx.describeNewFeatSlots(plain, upgraded),
+    "New feat slots from your campaign's variant rules: 2 Ancestry, 3 Archetype. Fill them on the Feats tab.",
+  );
+  assert("nothing new, no message", ctx.describeNewFeatSlots(after, after), "");
+
+  // Turning Free Archetype off keeps chosen archetype feats visible
+  useVariants();
+  const chosen = {
+    name: "Medic Dedication",
+    data: { type: "class", featSlotType: "archetype", level: 2, traits: ["Archetype", "Dedication"] },
+  };
+  const offValues = {};
+  ctx.setFeatSlots(character(6, { feats: [chosen] }), offValues);
+  assert("section stays while it holds feats", offValues["fields.archetypeFeatsBox.hidden"], false);
+  const emptyValues = {};
+  ctx.setFeatSlots(character(6), emptyValues);
+  assert("section hidden when empty and off", emptyValues["fields.archetypeFeatsBox.hidden"], true);
+
+  // Boost sets stay visible while they hold boosts
+  useVariants();
+  const boostValues = {};
+  ctx.updateVariantRuleFields(character(3, { freeBoostsLevel5: ["str", "dex"] }), boostValues);
+  assert("set with boosts stays visible", boostValues["fields.freeBoostsLevel5.hidden"], false);
+  assert("empty set below its level hidden", boostValues["fields.freeBoostsLevel10.hidden"], true);
+  useVariants("gradualAbilityBoosts");
+  const gradualValues = {};
+  ctx.updateVariantRuleFields(character(3), gradualValues);
+  assert("gradual: set 5 opens at level 2+", gradualValues["fields.freeBoostsLevel5.hidden"], false);
+  useVariants();
+}
+
 process.exitCode = summary() > 0 ? 1 : 0;

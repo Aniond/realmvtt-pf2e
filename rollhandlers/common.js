@@ -4849,9 +4849,14 @@ function setFeatSlots(record, valuesToSet) {
     ? 1
     : parseInt(record.data?.level || "1", 10);
 
-  // Show the Archetype Feats section only when Free Archetype is on
-  if (record.fields?.archetypeFeatsBox?.hidden !== !variants.freeArchetype) {
-    valuesToSet["fields.archetypeFeatsBox.hidden"] = !variants.freeArchetype;
+  // Show the Archetype Feats section when Free Archetype is on, or while it
+  // still holds chosen feats after the rule was turned off
+  const hasArchetypeFeats = (record.data?.feats || []).some(
+    (feat) => feat.data?.featSlotType === "archetype" && feat.data?.type !== "slot",
+  );
+  const hideArchetypeFeats = !variants.freeArchetype && !hasArchetypeFeats;
+  if (record.fields?.archetypeFeatsBox?.hidden !== hideArchetypeFeats) {
+    valuesToSet["fields.archetypeFeatsBox.hidden"] = hideArchetypeFeats;
   }
 
   // Without a class there is nothing to build slots from
@@ -13891,9 +13896,39 @@ function getAbpSkillPicksUpToLevel(level) {
   return picks;
 }
 
+// The variant rules on in the campaign, as one string ("" when none are on)
+function getVariantRulesKey(variants = getVariantRules()) {
+  return Object.keys(variants)
+    .filter((key) => variants[key])
+    .sort()
+    .join(",");
+}
+
 // Keeps the sheet's variant rule displays current (called from onAddEditFeature)
 function updateVariantRuleFields(record, valuesToSet) {
-  const abp = getAbpBonuses(record);
+  const variants = getVariantRules();
+
+  // Remember the rules this sheet was calculated under, so it can recalculate
+  // when a GM turns a variant on or off later
+  const key = getVariantRulesKey(variants);
+  if ((record.data?.variantRulesKey || "") !== key) {
+    valuesToSet["data.variantRulesKey"] = key;
+  }
+
+  // Show each free boost set the level has reached, or that still holds boosts
+  const level = parseInt(record.data?.level || "0", 10) || 0;
+  const boostFields = getFreeBoostFieldsForLevel(record, level, variants);
+  for (const setLevel of LEVEL_UP_BOOST_LEVELS) {
+    const current = record.data?.[`freeBoostsLevel${setLevel}`];
+    const hasBoosts = Array.isArray(current) ? current.length > 0 : !!current;
+    const hidden =
+      boostFields[`fields.freeBoostsLevel${setLevel}.hidden`] && !hasBoosts;
+    if (record.fields?.[`freeBoostsLevel${setLevel}`]?.hidden !== hidden) {
+      valuesToSet[`fields.freeBoostsLevel${setLevel}.hidden`] = hidden;
+    }
+  }
+
+  const abp = getAbpBonuses(record, variants);
   if (record.fields?.abpBox?.hidden !== !abp) {
     valuesToSet["fields.abpBox.hidden"] = !abp;
   }
@@ -13974,4 +14009,26 @@ function getWizardStartingWealthCp(record) {
 // matches a normal 1st-level character.
 function getLevelZeroClassSkillPicks(classObj) {
   return Math.max(0, (parseInt(classObj?.data?.trainedSkillsAdditional || 0, 10) || 0) - 2);
+}
+
+// Empty feat slots added between two versions of a character's feats, as a
+// sentence for the player ("" when none were added)
+function describeNewFeatSlots(oldFeats, newFeats) {
+  const emptyCounts = (feats) => {
+    const counts = {};
+    for (const feat of feats || []) {
+      if (feat.data?.type === "slot") {
+        const type = feat.data?.featSlotType || "other";
+        counts[type] = (counts[type] || 0) + 1;
+      }
+    }
+    return counts;
+  };
+  const before = emptyCounts(oldFeats);
+  const after = emptyCounts(newFeats);
+  const added = Object.keys(after)
+    .filter((type) => after[type] > (before[type] || 0))
+    .map((type) => `${after[type] - (before[type] || 0)} ${capitalize(type)}`);
+  if (added.length === 0) return "";
+  return `New feat slots from your campaign's variant rules: ${added.join(", ")}. Fill them on the Feats tab.`;
 }
