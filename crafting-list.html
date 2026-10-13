@@ -117,19 +117,19 @@
     >
     </numberfield>
   </div>
-  <div style="width: 90px; display: flex; gap: 2px">
-    <button
-      size="xs"
-      variant="light"
-      color="tertiary"
-      field="craftingDeleteBtn"
-      icon="IconHammer"
-      label="Craft"
-      onclick="onCraftItem()"
-    ></button>
+  <div
+    style="
+      width: 150px;
+      flex-shrink: 0;
+      display: flex;
+      gap: 2px;
+      align-items: center;
+      justify-content: flex-end;
+    "
+  >
     <iconbutton
-      size="sm"
-      variant="light"
+      size="md"
+      variant="default"
       field="growBtn"
       hidden="true"
       icon="IconPlant"
@@ -137,13 +137,25 @@
       onclick="onGrowItem()"
     ></iconbutton>
     <iconbutton
-      size="sm"
-      variant="light"
+      size="md"
+      variant="default"
       field="prepareBtn"
       hidden="true"
       icon="IconFlask"
       options='[{"label": "Prepare with Advanced Alchemy", "value": "prepare", "icon": "IconFlask"}]'
       onclick="onPrepareItem()"
     ></iconbutton>
+    <div style="width: 80px; flex-shrink: 0">
+      <button
+        size="xs"
+        variant="light"
+        color="tertiary"
+        field="craftingDeleteBtn"
+        icon="IconHammer"
+        label="Craft"
+        width="100%"
+        onclick="onCraftItem()"
+      ></button>
+    </div>
   </div>
 </div>

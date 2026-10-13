@@ -19,18 +19,15 @@
     // Craft rules apply
     const options = getCraftingOptions();
     const hasSalvage = (record.data?.craftingSalvage || []).length > 0;
-    const extras = [
+    const labels = [
+      getCraftingRulesVersion() === "legacy" ? "Legacy" : "Remaster",
       options.complexCrafting ? "Complex Crafting" : "",
       options.criticalCrafting ? "Critical Crafting" : "",
-      options.deconstruct ? "Converting Magic Items" : "",
-      options.grow ? `Nature Crafting (Grow with ${options.grow === "nature" ? "Nature" : "Crafting"})` : "",
+      options.deconstruct ? "Deconstruct" : "",
+      options.grow ? (options.grow === "nature" ? "Grow (Nature)" : "Grow") : "",
       options.downtimeEvents ? "Downtime Events" : "",
     ].filter((name) => name);
-    const rules =
-      getCraftingRulesVersion() === "legacy"
-        ? "Craft rules: Legacy (Core Rulebook). The formula is required; setup takes 4 days."
-        : "Craft rules: Remaster (Player Core). Setup takes 2 days, or 1 with the formula.";
-    const label = extras.length > 0 ? `${rules} Treasure Vault: ${extras.join(", ")}.` : rules;
+    const label = `Crafting Rules: ${labels.join(" · ")}`;
 
     const valuesToSet = {};
     const setIfChanged = (path, value, current) => {
@@ -228,27 +225,25 @@
       <span class="rvtt-sheet-divider__label">&#10022; Crafting &#10022;</span>
     </div>
 
-    <div style="width: 100%">
-      <div style="float: right">
-        <checkbox
-          label="Show Advanced Alchemy (Alchemist)"
-          field="showAdvancedAlchemy"
-          onchange="onShowAdvancedAlchemy(value)"
-          onload="onCraftingTabLoad()"
-          textalign="left"
+    <div style="display: flex; align-items: center; gap: 8px; width: 100%">
+      <div style="flex-grow: 1; min-width: 0">
+        <label
+          field="craftingRulesLabel"
           size="xs"
-          hideonlocked="true"
-        ></checkbox>
+          textalign="left"
+          color="dimmed"
+        ></label>
       </div>
+      <checkbox
+        label="Show Advanced Alchemy (Alchemist)"
+        field="showAdvancedAlchemy"
+        onchange="onShowAdvancedAlchemy(value)"
+        onload="onCraftingTabLoad()"
+        textalign="left"
+        size="xs"
+        hideonlocked="true"
+      ></checkbox>
     </div>
-
-    <label
-      field="craftingRulesLabel"
-      size="xs"
-      width="100%"
-      textalign="left"
-      color="dimmed"
-    ></label>
 
     <box field="advancedAlchemyBox" hidden="true">
       <div
@@ -406,7 +401,7 @@
         >
         </label>
       </div>
-      <div style="width: 90px"></div>
+      <div style="width: 150px; flex-shrink: 0"></div>
       <box field="tableSpacer" width="16px" hideonlocked="true"></box>
     </div>
 
