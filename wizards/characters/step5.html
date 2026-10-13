@@ -20,7 +20,11 @@
     const chosenLanguages = wizardToList(wizard.extraLanguages);
 
     const trainedLabels = skills.trained.map(capitalize).join(", ") || "None";
+    const levelZero = getVariantRules().levelZero;
     const errors = [];
+    if (levelZero && !wizard.levelZeroWeapon) {
+      errors.push("Choose a simple weapon to be trained in.");
+    }
     if (chosenSkills.length !== skills.count) {
       errors.push(
         `Choose ${skills.count} skill(s); ${chosenSkills.length} chosen.`,
@@ -33,14 +37,39 @@
     }
 
     api.setValues({
-      "data.wizard.skillInfo": `Already trained: ${trainedLabels}. Choose ${skills.count} more (class skills + Intelligence).`,
+      "data.wizard.skillInfo": `Already trained: ${trainedLabels}. Choose ${
+        skills.count
+      } more (${levelZero ? "2 + Intelligence at level 0" : "class skills + Intelligence"}).`,
       "data.wizard.languageInfo": `Known: ${
         languages.known.join(", ") || "None"
       }. Extra languages: ${languages.extraCount}.`,
       "data.wizard.skillsError": errors.join(" "),
       "fields.skillsError.hidden": errors.length === 0,
       "fields.extraLanguages.hidden": languages.extraCount === 0,
+      "fields.levelZeroWeapon.hidden": !levelZero,
     });
+  }
+
+  // Level 0 Characters: the chosen simple weapon's name, from its record
+  function wizardGetLevelZeroWeaponName(callback) {
+    const chosen = record.data?.wizard?.levelZeroWeapon;
+    if (!chosen) {
+      callback("");
+      return;
+    }
+    let weapon = null;
+    try {
+      weapon = typeof chosen === "string" ? JSON.parse(chosen) : chosen;
+    } catch (e) {
+      console.error("Error reading the simple weapon", e);
+    }
+    if (weapon?.name) {
+      callback(weapon.name);
+    } else if (weapon?._id) {
+      api.getRecord("items", weapon._id, (item) => callback(item?.name || ""));
+    } else {
+      callback("");
+    }
   }
 
   function wizardOnSkillsStepLoad() {
@@ -75,12 +104,22 @@
       valuesToSet["data.languagesList"] = buildLanguagesList(allLanguages);
     }
 
-    if (Object.keys(valuesToSet).length > 0) {
-      api.setValues(valuesToSet, (updatedRecord) => {
-        // Recalculate skill modifiers
-        onAddEditFeature(updatedRecord, undefined, true);
-      });
-    }
+    // Level 0 Characters: trained in the chosen simple weapon
+    wizardGetLevelZeroWeaponName((weaponName) => {
+      if (weaponName && isLevelZeroCharacter(record)) {
+        valuesToSet["data.classes.0.data.attacks.other"] = {
+          name: weaponName,
+          rank: "1",
+        };
+      }
+
+      if (Object.keys(valuesToSet).length > 0) {
+        api.setValues(valuesToSet, (updatedRecord) => {
+          // Recalculate skill modifiers
+          onAddEditFeature(updatedRecord, undefined, true);
+        });
+      }
+    });
   }
 </script>
 
@@ -93,12 +132,13 @@
 </p>
 
 <div style="display: flex; flex-direction: column; gap: 8px">
-  <stringfield
+  <label
     field="skillInfo"
+    size="sm"
     width="100%"
-    variant="unstyled"
+    textalign="left"
     onload="wizardOnSkillsStepLoad()"
-  ></stringfield>
+  ></label>
 
   <dropdown
     label="Trained Skills"
@@ -109,11 +149,21 @@
     onchange="wizardRefreshSkillsStep({ classSkills: value })"
   ></dropdown>
 
-  <stringfield
+  <dropdown
+    label="Simple Weapon Training (Level 0)"
+    field="levelZeroWeapon"
+    placeholder="Choose a Simple Weapon..."
+    hidden="true"
+    optionsquery='{"type": "items", "query": {"data.type": "weapon", "data.itemCategory": "Simple"}}'
+    onchange="wizardRefreshSkillsStep({ levelZeroWeapon: value })"
+  ></dropdown>
+
+  <label
     field="languageInfo"
+    size="sm"
     width="100%"
-    variant="unstyled"
-  ></stringfield>
+    textalign="left"
+  ></label>
 
   <dropdown
     label="Extra Languages"
@@ -125,14 +175,14 @@
     onchange="wizardRefreshSkillsStep({ extraLanguages: value })"
   ></dropdown>
 
-  <stringfield
-    label="Error"
+  <label
     field="skillsError"
+    size="sm"
     width="100%"
+    textalign="left"
     hidden="true"
     color="red"
-    variant="unstyled"
-  ></stringfield>
+  ></label>
 </div>
 
 <p>

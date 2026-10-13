@@ -10,6 +10,34 @@
   function onSkillAbilityChange() {
     onAddEditFeature(record);
   }
+
+  // Automatic Bonus Progression: choose every skill potency pick again
+  function chooseAbpSkillPotency() {
+    const level = parseInt(record.data?.level || "1", 10);
+    const picks = getAbpSkillPicksUpToLevel(level);
+    if (picks.length === 0) {
+      api.showNotification(
+        "Skill potency starts at a higher level.",
+        "yellow",
+        "Skill Potency",
+      );
+      return;
+    }
+    api.setValues({ "data.abpSkillPotency": {} }, () => {
+      const choose = (index) => {
+        if (index >= picks.length) {
+          api.getRecord("characters", record._id, (updatedRecord) => {
+            onAddEditFeature(updatedRecord);
+          });
+          return;
+        }
+        promptAbpSkillPotency(record._id, picks[index].level, picks[index], () =>
+          choose(index + 1),
+        );
+      };
+      choose(0);
+    });
+  }
 </script>
 
 <!-- Skills tab. Container query on the host collapses the 2-col grid to
@@ -950,6 +978,21 @@
         onchange="onAddEditFeature(record)"
       ></list>
     </div>
+
+    <box field="abpBox" hidden="true">
+      <div class="rvtt-sheet-divider">
+        <span class="rvtt-sheet-divider__label"
+          >&#10022; Automatic Bonus Progression &#10022;</span
+        >
+      </div>
+      <label field="abpSummary" size="xs"></label>
+      <button
+        size="xs"
+        label="Choose Skill Potency"
+        variant="light"
+        onclick="chooseAbpSkillPotency()"
+      ></button>
+    </box>
   </div>
 
   <div

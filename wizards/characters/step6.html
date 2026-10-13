@@ -1,40 +1,39 @@
 <script>
-  function wizardFindFeatSlot(feats, featType) {
-    return feats.findIndex(
-      (feat) =>
-        feat.data?.featSlotType === featType &&
-        parseInt(feat.data?.level, 10) === 1,
-    );
-  }
+  // One row per level 1 feat slot: the nth slot of its feat type
+  const wizardFeatRows = [
+    { field: "ancestryFeat", featType: "ancestry", nth: 0 },
+    { field: "ancestryFeat2", featType: "ancestry", nth: 1 },
+    { field: "classFeat", featType: "class", nth: 0 },
+    { field: "skillFeat", featType: "skill", nth: 0 },
+    { field: "generalFeat", featType: "general", nth: 0 },
+  ];
 
   function wizardOnFeatsStepLoad() {
-    const gains = getLevelUpGains(record, 1);
     const feats = record.data?.feats || [];
-    const valuesToSet = {
-      "fields.chooseAncestryFeat.hidden": !gains.featTypes.includes("ancestry"),
-      "fields.ancestryFeatName.hidden": !gains.featTypes.includes("ancestry"),
-      "fields.chooseClassFeat.hidden": !gains.featTypes.includes("class"),
-      "fields.classFeatName.hidden": !gains.featTypes.includes("class"),
-    };
+    const valuesToSet = {};
 
-    // Show feats already chosen, if any
-    for (const featType of ["ancestry", "class"]) {
-      const slot = feats[wizardFindFeatSlot(feats, featType)];
-      if (slot && slot.data?.type !== "slot") {
-        valuesToSet[`data.wizard.${featType}FeatName`] = slot.name;
-      }
+    for (const row of wizardFeatRows) {
+      const slot = feats[findFeatSlotIndex(feats, row.featType, 1, row.nth)];
+      valuesToSet[`fields.${row.field}Row.hidden`] = !slot;
+      // Show the feat already chosen, if any
+      valuesToSet[`data.wizard.${row.field}Name`] =
+        slot && slot.data?.type !== "slot" ? slot.name : "";
     }
 
     api.setValues(valuesToSet);
   }
 
-  function wizardChooseFeat(featType) {
+  function wizardChooseFeat(rowField) {
+    const row = wizardFeatRows.find((featRow) => featRow.field === rowField);
+    const featTypeLabel = capitalize(row.featType);
+    const article = /^[aeiou]/i.test(row.featType) ? "an" : "a";
+
     api.getRecord("characters", record._id, (latestRecord) => {
       const feats = latestRecord.data?.feats || [];
-      const slotIndex = wizardFindFeatSlot(feats, featType);
+      const slotIndex = findFeatSlotIndex(feats, row.featType, 1, row.nth);
       if (slotIndex === -1) {
         api.showNotification(
-          `Your Class has no level 1 ${capitalize(featType)} feat slot.`,
+          `Your character has no level 1 ${featTypeLabel} feat slot.`,
           "yellow",
           "No Feat Slot",
         );
@@ -42,11 +41,11 @@
       }
 
       api.showPrompt(
-        `Select a ${capitalize(featType)} Feat for Level 1`,
+        `Select ${article} ${featTypeLabel} Feat for Level 1`,
         "Select Feat",
         "Select a Feat...",
         null,
-        getFeatSlotQuery(latestRecord, featType, 1),
+        getFeatSlotQuery(latestRecord, row.featType, 1),
         (selected) => {
           const feat = getPromptSelections(selected)[0];
           if (!feat || typeof feat !== "object") {
@@ -58,7 +57,7 @@
                 feats[slotIndex],
                 feat,
               ),
-              [`data.wizard.${featType}FeatName`]: feat.name,
+              [`data.wizard.${row.field}Name`]: feat.name,
             },
             (updatedRecord) => {
               // Apply the feat, prompting for any choices it has
@@ -77,44 +76,104 @@
 <p>
   Choose your 1st-level feats.
   <br /><br />
-  Your Ancestry feat represents an ability you learned early in life. Most
-  Classes also grant a Class feat at 1st level. Your Background's skill feat
-  was added automatically.
+  Your Ancestry feat represents an ability you learned early in life. Many
+  Classes also grant a Class feat at 1st level, and some grant other feats too,
+  such as the Rogue's skill feat. A row appears below for each feat your
+  character gets. Your Background's skill feat was added automatically.
 </p>
 
 <div style="display: flex; flex-direction: column; gap: 8px">
-  <div style="display: flex; flex-direction: row; gap: 8px; align-items: flex-end">
-    <stringfield
-      label="Ancestry Feat"
-      field="ancestryFeatName"
-      placeholder="None chosen"
-      width="100%"
-      readonly="true"
-      onload="wizardOnFeatsStepLoad()"
-    ></stringfield>
-    <button
-      label="Choose"
-      field="chooseAncestryFeat"
-      variant="filled"
-      onclick="wizardChooseFeat('ancestry')"
-    ></button>
-  </div>
+  <!-- Starts visible so its onload runs; hidden if there is no slot -->
+  <box field="ancestryFeatRow">
+    <div style="display: flex; flex-direction: row; gap: 8px; align-items: flex-end">
+      <stringfield
+        label="Ancestry Feat"
+        field="ancestryFeatName"
+        placeholder="None chosen"
+        width="100%"
+        readonly="true"
+        onload="wizardOnFeatsStepLoad()"
+      ></stringfield>
+      <button
+        label="Choose"
+        field="chooseAncestryFeat"
+        variant="filled"
+        onclick="wizardChooseFeat('ancestryFeat')"
+      ></button>
+    </div>
+  </box>
 
-  <div style="display: flex; flex-direction: row; gap: 8px; align-items: flex-end">
-    <stringfield
-      label="Class Feat"
-      field="classFeatName"
-      placeholder="None chosen"
-      width="100%"
-      readonly="true"
-    ></stringfield>
-    <button
-      label="Choose"
-      field="chooseClassFeat"
-      variant="filled"
-      onclick="wizardChooseFeat('class')"
-    ></button>
-  </div>
+  <box field="ancestryFeat2Row" hidden="true">
+    <div style="display: flex; flex-direction: row; gap: 8px; align-items: flex-end">
+      <stringfield
+        label="Second Ancestry Feat"
+        field="ancestryFeat2Name"
+        placeholder="None chosen"
+        width="100%"
+        readonly="true"
+      ></stringfield>
+      <button
+        label="Choose"
+        field="chooseAncestryFeat2"
+        variant="filled"
+        onclick="wizardChooseFeat('ancestryFeat2')"
+      ></button>
+    </div>
+  </box>
+
+  <box field="classFeatRow" hidden="true">
+    <div style="display: flex; flex-direction: row; gap: 8px; align-items: flex-end">
+      <stringfield
+        label="Class Feat"
+        field="classFeatName"
+        placeholder="None chosen"
+        width="100%"
+        readonly="true"
+      ></stringfield>
+      <button
+        label="Choose"
+        field="chooseClassFeat"
+        variant="filled"
+        onclick="wizardChooseFeat('classFeat')"
+      ></button>
+    </div>
+  </box>
+
+  <box field="skillFeatRow" hidden="true">
+    <div style="display: flex; flex-direction: row; gap: 8px; align-items: flex-end">
+      <stringfield
+        label="Skill Feat"
+        field="skillFeatName"
+        placeholder="None chosen"
+        width="100%"
+        readonly="true"
+      ></stringfield>
+      <button
+        label="Choose"
+        field="chooseSkillFeat"
+        variant="filled"
+        onclick="wizardChooseFeat('skillFeat')"
+      ></button>
+    </div>
+  </box>
+
+  <box field="generalFeatRow" hidden="true">
+    <div style="display: flex; flex-direction: row; gap: 8px; align-items: flex-end">
+      <stringfield
+        label="General Feat"
+        field="generalFeatName"
+        placeholder="None chosen"
+        width="100%"
+        readonly="true"
+      ></stringfield>
+      <button
+        label="Choose"
+        field="chooseGeneralFeat"
+        variant="filled"
+        onclick="wizardChooseFeat('generalFeat')"
+      ></button>
+    </div>
+  </box>
 </div>
 
 <p>

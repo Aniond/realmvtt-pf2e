@@ -103,4 +103,64 @@ section("level 1 feat slots from the class");
   assert("level 1 ancestry and class feats", gains.featTypes.join(","), "ancestry,class");
 }
 
-summary();
+section("findFeatSlotIndex");
+{
+  // Feat levels as on the Player Core class records
+  const evenLevels = ["2", "4", "6", "8", "10", "12", "14", "16", "18", "20"];
+  const ancestryFeatLevels = ["1", "5", "9", "13", "17"];
+  const generalFeatLevels = ["3", "7", "11", "15", "19"];
+  const rogue = {
+    name: "Rogue",
+    data: {
+      ancestryFeatLevels,
+      classFeatLevels: ["1", ...evenLevels],
+      skillFeatLevels: Array.from({ length: 20 }, (_, i) => `${i + 1}`),
+      generalFeatLevels,
+    },
+  };
+  const wizard = {
+    name: "Wizard",
+    data: { ancestryFeatLevels, classFeatLevels: evenLevels, skillFeatLevels: evenLevels, generalFeatLevels },
+  };
+  // Slots as the sheet makes them when the Class is dropped
+  const slotsFor = (classObj, level = 1) => {
+    const valuesToSet = {};
+    ctx.setFeatSlots({ data: { level, classes: [classObj], feats: [] } }, valuesToSet);
+    return valuesToSet["data.feats"];
+  };
+
+  const rogueFeats = slotsFor(rogue);
+  const skillIndex = ctx.findFeatSlotIndex(rogueFeats, "skill", 1);
+  assert("rogue has 3 level 1 slots", rogueFeats.length, 3);
+  assert("rogue skill slot found", rogueFeats[skillIndex]?.data.featSlotType, "skill");
+  assert("rogue class slot found", ctx.findFeatSlotIndex(rogueFeats, "class", 1) !== -1, true);
+  assert("rogue has no general slot", ctx.findFeatSlotIndex(rogueFeats, "general", 1), -1);
+  assert("rogue has one ancestry slot", ctx.findFeatSlotIndex(rogueFeats, "ancestry", 1, 1), -1);
+
+  const wizardFeats = slotsFor(wizard);
+  assert("wizard ancestry slot found", ctx.findFeatSlotIndex(wizardFeats, "ancestry", 1), 0);
+  assert("wizard has no level 1 class slot", ctx.findFeatSlotIndex(wizardFeats, "class", 1), -1);
+  assert("wizard has no level 1 skill slot", ctx.findFeatSlotIndex(wizardFeats, "skill", 1), -1);
+
+  const filled = [...rogueFeats];
+  filled[skillIndex] = ctx.buildFilledFeatSlot(rogueFeats[skillIndex], {
+    _id: "feat",
+    name: "Trick Magic Item",
+    data: { type: "skill", level: 1 },
+  });
+  assert("filled slot still found", ctx.findFeatSlotIndex(filled, "skill", 1), skillIndex);
+
+  // A variant (such as Ancestral Paragon) can add a second slot of a type
+  const secondAncestry = { _id: "extra", data: { type: "slot", featSlotType: "ancestry", level: "1" } };
+  const paragon = [...rogueFeats, secondAncestry];
+  assert("first ancestry slot", ctx.findFeatSlotIndex(paragon, "ancestry", 1, 0), 0);
+  assert("second ancestry slot (string level)", ctx.findFeatSlotIndex(paragon, "ancestry", 1, 1), 3);
+  assert("no third ancestry slot", ctx.findFeatSlotIndex(paragon, "ancestry", 1, 2), -1);
+
+  const levelTwo = slotsFor(rogue, 2);
+  assert("level 2 skill slot not counted at level 1", ctx.findFeatSlotIndex(levelTwo, "skill", 1, 1), -1);
+  assert("level 2 skill slot found at level 2", levelTwo[ctx.findFeatSlotIndex(levelTwo, "skill", 2)]?.data.level, 2);
+  assert("no feats", ctx.findFeatSlotIndex(undefined, "skill", 1), -1);
+}
+
+process.exitCode = summary();

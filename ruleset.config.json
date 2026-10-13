@@ -5258,6 +5258,96 @@
             "value": "yes"
           }
         ]
+      },
+      {
+        "name": "Variant: Automatic Bonus Progression",
+        "key": "automaticBonusProgression",
+        "description": "GM Core pg. 83. Characters gain attack, skill, defense, Perception and saving throw potency, devastating attacks and attribute apex by level. Potency, striking and resilient runes give no bonus.",
+        "values": [
+          {
+            "label": "No",
+            "value": "no"
+          },
+          {
+            "label": "Yes",
+            "value": "yes"
+          }
+        ]
+      },
+      {
+        "name": "Variant: Free Archetype",
+        "key": "freeArchetype",
+        "description": "GM Core pg. 84. Characters gain an extra class feat at 2nd level and every even level after, usable only for archetype feats.",
+        "values": [
+          {
+            "label": "No",
+            "value": "no"
+          },
+          {
+            "label": "Yes",
+            "value": "yes"
+          }
+        ]
+      },
+      {
+        "name": "Variant: Level 0 Characters",
+        "key": "levelZeroCharacters",
+        "description": "GM Core pg. 84. New characters start at level 0 with an ancestry and background but no class, and take a class on reaching 1st level.",
+        "values": [
+          {
+            "label": "No",
+            "value": "no"
+          },
+          {
+            "label": "Yes",
+            "value": "yes"
+          }
+        ]
+      },
+      {
+        "name": "Variant: Proficiency without Level",
+        "key": "proficiencyWithoutLevel",
+        "description": "GM Core pg. 85. Proficiency bonuses don't add level: untrained -2, trained +2, expert +4, master +6, legendary +8.",
+        "values": [
+          {
+            "label": "No",
+            "value": "no"
+          },
+          {
+            "label": "Yes",
+            "value": "yes"
+          }
+        ]
+      },
+      {
+        "name": "Variant: Ancestry Paragon",
+        "key": "ancestryParagon",
+        "description": "Gamemastery Guide pg. 194. Characters start with two ancestry feats and gain another at every odd level.",
+        "values": [
+          {
+            "label": "No",
+            "value": "no"
+          },
+          {
+            "label": "Yes",
+            "value": "yes"
+          }
+        ]
+      },
+      {
+        "name": "Variant: Gradual Ability Boosts",
+        "key": "gradualAbilityBoosts",
+        "description": "Gamemastery Guide pg. 182. Instead of four boosts at 5th, 10th, 15th and 20th level, characters gain one boost at each level of the set leading up to it.",
+        "values": [
+          {
+            "label": "No",
+            "value": "no"
+          },
+          {
+            "label": "Yes",
+            "value": "yes"
+          }
+        ]
       }
     ],
     "themes": [

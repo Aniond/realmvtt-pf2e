@@ -135,4 +135,4 @@ section("class kits");
   assert("ammo count in kit", kitFor("Fighter").options[1].items[1].count, 20);
 }
 
-summary();
+process.exitCode = summary();
