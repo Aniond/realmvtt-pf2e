@@ -417,20 +417,6 @@ section("Weak and Elite HP");
   const weakLow = { level: -1, baseLevel: 1, hitpoints: 1, baseHP: 8, curhp: 1, adjustment: "weak" };
   assert("and removing it gives back 8 of 8, not 11", adjust("remove", weakLow)["data.curhp"], 8);
 
-  // Hazard Stealth DC typed into the old field moves to data.stealth.value
-  written = {};
-  npcCtx.record = { data: { sealth: { value: 22 }, stealth: { details: "trained" } } };
-  npcCtx.onHazardStealthLoad();
-  assert("typed DC moves to stealth.value", written["data.stealth.value"], 22);
-  assert("and the old field is cleared", written["data.sealth"], null);
-  written = {};
-  npcCtx.record = { data: { sealth: { value: 22 }, stealth: { value: 25 } } };
-  npcCtx.onHazardStealthLoad();
-  assert("an imported DC wins", written["data.stealth.value"], undefined);
-  written = {};
-  npcCtx.record = { data: { stealth: { value: 25 } } };
-  npcCtx.onHazardStealthLoad();
-  assert("nothing to move: no write", Object.keys(written).length, 0);
 }
 
 section("resilient and potency runes need investment");

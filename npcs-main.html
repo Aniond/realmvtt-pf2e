@@ -693,19 +693,6 @@
     });
   }
 
-  // The hazard Stealth DC field was bound to data.sealth.value; move a DC typed
-  // there to data.stealth.value, where imported hazards keep it
-  function onHazardStealthLoad() {
-    const typed = record.data?.sealth?.value;
-    if (typed === undefined || typed === null || typed === "") return;
-    const valuesToSet = { "data.sealth": null };
-    const current = record.data?.stealth?.value;
-    if (current === undefined || current === null || current === "") {
-      valuesToSet["data.stealth.value"] = typed;
-    }
-    api.setValues(valuesToSet);
-  }
-
   function onAddRemoveElite(value) {
     const adjustment = record.data?.adjustment || "";
 
@@ -2638,7 +2625,6 @@
             field="stealth.value"
             label="Stealth DC"
             placeholder="0"
-            onload="onHazardStealthLoad()"
           ></numberfield>
         </div>
         <richtextfield
