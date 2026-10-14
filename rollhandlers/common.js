@@ -15535,6 +15535,9 @@ function getTurnStartActions(token) {
     // Stunned stacks to take off: the actions it took (none for a duration)
     stunnedEffectId: stunned ? stunned.effect._id : null,
     stunnedDeduct: stunnedForDuration ? 0 : lostToStunned,
+    // Stunned uses up its last stack this turn
+    stunnedEnds:
+      !!stunned && !stunnedForDuration && lostToStunned >= stunnedValue,
     changed: !!(quickened || slowed || stunned),
   };
 }
@@ -15566,12 +15569,33 @@ function getTurnStartActionsMessage(result) {
   return `**${result.actions} ${label}** this turn (${reasons.join("; ")}).`;
 }
 
+// Effects that keep frightened from going below a value while they last
+// ("unless specified otherwise", Player Core pg. 444), with that value. The
+// module's Spiral of Horrors effect adds frightened 1 and says the creature is
+// unable to reduce the condition; Realm doesn't add it again while the effect
+// stays on.
+const FRIGHTENED_FLOOR_EFFECTS = {
+  "Spell Effect: Spiral of Horrors": 1,
+};
+
+// The lowest value frightened can go down to on a token: 0, or the highest
+// floor among its effects
+function getFrightenedFloor(token) {
+  let floor = 0;
+  for (const [name, value] of Object.entries(FRIGHTENED_FLOOR_EFFECTS)) {
+    if (getTokenCondition(token, name)) floor = Math.max(floor, value);
+  }
+  return floor;
+}
+
 // Frightened goes down by 1 at the end of each of the creature's turns
-// (Player Core pg. 444). The Frightened effect to take a stack off, or null.
+// (Player Core pg. 444), but not below a floor an effect sets. The Frightened
+// effect to take a stack off, or null.
 function getTurnEndFrightened(token) {
   if (isTokenDead(token)) return null;
   const frightened = getTokenCondition(token, "frightened");
-  return frightened ? frightened.effect : null;
+  if (!frightened || frightened.value <= getFrightenedFloor(token)) return null;
+  return frightened.effect;
 }
 
 // Takes stacks off an effect one at a time: each deduct reads the token's
@@ -15586,6 +15610,26 @@ function deductEffectStacks(effectId, token, times, callback) {
   );
 }
 
+// Takes the stunned the turn used off the token. Each effect call reads the
+// token and writes its whole effect list back, and nothing orders it against
+// the end-of-turn frightened change if the GM ends the turn while it is still
+// running, so stunned that ends comes off in one write instead of one per
+// stack.
+function takeUsedStunned(turnActions, token, callback) {
+  if (turnActions?.stunnedEnds && turnActions.stunnedEffectId) {
+    api.removeEffectById(turnActions.stunnedEffectId, token, () => {
+      if (typeof callback === "function") callback();
+    });
+    return;
+  }
+  deductEffectStacks(
+    turnActions?.stunnedEffectId,
+    token,
+    turnActions?.stunnedDeduct,
+    callback,
+  );
+}
+
 // Removes effects from a token one at a time, for the same reason
 function removeEffectsInOrder(effectIds, token, callback) {
   if (!effectIds?.length) {
@@ -15596,6 +15640,87 @@ function removeEffectsInOrder(effectIds, token, callback) {
   api.removeEffectById(effectId, token, () =>
     removeEffectsInOrder(rest, token, callback),
   );
+}
+
+// Realm's Previous button runs no hooks and puts nothing back, so Next after
+// Previous runs the same turn's hooks again. As Foundry does with the
+// combatant's roundOfLastTurn and roundOfLastTurnEnd, the token keeps the
+// round its turn-start upkeep last ran in, and the turn-end upkeep notes which
+// of those turns it has already ended. A hook that already ran for this turn
+// does nothing.
+const UPKEEP_START_ROUND = "conditionUpkeepStartRound";
+const UPKEEP_END_ROUND = "conditionUpkeepEndRound";
+
+// Calls back once with the combat tracker's round, or null when it can't be
+// read; then there is no guard and the upkeep runs every time
+function getCombatRound(callback) {
+  let done = false;
+  const finish = (round) => {
+    if (done) return;
+    done = true;
+    callback(round);
+  };
+  try {
+    if (typeof api?.getCombatTracker !== "function") {
+      finish(null);
+      return;
+    }
+    api.getCombatTracker((combatTracker) => {
+      const round = parseInt(combatTracker?.round, 10);
+      finish(Number.isFinite(round) && round > 0 ? round : null);
+    });
+  } catch (e) {
+    finish(null);
+  }
+}
+
+function getUpkeepRound(token, field) {
+  const round = parseInt(token?.data?.[field], 10);
+  return Number.isFinite(round) ? round : null;
+}
+
+// Whether the turn-start upkeep already ran this round
+function isTurnStartUpkeepDone(token, round) {
+  return round !== null && getUpkeepRound(token, UPKEEP_START_ROUND) === round;
+}
+
+// Whether the turn-end upkeep already ran for the token's current turn
+function isTurnEndUpkeepDone(token) {
+  const startRound = getUpkeepRound(token, UPKEEP_START_ROUND);
+  return (
+    startRound !== null &&
+    getUpkeepRound(token, UPKEEP_END_ROUND) === startRound
+  );
+}
+
+// Notes that the turn-start upkeep ran in this round
+function markTurnStartUpkeep(token, round) {
+  if (round === null || !token?._id) return;
+  api.setValuesOnTokenById(token._id, token.recordType, {
+    ["data." + UPKEEP_START_ROUND]: round,
+  });
+}
+
+// Notes that the turn-end upkeep ran for the turn that started last
+function markTurnEndUpkeep(token) {
+  const startRound = getUpkeepRound(token, UPKEEP_START_ROUND);
+  if (startRound === null || !token?._id) return;
+  api.setValuesOnTokenById(token._id, token.recordType, {
+    ["data." + UPKEEP_END_ROUND]: startRound,
+  });
+}
+
+// Forgets the rounds when the encounter ends, so the next encounter's round 1
+// isn't taken for this one's
+function clearConditionUpkeepRounds(token) {
+  if (!token?._id) return;
+  const values = {};
+  for (const field of [UPKEEP_START_ROUND, UPKEEP_END_ROUND]) {
+    if (getUpkeepRound(token, field) !== null) values["data." + field] = null;
+  }
+  if (Object.keys(values).length > 0) {
+    api.setValuesOnTokenById(token._id, token.recordType, values);
+  }
 }
 
 // Effects that last until the encounter ends: Foundry's "encounter" duration,
@@ -15618,6 +15743,24 @@ const ENCOUNTER_EFFECT_NAMES = [
   "Spell Effect: Acid Grip",
 ];
 
+// Effects that end when the barbarian's rage ends, so they end with Rage
+// above: the feats' "until your rage ends" or "while you are raging" effects,
+// and Share Rage, the rage an ally gets from the barbarian. Like Rage they are
+// 1 minute (or indefinite, Giant's Stature and Furious Finish), which never
+// runs out in combat. Rage Temporary Hit Points Immunity stays: it lasts 1
+// minute after the rage.
+const RAGE_EFFECT_NAMES = [
+  "Animalistic Brutality",
+  "Come and Get Me",
+  "Come and Get Me (Circumstance Bonus)",
+  "Come and Get Me (Temporary Hit Points)",
+  "Desperate Wrath",
+  "Dragon's Rage Wings",
+  "Furious Finish",
+  "Giant's Stature",
+  "Share Rage",
+];
+
 // A stance lasts until the encounter ends (stance trait). The module names
 // every stance effect "Stance: ...", and some came through as indefinite.
 const ENCOUNTER_EFFECT_PREFIXES = ["Stance: "];
@@ -15629,6 +15772,7 @@ function isEncounterEffect(effect, token = null) {
   const name = `${effect?.name || ""}`.trim().toLowerCase();
   return (
     ENCOUNTER_EFFECT_NAMES.some((n) => n.toLowerCase() === name) ||
+    RAGE_EFFECT_NAMES.some((n) => n.toLowerCase() === name) ||
     ENCOUNTER_EFFECT_PREFIXES.some((p) => name.startsWith(p.toLowerCase()))
   );
 }
@@ -15651,20 +15795,27 @@ function getTokenDisplayName(token) {
   return name || "Unknown";
 }
 
-// What to remove from the encounter's tokens when it ends: [{ token, name,
-// effects }]. Tokens linked to the same record share its effects, so each
-// record comes up once.
-function getEncounterEndRemovals(tokens) {
+// The encounter's tokens, once per record: tokens linked to the same record
+// share its effects and data
+function getEncounterTokens(tokens) {
   const seen = new Set();
-  const removals = [];
-  for (const token of tokens || []) {
-    if (!token) continue;
+  return (tokens || []).filter((token) => {
+    if (!token) return false;
     const key =
       token.linked === true && token.recordId
         ? `record:${token.recordId}`
         : `token:${token._id}`;
-    if (seen.has(key)) continue;
+    if (seen.has(key)) return false;
     seen.add(key);
+    return true;
+  });
+}
+
+// What to remove from the encounter's tokens when it ends: [{ token, name,
+// effects }]. Each record comes up once.
+function getEncounterEndRemovals(tokens) {
+  const removals = [];
+  for (const token of getEncounterTokens(tokens)) {
     const effects = getEncounterEndEffects(token);
     if (effects.length > 0) {
       removals.push({ token, name: getTokenDisplayName(token), effects });

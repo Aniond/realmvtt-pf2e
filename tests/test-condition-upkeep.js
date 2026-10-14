@@ -23,6 +23,14 @@ ctx.api.removeEffectById = (effectId, token, cb) => {
   calls.push(["remove", effectId, token?._id]);
   if (cb) cb();
 };
+ctx.api.setValuesOnTokenById = (id, recordType, values, cb) => {
+  calls.push(["set", id, values]);
+  if (cb) cb();
+};
+
+// The combat tracker's round the turn-start upkeep reads
+let combatRound = 1;
+ctx.api.getCombatTracker = (cb) => cb({ round: combatRound });
 
 // Runs a hook file the way the combat tracker does, with `data` in scope
 function runHook(file, data) {
@@ -106,9 +114,11 @@ section("getTurnStartActions: printed examples (Player Core pg. 446)");
   let r = actions([[STUNNED, 4]]);
   assert("stunned 4: no actions", r.actions, 0);
   assert("stunned 4: takes 3 stacks off", r.stunnedDeduct, 3);
+  assert("stunned 4: does not end", r.stunnedEnds, false);
   r = actions([[STUNNED, 1]]);
   assert("stunned 1 next turn: 2 actions", r.actions, 2);
   assert("stunned 1: takes its last stack", r.stunnedDeduct, 1);
+  assert("stunned 1: ends", r.stunnedEnds, true);
   r = actions([[STUNNED, 1], [SLOWED, 2]]);
   assert("stunned 1 and slowed 2: 1 action", r.actions, 1);
   assert("stunned 1 and slowed 2: stunned ends", r.stunnedDeduct, 1);
@@ -178,6 +188,10 @@ section("getTurnEndFrightened");
   assert("not frightened", ctx.getTurnEndFrightened(tokenWith([[SLOWED, 1]])), null);
   assert("dead: left alone", ctx.getTurnEndFrightened(tokenWith([[FRIGHTENED, 2], [DEAD]])), null);
   assert("no token", ctx.getTurnEndFrightened(undefined), null);
+  const spiral = effect("Spell Effect: Spiral of Horrors", 0, "indefinite", "spiral");
+  assert("Spiral of Horrors: frightened 1 stays", ctx.getTurnEndFrightened(tokenWith([[spiral], [FRIGHTENED, 1]])), null);
+  assert("Spiral of Horrors: frightened 3 goes down", ctx.getTurnEndFrightened(tokenWith([[spiral], [FRIGHTENED, 3]]))?._id, "frightened");
+  assert("no floor effect: floor 0", ctx.getFrightenedFloor(tokenWith([[FRIGHTENED, 2]])), 0);
 }
 
 section("onTurnEnd hook");
@@ -185,6 +199,13 @@ section("onTurnEnd hook");
   settings = {};
   runHook("onTurnEnd.js", { token: tokenWith([[FRIGHTENED, 2]]) });
   assert("frightened goes down by 1", calls, [["deduct", "frightened", "tok"]]);
+  runHook("onTurnEnd.js", {
+    token: tokenWith([[FRIGHTENED, 2]], { data: { conditionUpkeepStartRound: 2 } }),
+  });
+  assert("frightened: turn noted as ended", calls, [
+    ["deduct", "frightened", "tok"],
+    ["set", "tok", { "data.conditionUpkeepEndRound": 2 }],
+  ]);
   runHook("onTurnEnd.js", { token: tokenWith([[FRIGHTENED, 1], [DEAD]]) });
   assert("dead creature: no change", calls, []);
   settings = { conditionUpkeep: "no" };
@@ -197,17 +218,29 @@ section("onTurnStart hook");
 {
   settings = {};
   runHook("onTurnStart.js", { token: tokenWith([[STUNNED, 4]]) });
-  assert("stunned 4: three stacks taken", calls, [
+  assert("stunned 4: three stacks taken, then the round noted", calls, [
     ["deduct", "stunned", "tok"],
     ["deduct", "stunned", "tok"],
     ["deduct", "stunned", "tok"],
+    ["set", "tok", { "data.conditionUpkeepStartRound": 1 }],
   ]);
   assert("one chat line", state.messages, ["**0 actions** this turn (stunned 4 takes 3, now stunned 1)."]);
+  runHook("onTurnStart.js", { token: tokenWith([[STUNNED, 3], [FRIGHTENED, 1]]) });
+  assert("stunned 3 ends: one removal, not three deducts", calls, [
+    ["remove", "stunned", "tok"],
+    ["set", "tok", { "data.conditionUpkeepStartRound": 1 }],
+  ]);
   runHook("onTurnStart.js", { token: tokenWith([[SLOWED, 1]], { recordType: "characters" }) });
   assert("character slowed: message", state.messages, ["**2 actions** this turn (slowed 1)."]);
-  assert("slowed: nothing deducted", calls, []);
+  assert("slowed: nothing deducted", calls, [
+    ["set", "tok", { "data.conditionUpkeepStartRound": 1 }],
+  ]);
   runHook("onTurnStart.js", { token: tokenWith([]) });
   assert("no conditions: no message", state.messages, []);
+  combatRound = null;
+  runHook("onTurnStart.js", { token: tokenWith([[STUNNED, 1]], { data: { conditionUpkeepStartRound: 1 } }) });
+  assert("round unreadable: upkeep still runs", calls, [["remove", "stunned", "tok"]]);
+  combatRound = 1;
   runHook("onTurnStart.js", { token: tokenWith([[STUNNED, 2], [DEAD]]) });
   assert("dead: no message", state.messages, []);
   assert("dead: stunned left alone", calls, []);
@@ -218,6 +251,62 @@ section("onTurnStart hook");
   settings = {};
 }
 
+section("Next after Previous runs a turn's hooks again");
+{
+  // Realm's Previous runs no hooks and restores nothing, so the hooks see the
+  // token as the first run left it. Deducts and writes apply to the token.
+  settings = {};
+  let token = tokenWith([[STUNNED, 4], [FRIGHTENED, 2]]);
+  const saved = {
+    deduct: ctx.api.deductEffectById,
+    remove: ctx.api.removeEffectById,
+    set: ctx.api.setValuesOnTokenById,
+  };
+  ctx.api.deductEffectById = (effectId, tok, cb) => {
+    const i = token.effectIds.indexOf(effectId);
+    if (i >= 0) token.effectIds.splice(i, 1);
+    if (cb) cb();
+  };
+  ctx.api.removeEffectById = (effectId, tok, cb) => {
+    token.effectIds = token.effectIds.filter((id) => id !== effectId);
+    if (cb) cb();
+  };
+  ctx.api.setValuesOnTokenById = (id, recordType, values, cb) => {
+    for (const [path, value] of Object.entries(values)) {
+      token.data[path.replace(/^data\./, "")] = value;
+    }
+    if (cb) cb();
+  };
+  const count = (id) => token.effectIds.filter((x) => x === id).length;
+  const run = (file) => runHook(file, { token: JSON.parse(JSON.stringify(token)) });
+  combatRound = 3;
+  run("onTurnStart.js");
+  assert("first start: stunned 4 takes 3", [count("stunned"), state.messages], [
+    1,
+    ["**0 actions** this turn (stunned 4 takes 3, now stunned 1)."],
+  ]);
+  run("onTurnStart.js");
+  assert("same turn started again: nothing", [count("stunned"), state.messages], [1, []]);
+  run("onTurnEnd.js");
+  assert("first end: frightened 2 -> 1", count("frightened"), 1);
+  run("onTurnEnd.js");
+  assert("same turn ended again: frightened stays 1", count("frightened"), 1);
+  run("onTurnStart.js");
+  assert("start again after its end, same round: nothing", [count("stunned"), state.messages], [1, []]);
+  combatRound = 4;
+  run("onTurnStart.js");
+  assert("next round: stunned 1 takes 1", [count("stunned"), state.messages], [
+    0,
+    ["**2 actions** this turn (stunned 1 takes 1, stunned ends)."],
+  ]);
+  run("onTurnEnd.js");
+  assert("next round's end: frightened 1 -> 0", count("frightened"), 0);
+  ctx.api.deductEffectById = saved.deduct;
+  ctx.api.removeEffectById = saved.remove;
+  ctx.api.setValuesOnTokenById = saved.set;
+  combatRound = 1;
+}
+
 section("getEncounterEndEffects");
 {
   const names = (effects, extra) => ctx.getEncounterEndEffects(tokenWith(effects.map((e) => [e]), extra)).map((e) => e.name);
@@ -225,6 +314,31 @@ section("getEncounterEndEffects");
   assert("stance stored as indefinite", names([effect("Stance: Twinned Defense")]), ["Stance: Twinned Defense"]);
   assert("Panache", names([effect("Panache")]), ["Panache"]);
   assert("Rage", names([effect("Rage", 1, "minutes")]), ["Rage"]);
+  assert(
+    "the effects that end with the rage",
+    names([
+      effect("Come and Get Me", 1, "minutes"),
+      effect("Come and Get Me (Circumstance Bonus)", 1, "minutes"),
+      effect("Come and Get Me (Temporary Hit Points)", 1, "minutes"),
+      effect("Giant's Stature"),
+      effect("Share Rage", 1, "minutes"),
+      effect("Dragon's Rage Wings", 1, "minutes"),
+      effect("Animalistic Brutality", 1, "minutes"),
+      effect("Desperate Wrath", 1, "minutes"),
+      effect("Furious Finish"),
+    ]),
+    [
+      "Come and Get Me",
+      "Come and Get Me (Circumstance Bonus)",
+      "Come and Get Me (Temporary Hit Points)",
+      "Giant's Stature",
+      "Share Rage",
+      "Dragon's Rage Wings",
+      "Animalistic Brutality",
+      "Desperate Wrath",
+      "Furious Finish",
+    ],
+  );
   assert(
     "rage immunity, temporary panache, conditions and timed effects stay",
     names([
@@ -310,6 +424,16 @@ section("onEncounterEnd hook");
   assert("summary sent", state.messages[1], "**Encounter effects ended**\n- Amiri: Stance: Mountain Stance, Rage");
   runHook("onEncounterEnd.js", { tokens: [foe] });
   assert("nothing to end: nothing removed or sent", [calls, state.messages], [[], []]);
+  const noted = {
+    ...pc,
+    data: { level: 1, conditionUpkeepStartRound: 2, conditionUpkeepEndRound: 2 },
+  };
+  runHook("onEncounterEnd.js", { tokens: [noted, { ...noted, _id: "t3" }, foe] });
+  assert("noted rounds cleared after the removals, once per record", calls, [
+    ["remove", "Stance: Mountain Stance", "t1"],
+    ["remove", "Rage", "t1"],
+    ["set", "t1", { "data.conditionUpkeepStartRound": null, "data.conditionUpkeepEndRound": null }],
+  ]);
 }
 
 process.exitCode = summary() > 0 ? 1 : 0;

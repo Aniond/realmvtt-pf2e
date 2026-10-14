@@ -177,8 +177,13 @@ ${macro}`
 // itself: ending an encounter only resets the combat tracker.
 {
   const removals = getEncounterEndRemovals(data?.tokens);
-  removals.forEach(({ token, effects }) => {
-    removeEffectsInOrder(effects.map((effect) => effect._id), token);
+  const removing = new Map(removals.map(({ token, effects }) => [token, effects]));
+  // Then forget the turn rounds the condition upkeep kept on each token
+  getEncounterTokens(data?.tokens).forEach((token) => {
+    const effectIds = (removing.get(token) || []).map((effect) => effect._id);
+    removeEffectsInOrder(effectIds, token, () =>
+      clearConditionUpkeepRounds(token),
+    );
   });
   const summary = getEncounterEndSummary(removals);
   if (summary) {

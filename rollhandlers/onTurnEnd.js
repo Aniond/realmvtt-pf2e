@@ -101,10 +101,13 @@ if (modifiers.length > 0) {
 }
 
 // Condition upkeep: frightened goes down by 1 at the end of each of the
-// creature's turns
-if (isConditionUpkeepOn()) {
+// creature's turns, but not again when Next after Previous ends the same turn
+// a second time
+if (isConditionUpkeepOn() && !isTurnEndUpkeepDone(token)) {
   const frightened = getTurnEndFrightened(token);
   if (frightened) {
-    api.deductEffectById(frightened._id, token);
+    api.deductEffectById(frightened._id, token, () =>
+      markTurnEndUpkeep(token),
+    );
   }
 }

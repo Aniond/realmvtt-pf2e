@@ -43,16 +43,18 @@ if (shieldUp && token?.recordId) {
 }
 
 // Condition upkeep: the actions the creature has this turn after stunned,
-// slowed and quickened, and the stunned it used up
+// slowed and quickened, and the stunned it used up. Not again when Next after
+// Previous starts the same turn a second time.
 if (token && isConditionUpkeepOn() && !isTokenDead(token)) {
-  const turnActions = getTurnStartActions(token);
-  const actionsMessage = getTurnStartActionsMessage(turnActions);
-  if (actionsMessage) {
-    api.sendMessage(actionsMessage, undefined, [], [], token);
-  }
-  deductEffectStacks(
-    turnActions.stunnedEffectId,
-    token,
-    turnActions.stunnedDeduct,
-  );
+  getCombatRound((round) => {
+    if (isTurnStartUpkeepDone(token, round)) return;
+    const turnActions = getTurnStartActions(token);
+    const actionsMessage = getTurnStartActionsMessage(turnActions);
+    if (actionsMessage) {
+      api.sendMessage(actionsMessage, undefined, [], [], token);
+    }
+    takeUsedStunned(turnActions, token, () =>
+      markTurnStartUpkeep(token, round),
+    );
+  });
 }
