@@ -20,6 +20,10 @@ const CLUMSY = condition("cl", "Clumsy", [{ type: "allPenalty-status", field: "d
 const DRAINED = condition("dr", "Drained", [{ type: "allPenalty-status", field: "con", valueType: "string", value: "@effect.count" }]);
 const STUPEFIED = condition("st", "Stupefied", ["cha", "int", "wis"].map((field) => ({ type: "allPenalty-status", field, valueType: "string", value: "@effect.count" })));
 const BLESS = condition("bl", "Bless", [{ type: "attackBonus-status", field: "all", valueType: "number", value: "1" }]);
+const FATIGUED = condition("fa", "Fatigued", [
+  { type: "armorClassPenalty-status", field: "", valueType: "number", value: "1" },
+  { type: "savePenalty-status", field: "all", valueType: "number", value: "1" },
+]);
 
 function npcToken(data, conditions = []) {
   const effects = [];
@@ -55,6 +59,23 @@ section("armor Speed penalties");
   assert("legacy Strength score 18 counts as +4", speedWith(pc(4, plate({ strength: 18 }))), "20 feet");
   assert("penalties stop at 5 feet", speedWith(pc(0, plate(), "10 feet")), "5 feet");
   assert("unarmored is unchanged", speedWith(pc(0, { _id: "x", name: "Rope", data: { type: "equipment" } })), "25 feet");
+
+  // Without an ancestry Speed the sheet's own Speed is the base: it must not
+  // take the penalty again on every recalculation
+  const noAncestry = pc(2, plate());
+  noAncestry.data.ancestries = [];
+  const recalc = (record) => {
+    const written = {};
+    ctx.updateAttribute({ record, attribute: "str", value: record.data.str, moreValuesToSet: written });
+    Object.entries(written).forEach(([key, value]) => {
+      if (key.startsWith("data.")) record.data[key.slice(5)] = value;
+    });
+    return record.data.speed;
+  };
+  assert("no ancestry Speed: 25 -> 15", recalc(noAncestry), "15 feet");
+  assert("and it stays 15 on the next recalculation", recalc(noAncestry), "15 feet");
+  noAncestry.data.speed = "30 feet";
+  assert("a Speed typed by hand becomes the base", recalc(noAncestry), "20 feet");
   assert("legacy score below the requirement keeps the check penalty", ctx.getCheckPenaltyForArmor({ data: { str: 3 } }, { armor: { checkPenalty: -3, strength: 18 } })?.[0]?.value, -3);
   assert("legacy score met removes it", ctx.getCheckPenaltyForArmor({ data: { str: 4 } }, { armor: { checkPenalty: -3, strength: 18 } }), null);
 }
@@ -69,6 +90,14 @@ section("conditions on AC");
   assert("clumsy 1 lowers AC", ac([[CLUMSY, 1]]), 19);
   assert("frightened 2 lowers AC", ac([[FRIGHTENED, 2]]), 18);
   assert("frightened 2 and clumsy 1 are both status: only the worse counts", ac([[FRIGHTENED, 2], [CLUMSY, 1]]), 18);
+
+  // A rule whose field names AC itself (Imperial Blood Magic's choice)
+  const IMPERIAL = condition("ib", "Imperial Blood Magic", [{ type: "allBonus-status", field: "data.effects.defense", valueType: "number", value: "1" }]);
+  const realGet = ctx.api.getValueOnRecord;
+  ctx.api.getValueOnRecord = (rec, path) => path.split(".").reduce((o, k) => o?.[k], rec);
+  assert("Imperial Blood Magic AC choice: +1", ctx.getArmorClassForToken(npcToken({ ac: 20, effects: { defense: "ac" } }, [[IMPERIAL, 1]])), 21);
+  assert("Imperial Blood Magic saves choice: AC unchanged", ctx.getArmorClassForToken(npcToken({ ac: 20, effects: { defense: "saving-throw" } }, [[IMPERIAL, 1]])), 20);
+  ctx.api.getValueOnRecord = realGet;
 }
 
 section("only the strongest bonus or penalty of a type counts");
@@ -79,6 +108,15 @@ section("only the strongest bonus or penalty of a type counts");
   const big = condition("bb", "Big Bonus", [{ type: "allBonus-status", field: "all", valueType: "string", value: "10" }]);
   const small = condition("sb", "Small Bonus", [{ type: "allBonus-status", field: "all", valueType: "string", value: "2" }]);
   assert("a +10 status bonus beats +2", mods([[big, 1], [small, 1]], ["allBonus"], "all").join(), "10");
+  const plus2 = condition("p2", "Plus Two", [{ type: "allBonus-status", field: "all", valueType: "number", value: "+2" }]);
+  const plus1 = condition("p1", "Plus One", [{ type: "allBonus-status", field: "all", valueType: "number", value: "1" }]);
+  assert("a \"+2\" status bonus beats +1", mods([[plus2, 1], [plus1, 1]], ["allBonus"], "all").join(), "2");
+  assert("in either order", mods([[plus1, 1], [plus2, 1]], ["allBonus"], "all").join(), "2");
+  const d4 = condition("d4", "D4", [{ type: "damageBonus-status", field: "all", valueType: "string", value: "1d4" }]);
+  const d8 = condition("d8", "D8", [{ type: "damageBonus-status", field: "all", valueType: "string", value: "1d8" }]);
+  const dice = (conds) => ctx.getEffectsAndModifiersForToken(npcToken({}, conds), ["damageBonus"], "all").map((m) => m.value).join();
+  assert("1d8 beats 1d4", dice([[d4, 1], [d8, 1]]), "1d8");
+  assert("in either order", dice([[d8, 1], [d4, 1]]), "1d8");
 }
 
 section("conditions on save DCs");
@@ -91,6 +129,20 @@ section("conditions on save DCs");
   assert("clumsy 1 lowers the Reflex DC", dc("reflex", [[CLUMSY, 1]]), 19);
   assert("stupefied 1 lowers the Will DC", dc("will", [[STUPEFIED, 1]]), 19);
   assert("enfeebled 2 changes no save DC", ["fortitude", "reflex", "will"].map((s) => dc(s, [[ENFEEBLED, 2]])).join(","), "20,20,20");
+  assert("fatigued and frightened 2 are both status: only -2", dc("fortitude", [[FATIGUED, 1], [FRIGHTENED, 2]]), 18);
+  assert("fatigued and frightened 1: only -1", dc("fortitude", [[FATIGUED, 1], [FRIGHTENED, 1]]), 19);
+
+  // The save roll prompt gets the same: one status penalty, the worst
+  let rolled = null;
+  ctx.api.promptRoll = (name, dice, modifiers) => {
+    rolled = modifiers;
+  };
+  const pcSaver = { ...npcToken({ fortitudeMod: 10, fortitude: "1" }, [[FATIGUED, 1], [FRIGHTENED, 2]]), recordType: "characters" };
+  ctx.record = pcSaver;
+  ctx.rollSave(pcSaver, "fortitude");
+  const statusPenalties = (rolled || []).filter((m) => m.type === "status" && parseInt(m.value, 10) < 0).map((m) => `${m.name} ${m.value}`);
+  assert("save roll: only frightened 2 among status penalties", statusPenalties.join(), "Frightened -2");
+  ctx.api.promptRoll = () => {};
 }
 
 section("conditions on spell DCs and spell attacks");
@@ -105,12 +157,36 @@ section("conditions on spell DCs and spell attacks");
   assert("stupefied 1 lowers a Charisma caster's DC", dcIn(ctx.getSpellSaveMacro(caster([[STUPEFIED, 1]]), spell, entry, "data.spells.0")), 19);
   assert("enfeebled 2 doesn't", dcIn(ctx.getSpellSaveMacro(caster([[ENFEEBLED, 2]]), spell, entry, "data.spells.0")), 20);
 
-  // The spell attack macro gathers the casting attribute's modifiers when run
+  // Run the spell attack macro and read the modifiers it hands to the roll
+  // prompt: the casting attribute's conditions and attack bonuses must reach it
   const attackSpell = { name: "Ray", data: { defense: { passive: { statistic: "ac" } }, traits: [], damage: [] } };
-  const macro = ctx.getSpellAttackMacro(caster([]), attackSpell, entry, "data.spells.0", null);
-  assert("spell attacks gather attack and attribute modifiers", /spellCheckMods[\s\S]*"attackBonus", "attackPenalty", "allBonus", "allPenalty"[\s\S]*"cha"/.test(macro), true);
-  const mods = ctx.getEffectsAndModifiersForToken(caster([[BLESS, 1], [STUPEFIED, 1], [ENFEEBLED, 1]]), ["attackBonus", "attackPenalty", "allBonus", "allPenalty"], "cha");
-  assert("bless and stupefied apply to a Charisma spell attack, enfeebled doesn't", mods.map((m) => `${m.name} ${m.value}`).sort().join(", "), "Bless 1, Stupefied -1");
+  const SPELL_STATUS = condition("ss", "Spell Focus", [{ type: "spellAttackBonus-status", field: "", valueType: "number", value: "1" }]);
+  const attackRollMods = (record) => {
+    const macro = ctx.getSpellAttackMacro(record, attackSpell, entry, "data.spells.0", null);
+    const body = String(macro).replace(/^```Roll_Attack\n/, "").replace(/```\s*$/, "");
+    const saved = { ...ctx.api };
+    let captured = null;
+    ctx.api.getRecord = (type, id, cb) => cb(record);
+    ctx.api.getValueOnRecord = (r, path) => (path === "data.spells.0" ? attackSpell : null);
+    ctx.api.getTargets = () => [];
+    ctx.api.promptRoll = (name, dice, modifiers) => {
+      captured = modifiers;
+    };
+    try {
+      new vm.Script(body, { filename: "spell-attack-macro.js" }).runInContext(ctx);
+    } finally {
+      Object.assign(ctx.api, saved);
+    }
+    return (captured || [])
+      .filter((m) => m.name !== "Spell Attack")
+      .map((m) => `${m.name} ${m.value}`)
+      .sort()
+      .join(", ");
+  };
+  assert("no conditions: only the base spell attack", attackRollMods(caster([])), "");
+  assert("frightened 2 reaches the spell attack roll", attackRollMods(caster([[FRIGHTENED, 2]])), "Frightened -2");
+  assert("bless and stupefied reach a Charisma spell attack roll, enfeebled doesn't", attackRollMods(caster([[BLESS, 1], [STUPEFIED, 1], [ENFEEBLED, 1]])), "Bless 1, Stupefied -1");
+  assert("a status spell attack bonus and bless: only one status bonus", attackRollMods(caster([[BLESS, 1], [SPELL_STATUS, 1]])).split(", ").length, 1);
 }
 
 section("weakness and resistance once per instance");
@@ -142,6 +218,9 @@ section("weakness and resistance once per instance");
   assert("it goes to the larger type: 3 slashing + 10 fire -> 8", dealt(target({ resistances: [w("all damage", 5)] }), [["slashing", 3], ["fire", 10]]), 8);
   assert("fire resistance plus all-damage resistance: 10 slash + 6 fire -> 6", dealt(target({ resistances: [w("fire", 5), w("all damage", 5)] }), [["slashing", 10], ["fire", 6]]), 6);
   assert("single type unchanged: all-damage resistance 5 on 10 fire -> 5", dealt(target({ resistances: [w("all damage", 5)] }), [["fire", 10]]), 5);
+  assert("largest type has its own resistance: 10 fire + 6 slash vs fire 5 + all 5 -> 6", dealt(target({ resistances: [w("fire", 5), w("all damage", 5)] }), [["fire", 10], ["slashing", 6]]), 6);
+  assert("largest type has its own weakness: 10 fire + 6 slash vs fire 5 + all 3 -> 24", dealt(target({ weaknesses: [w("fire", 5), w("all damage", 3)] }), [["fire", 10], ["slashing", 6]]), 24);
+  assert("same in the other order -> 24", dealt(target({ weaknesses: [w("fire", 5), w("all damage", 3)] }), [["slashing", 10], ["fire", 6]]), 24);
 }
 
 section("Weak and Elite HP");

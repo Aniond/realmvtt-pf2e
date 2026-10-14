@@ -2359,10 +2359,14 @@ function getEffectsAndModifiersForToken(
     results = results.filter((r) => r.modifierType !== "adjustModifier");
   }
 
-  if (field && field !== "") {
+  // field may be one field or a list of them (AC takes "dex" and "ac")
+  const fields = (Array.isArray(field) ? field : [field]).filter(
+    (f) => f && f !== "",
+  );
+  if (fields.length > 0) {
     results = results.filter(
       (r) =>
-        r.field === field ||
+        fields.includes(r.field) ||
         r.field === "all" ||
         r.field === itemId ||
         !r.field,
@@ -2376,21 +2380,61 @@ function getEffectsAndModifiersForToken(
 
   // For the roll, we need only count 1 status / item / circumstance bonus or penalty,
   // and we take the highest of each
+  results = keepStrongestPerType(results);
+
+  // Filter by appliedById if provided
+  if (appliedById) {
+    results = results.filter((r) => r.appliedBy === appliedById);
+  }
+
+  return results;
+}
+
+// A modifier's size for comparing bonuses and penalties of one type. Module
+// conditions carry string values ("@effect.count" becomes "-2"), and as strings
+// "-1" sorts below "-2" and "2" above "10", so compare numbers: flat values the
+// way consumers read them (parseInt takes "+2" as 2), dice by their average.
+function getModifierSortValue(mod) {
+  if (typeof mod?.value === "number") return mod.value;
+  const text = String(mod?.value ?? "").trim();
+  const dice = text.match(/^([+-]?)\s*(\d*)d(\d+)/i);
+  if (dice) {
+    const count = parseInt(dice[2] || "1", 10);
+    const size = parseInt(dice[3], 10);
+    return ((dice[1] === "-" ? -1 : 1) * count * (size + 1)) / 2;
+  }
+  const value = parseInt(text, 10);
+  return isNaN(value) ? 0 : value;
+}
+
+// Only the highest bonus and the worst penalty of each type (circumstance,
+// item, status) apply; untyped modifiers all apply. Each
+// getEffectsAndModifiersForToken lookup already does this for its own results,
+// so run it again on a list merged from several lookups: frightened (a status
+// penalty to all checks) and fatigued (a status penalty to saves) are still
+// both status penalties.
+function keepStrongestPerType(mods) {
   const filteredResults = [];
   const bonusGroups = { circumstance: [], item: [], status: [] };
   const penaltyGroups = { circumstance: [], item: [], status: [] };
 
   // Group results by type and bonus/penalty
-  results.forEach((result) => {
-    if (result.type === "" || result.type === "none") {
+  (mods || []).forEach((result) => {
+    if (
+      result.type === undefined ||
+      result.type === null ||
+      result.type === "" ||
+      result.type === "none"
+    ) {
       // Keep non-typed modifiers as-is
       filteredResults.push(result);
       return;
     }
 
     // Check if this is a negative bonus and convert it to a penalty
-    let isPenalty = result.modifierType.toLowerCase().includes("penalty");
-    const isBonus = result.modifierType.toLowerCase().includes("bonus");
+    const modifierType = String(result.modifierType || "").toLowerCase();
+    let isPenalty = modifierType.includes("penalty");
+    const isBonus = modifierType.includes("bonus");
 
     // Parse the value to check if it's negative
     let numericValue = 0;
@@ -2418,13 +2462,6 @@ function getEffectsAndModifiersForToken(
     }
   });
 
-  // Module conditions carry string values ("@effect.count" becomes "-2"), so
-  // compare as numbers: as strings "-1" sorts below "-2" and "2" above "10"
-  const numericModValue = (mod) => {
-    const match = String(mod.value ?? "").match(/^\s*-?\d+/);
-    return match ? parseInt(match[0], 10) : 0;
-  };
-
   // For each type, keep only the highest value. Prefer active modifiers so a
   // predicate-failed (inactive) modifier can't shadow an active one of the same type
   // - e.g. Swashbuckler's Speed grants +10 with panache OR +5 without (mutually
@@ -2436,7 +2473,7 @@ function getEffectsAndModifiersForToken(
       const activeBonuses = bonusGroups[type].filter((m) => m.active);
       const pool = activeBonuses.length > 0 ? activeBonuses : bonusGroups[type];
       const highestBonus = pool.reduce((highest, current) =>
-        numericModValue(current) > numericModValue(highest) ? current : highest,
+        getModifierSortValue(current) > getModifierSortValue(highest) ? current : highest,
       );
       filteredResults.push(highestBonus);
     }
@@ -2446,21 +2483,29 @@ function getEffectsAndModifiersForToken(
       const pool =
         activePenalties.length > 0 ? activePenalties : penaltyGroups[type];
       const highestPenalty = pool.reduce((highest, current) =>
-        numericModValue(current) < numericModValue(highest) ? current : highest,
+        getModifierSortValue(current) < getModifierSortValue(highest) ? current : highest,
       );
       filteredResults.push(highestPenalty);
     }
   });
 
-  // Replace results with filtered results
-  results = filteredResults;
+  return filteredResults;
+}
 
-  // Filter by appliedById if provided
-  if (appliedById) {
-    results = results.filter((r) => r.appliedBy === appliedById);
-  }
-
-  return results;
+// Merges modifier lists from several lookups: drops repeats, then keeps only
+// the strongest bonus and penalty of each type across all of them
+function mergeModifierLists(...lists) {
+  const seen = new Set();
+  const merged = [];
+  lists.forEach((list) => {
+    (list || []).forEach((mod) => {
+      const modString = modToString(mod);
+      if (seen.has(modString)) return;
+      seen.add(modString);
+      merged.push(mod);
+    });
+  });
+  return keepStrongestPerType(merged);
 }
 
 /**
@@ -3396,11 +3441,8 @@ function getSaveDCForToken(token, saveType) {
   // Proficiency without Level: creatures subtract their level
   let saveDC = 10 + saveValue + getNpcProficiencyWithoutLevelAdjustment(token);
 
-  const seen = new Set();
-  [...saveMods, ...attributeMods].forEach((mod) => {
-    const modString = modToString(mod);
-    if (seen.has(modString) || mod.active === false) return;
-    seen.add(modString);
+  mergeModifierLists(saveMods, attributeMods).forEach((mod) => {
+    if (mod.active === false) return;
     const value = parseInt(mod.value || 0, 10);
     saveDC += value;
   });
@@ -3419,11 +3461,12 @@ function getArmorClassForToken(token, targetIsOffGuardDueToFlanking = false) {
   }
 
   // AC is a Dex-based DC: clumsy and penalties to all checks and DCs
-  // (frightened, sickened) lower it, but enfeebled, stupefied and drained don't
+  // (frightened, sickened) lower it, but enfeebled, stupefied and drained don't.
+  // A rule can also name AC itself (Imperial Blood Magic's choice stores "ac").
   const acModifiers = getEffectsAndModifiersForToken(
     token,
     ["armorClassBonus", "armorClassPenalty", "allBonus", "allPenalty"],
-    "dex",
+    ["dex", "ac"],
     undefined,
     undefined,
     armorItem ? { item: armorItem } : {},
@@ -3704,9 +3747,22 @@ function updateAttribute({
   // includes a previously-applied bonus. Fall back to the current speed field (minus
   // any parenthetical note) for characters without an ancestry speed (e.g. NPCs).
   const ancestrySpeed = record.data?.ancestries?.[0]?.data?.speed;
-  const baseSpeedStr = String(ancestrySpeed || speed || "")
+  // Without an ancestry Speed, data.speed is this function's own output, so
+  // keep the unadjusted value in data.baseSpeed and reuse it while data.speed
+  // still holds what was last written (data.computedSpeed). A Speed typed in
+  // by hand becomes the new base.
+  const storedBaseSpeed = record.data?.baseSpeed;
+  const speedIsComputed =
+    !!storedBaseSpeed &&
+    String(speed) === String(record.data?.computedSpeed ?? "");
+  const baseSpeedStr = String(
+    ancestrySpeed || (speedIsComputed ? storedBaseSpeed : speed) || "",
+  )
     .replace(/\s*\([^)]*\)\s*$/, "")
     .trim();
+  if (!ancestrySpeed && baseSpeedStr && baseSpeedStr !== storedBaseSpeed) {
+    valuesToSet[`data.baseSpeed`] = baseSpeedStr;
+  }
 
   const speedMatch = baseSpeedStr.match(/(\d+)/);
   if (speedMatch) {
@@ -3725,6 +3781,9 @@ function updateAttribute({
     const unitMatch = baseSpeedStr.match(/\d+\s+(\w+)/);
     const unit = unitMatch ? unitMatch[1] : "feet";
     const newSpeed = `${effectiveSpeed} ${unit}`;
+    if (!ancestrySpeed) {
+      valuesToSet[`data.computedSpeed`] = newSpeed;
+    }
     if (newSpeed !== speed) {
       valuesToSet[`data.speed`] = newSpeed;
     }
@@ -6716,6 +6775,10 @@ function rollSave(record, type, dc = null, isSpell = false, isMacro = false) {
     metadata.isSpell = true;
   }
 
+  // The save-specific and attribute lookups can each bring a status penalty
+  // (fatigued, frightened): only the worst one applies
+  modifiers.splice(0, modifiers.length, ...keepStrongestPerType(modifiers));
+
   // Use promptRoll to allow players to modify the roll
   if (isMacro) {
     api.promptRollForToken(
@@ -7007,6 +7070,10 @@ function rollSkill(
   if (dc !== null && dc !== undefined) {
     metadata.dc = dc;
   }
+
+  // The skill, attribute and armor lookups can each bring a penalty of one
+  // type: only the strongest bonus and penalty of each type apply
+  modifiers.splice(0, modifiers.length, ...keepStrongestPerType(modifiers));
 
   // Use promptRoll to allow players to modify the roll
   if (isMacro) {
@@ -11843,9 +11910,13 @@ function applyDamage(
                 weaknessValue = weaknessValue * 2;
               }
               damageOfThisType += weaknessValue;
-              // Mark this weakness as applied
-              if (weakness) appliedWeaknesses.add(lowerType);
-              if (allDamageWeakness) appliedWeaknesses.add("all damage");
+              // Mark only the weakness applied, so an unused all-damage
+              // weakness is still there for the other damage types
+              if (applicableWeakness === weakness) {
+                appliedWeaknesses.add(lowerType);
+              } else {
+                appliedWeaknesses.add("all damage");
+              }
             }
           }
 
@@ -11933,9 +12004,13 @@ function applyDamage(
                 resistanceValue = resistanceValue * 2;
               }
               damageOfThisType -= resistanceValue;
-              // Mark this resistance as applied
-              if (resistance) appliedResistances.add(lowerType);
-              if (allDamageResistance) appliedResistances.add("all damage");
+              // Mark only the resistance applied, so an unused all-damage
+              // resistance is still there for the other damage types
+              if (applicableResistance === resistance) {
+                appliedResistances.add(lowerType);
+              } else {
+                appliedResistances.add("all damage");
+              }
             }
           }
 

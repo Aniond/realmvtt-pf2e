@@ -1102,11 +1102,8 @@ function getSpellSaveMacro(record, spell, spellCastingEntry, dataPathToSpell) {
     undefined,
     { spell }
   );
-  const seen = new Set();
-  [...spellDCMods, ...attributeMods].forEach((mod) => {
-    const modString = modToString(mod);
-    if (seen.has(modString) || mod.active === false) return;
-    seen.add(modString);
+  mergeModifierLists(spellDCMods, attributeMods).forEach((mod) => {
+    if (mod.active === false) return;
     saveDC += parseInt(mod.value || 0, 10) || 0;
   });
   return getSaveMacro(saveType, saveDC, true, true);
@@ -1226,16 +1223,9 @@ api.getRecord('${record.recordType}', '${record._id}', (record) => {
       value: ${spellAttackMod},
       active: true
     },
-    ...spellAttackMods
+    // Only the strongest bonus and penalty of each type across both lookups
+    ...mergeModifierLists(spellAttackMods, spellCheckMods)
   ];
-  const seenSpellAttackMods = new Set(modifiers.map(modToString));
-  spellCheckMods.forEach((mod) => {
-    const modString = modToString(mod);
-    if (!seenSpellAttackMods.has(modString)) {
-      seenSpellAttackMods.add(modString);
-      modifiers.push(mod);
-    }
-  });
   
   // Build criticalOnlyDice array to track splash damage (so it doesn't get doubled)
   const splashDamageValue = ${
