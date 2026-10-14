@@ -9,11 +9,24 @@
     api.closeOpenedPopovers();
   }
 
-  // Makes the class's spellcasting entries the player deleted again
+  // Makes the class's spellcasting entries the player deleted again, and
+  // takes over an entry the player has since named for the class
   function onRestoreSpellcastingEntries() {
     api.closeOpenedPopovers();
+    const oldSpells = record.data?.spells || [];
     api.setValues({ "data.spellcastingDismissed": [] }, (updatedRecord) => {
-      onAddEditFeature(updatedRecord, undefined, true);
+      onAddEditFeature(
+        updatedRecord,
+        () => {
+          api.getRecord("characters", record._id, (syncedRecord) => {
+            const message = describeSpellcastingSync(oldSpells, syncedRecord);
+            if (message) {
+              api.showNotification(message, "blue", "Spellcasting");
+            }
+          });
+        },
+        true
+      );
     });
   }
 

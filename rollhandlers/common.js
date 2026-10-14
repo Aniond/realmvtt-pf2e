@@ -4946,32 +4946,40 @@ function updateSpellcastingEntries(record, valuesToSet, entries = null) {
   setSpellcastingEntryValues(record, spellcastingEntries, valuesToSet);
 }
 
-// Proficiency rank for an entry's spell attacks and DCs. Entries made from the
-// class use the character's rank (their own rank only for archetype entries
-// with per-tradition proficiency), so it follows the level both ways. Other
-// entries keep the higher of the character's rank and their own.
+// The character's own rank for an entry's statistic: spell attacks and DCs,
+// or the class DC
+function getCharacterSpellcastingRank(record, proficiency, valuesToSet = {}) {
+  const rank =
+    (proficiency || "spell") === "spell"
+      ? valuesToSet["data.spellcasting"] ?? record.data?.spellcasting
+      : valuesToSet["data.classDCProficiency"] ??
+        record.data?.classDCProficiency;
+  return parseInt(rank || "0", 10) || 0;
+}
+
+// Proficiency rank for an entry's spell attacks and DCs: the higher of the
+// character's rank and the entry's own. A managed entry's own rank is the one
+// picked in its training dropdown (or the one it had above the character's
+// when it was taken over), and its source's (auto.training, 0 for the class).
+// It isn't read back from data.training, so the entry follows the character's
+// rank down as well as up and the sync never undoes itself.
 function getSpellcastingEntryTraining(
   record,
   spellcastingEntry,
   valuesToSet = {},
 ) {
-  const proficiency = spellcastingEntry.data?.proficiency || "spell";
-  const characterRank =
-    proficiency === "spell"
-      ? valuesToSet["data.spellcasting"] ?? record.data?.spellcasting
-      : valuesToSet["data.classDCProficiency"] ??
-        record.data?.classDCProficiency;
-  const rank = parseInt(characterRank || "0", 10) || 0;
+  const rank = getCharacterSpellcastingRank(
+    record,
+    spellcastingEntry.data?.proficiency,
+    valuesToSet,
+  );
+  const toRank = (value) => parseInt(value || "0", 10) || 0;
 
   if (isManagedSpellcastingEntry(spellcastingEntry)) {
     const auto = spellcastingEntry.data.auto;
-    const ownRank = parseInt(auto.training || "0", 10) || 0;
-    return auto.ownTraining ? ownRank : Math.max(rank, ownRank);
+    return Math.max(rank, toRank(auto.training), toRank(auto.ownTraining));
   }
-  return Math.max(
-    rank,
-    parseInt(spellcastingEntry.data?.training || "0", 10) || 0,
-  );
+  return Math.max(rank, toRank(spellcastingEntry.data?.training));
 }
 
 // Writes the spellcasting entries. Adding or removing an entry or a spell row
@@ -5034,10 +5042,18 @@ function setChangedValues(before, after, path, valuesToSet) {
 //              repCantrips, rep1-10 for repertoire rows). A count above or
 //              below its base is the player's own change, kept on top of the
 //              table at later levels.
+//   offCounts  the counts when "Set slots from level" was turned off, to tell
+//              the ones the player changed meanwhile when it's turned back on
 //   type, tradition, attribute   the values last written; once the player
 //              picks something else, theirs is kept
-//   training   the entry's own rank (0 for class entries)
+//   training   the source's own rank (0 for class entries)
+//   ownTraining  the rank picked in the entry's training dropdown, or the
+//              rank it had over the character's when it was taken over
 //   shown      the spell lists the sheet last showed
+//   adopted    the player made the entry and the sheet took it over
+//   fontSlotsMoved  Divine Font slots that were moved out of it on takeover
+//   spellFilter  the Divine Font's spell (heal or harm). Not read yet: the
+//              spell picker (phase C) will offer only these.
 //   orphaned   the source is gone; the entry is kept but no longer managed
 // data.autoSlots (the "Set slots from level" checkbox) turns the counts and
 // rows off for one entry. Deleting a managed entry adds its source to
@@ -5169,7 +5185,10 @@ const CLASS_SPELLCASTING = {
     table: "FULL3",
   },
   // An arcane school adds a cantrip and a slot at each rank 1-9 (curriculum
-  // or school spells); Unified Magical Theory and the Universalist don't
+  // or school spells); Unified Magical Theory and the Core Rulebook's
+  // Universalist don't. The Realm data has no Core Rulebook wizard yet, so
+  // the Universalist matches whatever its option is named ("Universalist",
+  // "Universalist Wizard").
   wizard: {
     type: "prepared",
     tradition: "Arcane",
@@ -5178,7 +5197,7 @@ const CLASS_SPELLCASTING = {
     table: "FULL3",
     schoolSlot: {
       flag: "arcaneSchool",
-      none: ["school-of-unified-magical-theory", "universalist"],
+      none: /unified-magical-theory|universalist/,
     },
   },
   // Draconic's tradition comes from the dragon chosen with it
@@ -5264,12 +5283,29 @@ const CLASS_SPELLCASTING = {
   },
 };
 
+// Flexible Spellcaster class archetype (Secrets of Magic pg. 209), from the
+// class feature Flexible Spell Preparation or its dedication: 2 slots of each
+// rank and 2 fewer class cantrips, back to 4 with the dedication at 2nd level
+// and 5 from 4th. Only for classes that prepare the standard 2-then-3 slots;
+// restricted extra slots (school spells, Divine Font) don't change.
+const FLEXIBLE_CANTRIPS = [
+  3, 4, 4, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
+];
+
+function hasFlexibleSpellcasting(record) {
+  return (
+    hasFeatNamed(record, "Flexible Spell Preparation") ||
+    hasFeatNamed(record, "Flexible Spellcaster Dedication")
+  );
+}
+
 // Draconic bloodline (Player Core 2 pg. 150): the tradition of the chosen
-// dragon, from its Monster Core, Monster Core 2 or Draconic Codex entry (the
-// same table as Foundry's dragonBloodline choice). The chromatic and metallic
-// dragons were never remastered and stay arcane, as in the Core Rulebook; a
-// dragon not listed here also defaults to arcane, and the player can change it
-// on the entry.
+// dragon, as Archives of Nethys gives it from the dragon's Monster Core,
+// Monster Core 2 or Draconic Codex entry (Foundry's dragonBloodline choice
+// maps most of these to arcane instead). The chromatic and metallic dragons
+// were never remastered and stay arcane, as in the Core Rulebook; a dragon not
+// listed here also defaults to arcane, and the player can change it on the
+// entry.
 const DRAGON_TRADITIONS = {
   "arcane-dragon": "Arcane",
   "divine-dragon": "Divine",
@@ -5321,7 +5357,8 @@ const DRAGON_TRADITIONS = {
 
 // Traditions of bloodlines, patrons and eidolons by name, for when the chosen
 // feature isn't on the character or doesn't say. Draconic and the remaster
-// dragon eidolon have no fixed tradition.
+// dragon eidolon have no fixed tradition. A tradition given as { legacy }
+// holds for that edition of the class only.
 const SUBCLASS_TRADITIONS = {
   bloodline: {
     aberrant: "Occult",
@@ -5376,6 +5413,8 @@ const SUBCLASS_TRADITIONS = {
     construct: "Arcane",
     demon: "Divine",
     "devotion-phantom": "Occult",
+    // Secrets of Magic; the remaster's takes its dragon's tradition
+    dragon: { legacy: "Arcane" },
     elemental: "Primal",
     fey: "Primal",
     ooze: "Arcane",
@@ -5449,8 +5488,8 @@ function getFeatureTradition(feature) {
 }
 
 // The tradition set by a class choice (bloodline, patron, eidolon), or null
-// while it is unmade or unknown
-function getSubclassTradition(record, flag, nestedFlag) {
+// while it is unmade or unknown. `edition` is the class's.
+function getSubclassTradition(record, flag, nestedFlag, edition = "remaster") {
   const flags = record.data?.flags || {};
   const value = flags[flag];
   if (!value) {
@@ -5465,6 +5504,9 @@ function getSubclassTradition(record, flag, nestedFlag) {
       .replace(/^bloodline-/, "")
       .replace(/-(bloodline|eidolon|patron)$/, "");
     tradition = lookUp(SUBCLASS_TRADITIONS[flag], name);
+    if (tradition && typeof tradition === "object") {
+      tradition = tradition[edition] || null;
+    }
   }
   if ((!tradition || tradition === "Variable") && nestedFlag && flags[nestedFlag]) {
     tradition = lookUp(DRAGON_TRADITIONS, flags[nestedFlag]) || "Arcane";
@@ -5509,7 +5551,7 @@ function getClassSpellcastingSpec(record, config, level, spec) {
   // magus's studious spell slots
   let numCantrips = cantrips;
   const school = config.schoolSlot && record.data?.flags?.[config.schoolSlot.flag];
-  if (school && !config.schoolSlot.none.includes(school)) {
+  if (school && !config.schoolSlot.none.test(school)) {
     numCantrips += 1;
     for (let rank = 1; rank <= 9; rank++) {
       if (slots[rank] > 0) {
@@ -5595,8 +5637,8 @@ function getDivineFontSpec(record, casting, level, valuesToSet) {
 }
 
 // The spellcasting entries a character's class gives at a level, as specs:
-// { source, name, type, tradition (null while the choice that sets it is
-// unmade), attribute, counts, repertoire, training, and fontRank and
+// { source, name, level, type, tradition (null while the choice that sets it
+// is unmade), attribute, counts, repertoire, training, and fontRank and
 // spellFilter for the Divine Font }. Empty for NPCs, level 0 characters and
 // classes without spell slots.
 function getWantedSpellcastingEntries(record, level, valuesToSet = {}) {
@@ -5604,15 +5646,27 @@ function getWantedSpellcastingEntries(record, level, valuesToSet = {}) {
   if (record?.recordType !== "characters" || isLevelZeroCharacter(record) || level < 1) {
     return [];
   }
-  const casting = getClassSpellcasting(record.data?.classes?.[0]);
+  let casting = getClassSpellcasting(record.data?.classes?.[0]);
   if (!casting) {
     return [];
+  }
+  if (
+    casting.type === "prepared" &&
+    casting.table === "FULL3" &&
+    hasFlexibleSpellcasting(record)
+  ) {
+    casting = { ...casting, table: "FLEXIBLE", cantrips: FLEXIBLE_CANTRIPS };
   }
 
   const tradition =
     typeof casting.tradition === "string"
       ? casting.tradition
-      : getSubclassTradition(record, casting.tradition.flag, casting.tradition.nested);
+      : getSubclassTradition(
+          record,
+          casting.tradition.flag,
+          casting.tradition.nested,
+          casting.edition,
+        );
   const attribute =
     casting.attribute === "key"
       ? getKeySpellcastingAttribute(record, valuesToSet)
@@ -5639,7 +5693,7 @@ function getWantedSpellcastingEntries(record, level, valuesToSet = {}) {
   if (casting.font) {
     specs.push(getDivineFontSpec(record, casting, level, valuesToSet));
   }
-  return specs;
+  return specs.map((spec) => ({ ...spec, level }));
 }
 
 function isManagedSpellcastingEntry(spellcastingEntry) {
@@ -5770,58 +5824,176 @@ function resizeSpellRows(rows, wantRows, kind, rank) {
   return resized;
 }
 
+// The class a spec comes from ("wizard" for class:wizard:...) and the words
+// that name an entry as the spec's own: the class, and the spec's name
+// without "Spells" ("apparition", "divine font")
+function getSpellcastingSpecNames(spec) {
+  const classSlug = `${spec.source || ""}`.split(":")[1] || "";
+  const names = [
+    classSlug.replace(/-/g, " "),
+    `${spec.name || ""}`.replace(/ Spells$/, "").toLowerCase(),
+  ].filter(Boolean);
+  return { classSlug, names };
+}
+
+function isNamedForSpellcastingSpec(entry, spec) {
+  const name = `${entry?.name || ""}`.toLowerCase();
+  return getSpellcastingSpecNames(spec).names.some((own) => name.includes(own));
+}
+
+// Whether a name holds a word on its own ("Bard Spells", "Bard's Spells"),
+// not inside another ("Bardolph's Grimoire")
+function nameHasWord(name, word) {
+  const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`\\b${escaped}(?:s|'s|’s)?\\b`, "i").test(`${name || ""}`);
+}
+
+// Whether an entry the player made is an archetype's rather than the class's:
+// named for a dedication, an archetype or another caster class ("Bard Spells"
+// on a sorcerer), or, from 2nd level (the earliest dedication), holding under
+// half the cantrips and slots the class has at this level (an archetype gives
+// a few). An entry named for the class is the class's, and one with no counts
+// or spells yet can't be told.
+function isArchetypeSpellcastingEntry(entry, spec) {
+  const name = `${entry?.name || ""}`;
+  if (/dedication|archetype/i.test(name)) {
+    return true;
+  }
+  if (isNamedForSpellcastingSpec(entry, spec)) {
+    return false;
+  }
+  const { classSlug } = getSpellcastingSpecNames(spec);
+  const otherClass = Object.keys(CLASS_SPELLCASTING).some(
+    (slug) => slug !== classSlug && nameHasWord(name, slug.replace(/-/g, " ")),
+  );
+  if (otherClass) {
+    return true;
+  }
+  if (!(spec.level >= 2)) {
+    return false;
+  }
+  const keys = Object.keys(spec.counts || {});
+  const total = (countOf) => keys.reduce((sum, key) => sum + countOf(key), 0);
+  const entryTotal = total((key) => parseInt(entry.data?.[key] || 0, 10) || 0);
+  const tableTotal = total((key) => spec.counts[key] || 0);
+  const hasRows = SPELL_RANK_LISTS.some((list) => (entry.data?.[list] || []).length > 0);
+  return (entryTotal > 0 || hasRows) && entryTotal * 2 < tableTotal;
+}
+
 // The entries without data.auto a spec could take over, so existing
-// characters don't get a second copy: those of the same type. The Divine Font
-// only takes an entry named for it; a class with a font leaves those to it,
-// and no class takes an archetype's entry.
+// characters don't get a second copy: those of the same type that aren't an
+// archetype's. The Divine Font only takes an entry named for it, and a class
+// with a font leaves those to it.
 function getAdoptableSpellcastingEntries(entries, spec, hasFont = false) {
   return entries.filter((entry) => {
-    const name = `${entry.name || ""}`;
     if (entry.data?.auto?.source || (entry.data?.type || "prepared") !== spec.type) {
       return false;
     }
-    if (/dedication|archetype/i.test(name)) {
-      return false;
+    const isFontName = /font/i.test(`${entry.name || ""}`);
+    if (spec.fontRank) {
+      return isFontName;
     }
-    const isFontName = /font/i.test(name);
-    return spec.fontRank ? isFontName : !(hasFont && isFontName);
+    return !(hasFont && isFontName) && !isArchetypeSpellcastingEntry(entry, spec);
   });
 }
 
-// The entry to take over for a spec: one with the same tradition (the only
-// entry of the type while the tradition is unknown). When several match, one
-// named like the class ("Cleric Spells") or by the Add Spellcasting Entry
-// popover ("Divine Prepared Spells") wins, then the one closest to the class
-// table; list order only breaks ties.
+// The entry a spec takes over, as { entry, ambiguous }. Among the entries of
+// the class's tradition, one named for the class wins, then the one whose
+// counts are closest to the class table; the Add Spellcasting Entry popover's
+// names ("Arcane Prepared Spells") count for nothing. With no entry of the
+// tradition (the player kept the popover's "Arcane", or set none) or the
+// tradition still unknown, the only entry of the type is taken, or the only
+// one named for the class, and its tradition stays the player's. When entries
+// tie, none is taken and `ambiguous` lists them.
 function findAdoptableSpellcastingEntry(entries, spec, hasFont = false) {
   const candidates = getAdoptableSpellcastingEntries(entries, spec, hasFont);
-  if (!spec.tradition) {
-    return candidates.length === 1 ? candidates[0] : null;
-  }
-  const className = `${spec.name || ""}`.replace(/ Spells$/, "").toLowerCase();
-  const tableDistance = (entry) =>
-    Object.keys(spec.counts || {}).reduce(
-      (total, key) =>
-        total +
-        Math.abs((parseInt(entry.data?.[key] || 0, 10) || 0) - (spec.counts[key] || 0)),
-      0,
+  const tradition = `${spec.tradition || ""}`.toLowerCase();
+  const sameTradition = tradition
+    ? candidates.filter(
+        (entry) => `${entry.data?.tradition || ""}`.toLowerCase() === tradition,
+      )
+    : [];
+  const found = (entry) => ({ entry, ambiguous: [] });
+
+  if (sameTradition.length > 0) {
+    const tableDistance = (entry) =>
+      Object.keys(spec.counts || {}).reduce(
+        (total, key) =>
+          total +
+          Math.abs((parseInt(entry.data?.[key] || 0, 10) || 0) - (spec.counts[key] || 0)),
+        0,
+      );
+    const ranked = sameTradition
+      .map((entry) => ({
+        entry,
+        named: isNamedForSpellcastingSpec(entry, spec) ? 0 : 1,
+        distance: tableDistance(entry),
+      }))
+      .sort((a, b) => a.named - b.named || a.distance - b.distance);
+    const best = ranked.filter(
+      ({ named, distance }) =>
+        named === ranked[0].named && distance === ranked[0].distance,
     );
-  let best = null;
-  let bestRank = null;
-  for (const entry of candidates) {
-    if (`${entry.data?.tradition || ""}`.toLowerCase() !== spec.tradition.toLowerCase()) {
-      continue;
-    }
-    const named =
-      isDefaultSpellcastingEntryName(entry.name) ||
-      `${entry.name || ""}`.toLowerCase().includes(className);
-    const rank = [named ? 0 : 1, tableDistance(entry)];
-    if (!best || rank[0] < bestRank[0] || (rank[0] === bestRank[0] && rank[1] < bestRank[1])) {
-      best = entry;
-      bestRank = rank;
+    return best.length === 1
+      ? found(best[0].entry)
+      : { entry: null, ambiguous: best.map(({ entry }) => entry) };
+  }
+
+  if (candidates.length === 1) {
+    return found(candidates[0]);
+  }
+  const named = candidates.filter((entry) => isNamedForSpellcastingSpec(entry, spec));
+  if (named.length === 1) {
+    return found(named[0]);
+  }
+  return { entry: null, ambiguous: named.length > 1 ? named : candidates };
+}
+
+// Marks an entry the player made as taken over by the sheet, keeping a
+// training rank they set above the character's as the entry's own
+function adoptSpellcastingEntry(record, entry, valuesToSet) {
+  entry.data = entry.data || {};
+  const auto = (entry.data.auto = { ...(entry.data.auto || {}), adopted: true });
+  const training = parseInt(entry.data.training || "0", 10) || 0;
+  const characterRank = getCharacterSpellcastingRank(
+    record,
+    entry.data.proficiency,
+    valuesToSet,
+  );
+  if (training > characterRank) {
+    auto.ownTraining = training;
+  }
+}
+
+// A class entry taken over that holds the Divine Font's slots on top of the
+// class's (a 5th-level cleric's 3rd rank at 7: 2 + 5) gives them to the new
+// Divine Font entry, with up to that many heal or harm spells prepared there.
+// Any other count over the table is kept, and the takeover notice names it.
+// Returns the spells moved.
+function moveDivineFontSlots(entry, spec, fontSpec) {
+  const key = `numSpells${fontSpec.fontRank}`;
+  const fontCount = fontSpec.counts[key] || 0;
+  const count = parseInt(entry.data[key] || 0, 10) || 0;
+  if (fontCount === 0 || count - (spec.counts[key] || 0) !== fontCount) {
+    return [];
+  }
+  entry.data[key] = count - fontCount;
+  entry.data.auto.fontSlotsMoved = fontCount;
+
+  const list = `spells${fontSpec.fontRank}`;
+  const rows = entry.data[list] || [];
+  const fontSpells = fontSpec.spellFilter || ["heal", "harm"];
+  const fontSpell = new RegExp(`^(${fontSpells.join("|")})$`, "i");
+  const moved = [];
+  for (let i = rows.length - 1; i >= 0 && moved.length < fontCount; i--) {
+    if (isFilledSpellRow(rows[i]) && fontSpell.test(`${rows[i].name || ""}`.trim())) {
+      moved.unshift(rows[i]);
     }
   }
-  return best;
+  if (moved.length > 0) {
+    entry.data[list] = rows.filter((row) => !moved.includes(row));
+  }
+  return moved.map((row, index) => ({ ...row, data: { ...row.data, slotOrder: index } }));
 }
 
 // Brings one managed entry in line with its spec. The player's changes are
@@ -5855,45 +6027,68 @@ function applySpellcastingSpec(spellcastingEntry, spec) {
   }
   auto.training = spec.training || 0;
   if (spec.fontRank) {
+    // Not read yet: the spell picker (phase C) will offer only these
     auto.spellFilter = spec.spellFilter;
   }
   const type = entry.data.type || "prepared";
   Object.assign(entry.fields, getSpellcastingEntryTypeFields(type));
 
+  const countOf = (key) => parseInt(entry.data[key] || 0, 10) || 0;
+  // Repertoire targets count the rows of a list
+  const rowsOf = (key) =>
+    (entry.data[key === "repCantrips" ? "cantrips" : `spells${key.slice(3)}`] || [])
+      .length;
+  const valueOf = (key) => (key.startsWith("rep") ? rowsOf(key) : countOf(key));
+
   if (entry.data.autoSlots === false || (type !== "prepared" && type !== "spontaneous")) {
-    // The counts stop following the table here, so the last table counts no
-    // longer tell the player's changes apart. Once the sync runs again the
-    // entry is taken over like an adopted one: higher counts are kept and
-    // the rest come up to the table.
-    if (auto.base) {
-      auto.base = null;
+    // The counts stop following the table here. The last table counts stay,
+    // and the counts as they are now are noted, so turning it back on can
+    // tell the counts the player changed meanwhile from the ones they left.
+    if (auto.base && !auto.offCounts) {
+      auto.offCounts = {};
+      for (const key of Object.keys(auto.base)) {
+        auto.offCounts[key] = valueOf(key);
+      }
     }
     return;
   }
 
   // Counts. A new or adopted entry (no base yet) never loses slots.
   const base = auto.base || {};
+  const offCounts = auto.offCounts || null;
+  // The table count a count's offset is measured from: the last one written,
+  // or this level's for a count the player changed while "Set slots from
+  // level" was off, which stays as they typed it
+  const baseOf = (key, target) =>
+    offCounts && offCounts[key] !== undefined && offCounts[key] !== valueOf(key)
+      ? target
+      : base[key];
+  // A rank the table had slots in and no longer has (the level went down):
+  // what the player added there doesn't carry down
+  const rankGone = (key, target, last) => target === 0 && last > 0 && !/Cantrips$/.test(key);
   const nextBase = {};
-  const countOf = (key) => parseInt(entry.data[key] || 0, 10) || 0;
   const spellKeys = Object.keys(spec.counts).filter((key) => key !== "numCantrips");
   const sum = (getValue) => spellKeys.reduce((total, key) => total + getValue(key), 0);
   // The font's extra slots are one number that moves with its rank
   const fontExtra = !spec.fontRank
     ? 0
     : auto.base
-      ? sum(countOf) - sum((key) => base[key] || 0)
+      ? sum(countOf) - sum((key) => baseOf(key, spec.counts[key] || 0) || 0)
       : Math.max(0, sum(countOf) - sum((key) => spec.counts[key]));
   const before = {};
   for (const key of Object.keys(spec.counts)) {
     const target = spec.counts[key] || 0;
     const current = countOf(key);
+    const last = baseOf(key, target);
     let next;
     if (spec.fontRank && key !== "numCantrips") {
       next = key === `numSpells${spec.fontRank}` ? Math.max(0, target + fontExtra) : 0;
-    } else if (base[key] === undefined) {
+    } else if (last === undefined) {
       next = Math.max(current, target);
+    } else if (rankGone(key, target, last)) {
+      next = 0;
     } else {
-      next = Math.max(0, target + current - base[key]);
+      next = Math.max(0, target + current - last);
     }
     before[key] = current;
     if (next !== current) {
@@ -5954,10 +6149,14 @@ function applySpellcastingSpec(spellcastingEntry, spec) {
       const key = rank === 0 ? "repCantrips" : `rep${rank}`;
       const target = spec.repertoire?.[key];
       if (target === undefined) return;
-      wantRows =
-        base[key] === undefined
-          ? Math.max(rows.length, target)
-          : Math.max(0, target + rows.length - base[key]);
+      const last = baseOf(key, target);
+      if (last === undefined) {
+        wantRows = Math.max(rows.length, target);
+      } else if (rankGone(key, target, last)) {
+        wantRows = 0;
+      } else {
+        wantRows = Math.max(0, target + rows.length - last);
+      }
       nextBase[key] = target;
     }
     const resized = resizeSpellRows(rows, wantRows, type, rank);
@@ -5966,6 +6165,9 @@ function applySpellcastingSpec(spellcastingEntry, spec) {
     }
   });
   auto.base = nextBase;
+  if (auto.offCounts) {
+    auto.offCounts = null;
+  }
 
   // Show the lists that have slots or spells. Lists the player showed or hid
   // themselves stay that way.
@@ -6009,49 +6211,74 @@ function syncSpellcastingEntries(record, valuesToSet) {
     valuesToSet["data.spellcastingSyncVersion"] = SPELLCASTING_SYNC_VERSION;
   }
   const dismissed = record.data?.spellcastingDismissed || [];
-  const hideRestore = dismissed.length === 0;
-  if (record.fields?.restoreSpellcastingBtn?.hidden !== hideRestore) {
-    valuesToSet["fields.restoreSpellcastingBtn.hidden"] = hideRestore;
-  }
+  // Restore Automatic Entries shows once a managed entry was deleted, or
+  // while several entries could be the class's (it runs the takeover again)
+  const showRestoreButton = (unresolved) => {
+    const hideRestore = dismissed.length === 0 && !unresolved;
+    if (record.fields?.restoreSpellcastingBtn?.hidden !== hideRestore) {
+      valuesToSet["fields.restoreSpellcastingBtn.hidden"] = hideRestore;
+    }
+  };
 
   const entries = cloneRecordData(record.data?.spells || []);
   const level = parseInt(valuesToSet["data.level"] ?? record.data?.level ?? 0, 10) || 0;
   // Level 0 characters have no spellcasting until they take a class at 1st
   // level, so their entries are left alone
   if (isLevelZeroCharacter(record) || level < 1) {
+    showRestoreButton(false);
     return entries;
   }
 
   const specs = getWantedSpellcastingEntries(record, level, valuesToSet);
   const hasFont = specs.some((spec) => spec.fontRank);
+  // Whether the Divine Font gets a new entry, so font slots the player folded
+  // into the class's entry move to it
+  const fontSpec = specs.find(
+    (spec) =>
+      spec.fontRank &&
+      !dismissed.includes(spec.source) &&
+      !entries.some((e) => e.data?.auto?.source === spec.source),
+  );
+  const fontFound = fontSpec && findAdoptableSpellcastingEntry(entries, fontSpec, hasFont);
+  const fontIsNew = !!fontFound && !fontFound.entry && fontFound.ambiguous.length === 0;
+  let fontSpells = [];
+  let unresolved = false;
+
   for (const spec of specs) {
     if (dismissed.includes(spec.source)) continue;
-    let entry =
-      entries.find((e) => e.data?.auto?.source === spec.source) ||
-      findAdoptableSpellcastingEntry(entries, spec, hasFont);
+    let entry = entries.find((e) => e.data?.auto?.source === spec.source);
     if (!entry) {
-      // While the tradition is unknown, which of several entries of the type
-      // is the class's can't be told, so none is added. A sync after the
-      // bloodline, patron or eidolon is chosen takes the matching one over.
-      if (
-        !spec.tradition &&
-        getAdoptableSpellcastingEntries(entries, spec, hasFont).length > 1
-      ) {
+      const found = findAdoptableSpellcastingEntry(entries, spec, hasFont);
+      entry = found.entry;
+      if (entry) {
+        adoptSpellcastingEntry(record, entry, valuesToSet);
+        if (fontIsNew && spec.source === fontSpec.source.replace(/:font$/, "")) {
+          fontSpells = moveDivineFontSlots(entry, spec, fontSpec);
+        }
+      } else if (found.ambiguous.length > 0) {
+        // Several entries could be the class's: none is taken over or added
+        // until the player names the one to use, as the takeover notice says
+        unresolved = true;
         continue;
+      } else {
+        entry = buildSpellcastingEntry({
+          name: spec.name,
+          type: spec.type,
+          tradition: spec.tradition || "",
+          attribute: spec.attribute,
+          training: spec.training,
+          shownSpells: [],
+          isFirst: entries.length === 0,
+        });
+        if (spec.fontRank && fontSpells.length > 0) {
+          entry.data[`spells${spec.fontRank}`] = fontSpells;
+        }
+        entries.push(entry);
       }
-      entry = buildSpellcastingEntry({
-        name: spec.name,
-        type: spec.type,
-        tradition: spec.tradition || "",
-        attribute: spec.attribute,
-        training: spec.training,
-        shownSpells: [],
-        isFirst: entries.length === 0,
-      });
-      entries.push(entry);
     }
     applySpellcastingSpec(entry, spec);
   }
+  showRestoreButton(unresolved);
 
   // Entries whose class or feature is gone: removed while they hold no
   // spells, otherwise kept and no longer managed
@@ -6084,31 +6311,110 @@ function needsSpellcastingSync(record) {
   return record?.data?.spellcastingSyncVersion !== SPELLCASTING_SYNC_VERSION;
 }
 
-// The notice shown after that first sync: entries taken over, and entries added
-function describeSpellcastingSync(oldEntries, newEntries) {
-  const adopted = [];
-  const added = [];
-  (newEntries || []).forEach((entry, index) => {
-    if (!isManagedSpellcastingEntry(entry)) return;
-    if (index >= (oldEntries || []).length) {
-      added.push(entry.name);
-    } else if (!oldEntries[index]?.data?.auto?.source) {
-      adopted.push(entry.name);
-    }
-  });
+// Whether the person viewing a record can save changes to it: the GM, or the
+// player who owns it. Anyone else (a player looking at a party member's
+// sheet) can't, so updates made when a sheet opens wait for one of them.
+// When Realm doesn't say who owns the record or who is viewing, it's assumed
+// they can.
+function canEditRecord(record) {
+  if (typeof isGM !== "undefined" && isGM) {
+    return true;
+  }
+  const viewer = typeof userId !== "undefined" ? userId : null;
+  if (!viewer || !record?.ownerId) {
+    return true;
+  }
+  return `${record.ownerId}` === `${viewer}`;
+}
+
+// The notice shown after a sync that took a character's entries over, from
+// the entries before it and the record after it: entries taken over and
+// added, what a takeover kept or moved, and class entries that couldn't be
+// told apart from others. Entries are matched by source, not by their place
+// in the list.
+function describeSpellcastingSync(oldEntries, record) {
+  const entries = record?.data?.spells || [];
+  const oldSources = new Set(
+    (oldEntries || []).map((entry) => entry?.data?.auto?.source).filter(Boolean),
+  );
+  const fresh = entries.filter(
+    (entry) => isManagedSpellcastingEntry(entry) && !oldSources.has(entry.data.auto.source),
+  );
+  const adopted = fresh.filter((entry) => entry.data.auto.adopted);
+  const added = fresh.filter((entry) => !entry.data.auto.adopted);
   const join = (names) =>
     names.length <= 1
       ? names.join("")
       : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+  const plural = (count, word) => `${count} ${word}${count === 1 ? "" : "s"}`;
+  const level = parseInt(record?.data?.level || 0, 10) || 0;
+  const specs = getWantedSpellcastingEntries(record, level);
   const messages = [];
+
   if (adopted.length > 0) {
-    const verb = adopted.length === 1 && !/s$/i.test(adopted[0]) ? "follows" : "follow";
+    const names = adopted.map((entry) => entry.name);
+    const verb = names.length === 1 && !/s$/i.test(names[0]) ? "follows" : "follow";
     messages.push(
-      `${join(adopted)} now ${verb} your level (higher counts kept). To stop this, uncheck "Set slots from level" in ${adopted.length === 1 ? "its" : "each one's"} settings.`,
+      `${join(names)} now ${verb} your level (higher counts kept). To stop this, uncheck "Set slots from level" in ${names.length === 1 ? "its" : "each one's"} settings.`,
     );
   }
+  for (const entry of adopted) {
+    const auto = entry.data.auto;
+    const tradition = `${entry.data.tradition || ""}`;
+    const classTradition = `${auto.tradition || ""}`;
+    if (classTradition && tradition && tradition.toLowerCase() !== classTradition.toLowerCase()) {
+      messages.push(
+        `${entry.name} kept its ${tradition} tradition. Your class casts ${classTradition.toLowerCase()} spells, so change it in its settings if that was a mistake.`,
+      );
+    }
+    if (auto.fontSlotsMoved) {
+      messages.push(
+        `${plural(auto.fontSlotsMoved, "Divine Font slot")} in ${entry.name} moved to the new Divine Font entry.`,
+      );
+    }
+    // Slots kept over the class's next to a new Divine Font entry may be
+    // font slots counted twice
+    const fontSource = `${auto.source}:font`;
+    if (!added.some((e) => e.data.auto.source === fontSource)) {
+      continue;
+    }
+    const extras = [];
+    for (let rank = 1; rank <= 10; rank++) {
+      const key = `numSpells${rank}`;
+      const extra = (parseInt(entry.data[key] || 0, 10) || 0) - (auto.base?.[key] || 0);
+      if (extra > 0) {
+        extras.push(plural(extra, `${getOrdinal(rank)}-rank slot`));
+      }
+    }
+    if (extras.length > 0) {
+      messages.push(
+        `${entry.name} kept ${join(extras)} over your class's. If these are Divine Font slots, lower the count: Divine Font has its own entry now.`,
+      );
+    }
+  }
   if (added.length > 0) {
-    messages.push(`Added from your class: ${join(added)}.`);
+    messages.push(`Added from your class: ${join(added.map((entry) => entry.name))}.`);
+  }
+
+  const dismissed = record?.data?.spellcastingDismissed || [];
+  const hasFont = specs.some((spec) => spec.fontRank);
+  for (const spec of specs) {
+    if (
+      dismissed.includes(spec.source) ||
+      entries.some((entry) => entry.data?.auto?.source === spec.source)
+    ) {
+      continue;
+    }
+    const { ambiguous } = findAdoptableSpellcastingEntry(entries, spec, hasFont);
+    if (ambiguous.length > 1) {
+      const word = spec.name.replace(/ Spells$/, "");
+      const advice = ambiguous.some((entry) => isNamedForSpellcastingSpec(entry, spec))
+        ? `Keep "${word}" in the name of only the one to use`
+        : `Add "${word}" to the name of the one to use`;
+      messages.push(
+        `${join(ambiguous.map((entry) => entry.name))} could each be the class entry "${spec.name}", so none was taken over or added. ${advice}, then click Restore Automatic Entries (under Add Spellcasting Entry).`,
+      );
+    }
   }
   return messages.join(" ");
 }

@@ -456,12 +456,14 @@
     // (Free Archetype or Ancestry Paragon on a character who already leveled
     // up): recalculate once so the new feat slots, panels and totals show.
     // Characters made before spellcasting entries followed the class level
-    // are recalculated once too, taking over their existing entries.
+    // are recalculated once too, taking over their existing entries. Only the
+    // GM or the character's owner can save that; for anyone else viewing the
+    // sheet it would fail and be tried again on every open.
     const variantsChanged =
       (record.data?.variantRulesKey || "") !== getVariantRulesKey();
     const spellcastingOutdated =
       !!record.data?.initialized && needsSpellcastingSync(record);
-    if (variantsChanged || spellcastingOutdated) {
+    if ((variantsChanged || spellcastingOutdated) && canEditRecord(record)) {
       const oldFeats = record.data?.feats || [];
       const oldSpells = record.data?.spells || [];
       onAddEditFeature(
@@ -477,7 +479,7 @@
             }
             const spellMessage = describeSpellcastingSync(
               oldSpells,
-              updatedRecord.data?.spells || [],
+              updatedRecord,
             );
             if (spellMessage) {
               api.showNotification(spellMessage, "blue", "Spellcasting");

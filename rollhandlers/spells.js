@@ -1,9 +1,11 @@
-// typeChanged: the Spellcasting Type setting is the one that changed
+// typeChanged: the Spellcasting Type setting is the one that changed;
+// trainingChanged: the entry's training dropdown is
 function updateSpellcastingEntry(
   record,
   spellcastingEntry,
   spellcastingEntryDataPath,
-  typeChanged = false
+  typeChanged = false,
+  trainingChanged = false
 ) {
   // Reclaculate the DC and Modifier based on the new values
   const tradition = spellcastingEntry.data?.tradition || "Arcane";
@@ -17,10 +19,31 @@ function updateSpellcastingEntry(
 
   const isNPC = record.recordType === "npcs" || record.recordType === "tokens";
 
+  // A rank picked for an entry made from the class is kept as its own, so
+  // the sheet doesn't set it back to the character's rank
+  let pickedTraining = null;
+  let entryForTraining = spellcastingEntry;
+  if (
+    trainingChanged &&
+    !isNPC &&
+    !isItem &&
+    isManagedSpellcastingEntry(spellcastingEntry)
+  ) {
+    pickedTraining =
+      parseInt(spellcastingEntry.data?.training || "0", 10) || 0;
+    entryForTraining = {
+      ...spellcastingEntry,
+      data: {
+        ...spellcastingEntry.data,
+        auto: { ...spellcastingEntry.data.auto, ownTraining: pickedTraining },
+      },
+    };
+  }
+
   // Get current spellcasting training level if not NPC and not Item type
   let newTraining = undefined;
   if (!isNPC && !isItem) {
-    newTraining = getSpellcastingEntryTraining(record, spellcastingEntry);
+    newTraining = getSpellcastingEntryTraining(record, entryForTraining);
   }
 
   const valuesToSet = {
@@ -48,6 +71,11 @@ function updateSpellcastingEntry(
   // Only a name the sheet gave follows the settings
   if (isDefaultSpellcastingEntryName(spellcastingEntry.name)) {
     valuesToSet[`${spellcastingEntryDataPath}.name`] = name;
+  }
+
+  if (pickedTraining !== null) {
+    valuesToSet[`${spellcastingEntryDataPath}.data.auto.ownTraining`] =
+      pickedTraining;
   }
 
   if (newTraining) {
