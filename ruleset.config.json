@@ -5328,6 +5328,21 @@
         ]
       },
       {
+        "name": "Condition Upkeep",
+        "key": "conditionUpkeep",
+        "description": "Player Core pg. 444-446. At the end of a creature's turn, frightened goes down by 1. At the start of its turn, the chat shows its actions for the turn with stunned, slowed and quickened, and stunned goes down by the actions it took.",
+        "values": [
+          {
+            "label": "Yes",
+            "value": "yes"
+          },
+          {
+            "label": "No",
+            "value": "no"
+          }
+        ]
+      },
+      {
         "name": "Variant: Automatic Bonus Progression",
         "key": "automaticBonusProgression",
         "description": "GM Core pg. 83. Characters gain attack, skill, defense, Perception and saving throw potency, devastating attacks and attribute apex by level. Potency, striking and resilient runes give no bonus.",

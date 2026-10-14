@@ -1582,7 +1582,7 @@ ${getLevelUpSummary(gains)}`,
     // Get the shield index and update the HP on the item as well
     const valuesToSet = {};
     const bestArmor = getBestEquippedArmor(record);
-    if (bestArmor?.shield?.shieldIndex) {
+    if (bestArmor?.shield?.shieldIndex != null) {
       valuesToSet[
         `data.inventory.${bestArmor.shield.shieldIndex}.data.hp.value`
       ] = shieldHp;
@@ -1613,7 +1613,7 @@ ${getLevelUpSummary(gains)}`,
       valuesToSet["data.shieldBroken"] = broken;
     }
 
-    if (bestArmor?.shield?.shieldIndex) {
+    if (bestArmor?.shield?.shieldIndex != null) {
       valuesToSet[
         `data.inventory.${bestArmor.shield.shieldIndex}.data.hp.max`
       ] = shieldMaxHp;
@@ -1627,7 +1627,7 @@ ${getLevelUpSummary(gains)}`,
   function onChangeShieldValue(value, field) {
     const valuesToSet = {};
     const bestArmor = getBestEquippedArmor(record);
-    if (bestArmor?.shield?.shieldIndex) {
+    if (bestArmor?.shield?.shieldIndex != null) {
       valuesToSet[
         `data.inventory.${bestArmor.shield.shieldIndex}.data.${field}`
       ] = value;
