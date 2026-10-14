@@ -1,7 +1,8 @@
 // Tests for rules-math fixes: armor Speed penalties, condition penalties on AC,
-// save DCs and spell DCs, weakness and resistance per damage instance, Weak HP,
+// save DCs and spell DCs, stacking, Weak HP,
 // resilient runes and investiture, shields in inventory row 0, the hazard
-// Stealth DC field, and the level -1 DC.
+// Stealth DC field, and the level -1 DC. Weaknesses and resistances stay per
+// damage type, as Foundry's PF2e applies them (tests/test-iwr.js).
 
 const fs = require("fs");
 const vm = require("vm");
@@ -187,40 +188,6 @@ section("conditions on spell DCs and spell attacks");
   assert("frightened 2 reaches the spell attack roll", attackRollMods(caster([[FRIGHTENED, 2]])), "Frightened -2");
   assert("bless and stupefied reach a Charisma spell attack roll, enfeebled doesn't", attackRollMods(caster([[BLESS, 1], [STUPEFIED, 1], [ENFEEBLED, 1]])), "Bless 1, Stupefied -1");
   assert("a status spell attack bonus and bless: only one status bonus", attackRollMods(caster([[BLESS, 1], [SPELL_STATUS, 1]])).split(", ").length, 1);
-}
-
-section("weakness and resistance once per instance");
-{
-  const START = 1000;
-  const target = (data) => ({ _id: "t", recordType: "npcs", name: "T", record: { name: "T" }, identified: true, effects: [], data: { curhp: START, hitpoints: START, ...data } });
-  const dealt = (t, pairs, categories = []) => {
-    ctx.__state.lastSet = null;
-    ctx.applyDamage(
-      t,
-      {
-        types: pairs.map(([type, value]) => ({ die: 6, value, type })),
-        dice: pairs.map(([, value]) => ({ type: 6, value })),
-        total: pairs.reduce((s, [, v]) => s + v, 0),
-        metadata: { traits: [], damageCategories: categories, damageType: pairs[0][0] },
-      },
-      false,
-      null,
-      false,
-    );
-    const set = ctx.__state.lastSet || {};
-    return START - ("data.curhp" in set ? set["data.curhp"] : START);
-  };
-  const w = (type, value) => ({ data: { type, value } });
-  assert("cold iron weakness 5 on slashing + fire: 21", dealt(target({ weaknesses: [w("cold-iron", 5)] }), [["slashing", 10], ["fire", 6]], ["cold-iron"]), 21);
-  assert("all-damage weakness 3 on two types: 19", dealt(target({ weaknesses: [w("all damage", 3)] }), [["slashing", 10], ["fire", 6]]), 19);
-  assert("fire and slashing weaknesses both apply: 26", dealt(target({ weaknesses: [w("fire", 5), w("slashing", 5)] }), [["slashing", 10], ["fire", 6]]), 26);
-  assert("all-damage resistance 5 on one type of the split: 11", dealt(target({ resistances: [w("all damage", 5)] }), [["slashing", 10], ["fire", 6]]), 11);
-  assert("it goes to the larger type: 3 slashing + 10 fire -> 8", dealt(target({ resistances: [w("all damage", 5)] }), [["slashing", 3], ["fire", 10]]), 8);
-  assert("fire resistance plus all-damage resistance: 10 slash + 6 fire -> 6", dealt(target({ resistances: [w("fire", 5), w("all damage", 5)] }), [["slashing", 10], ["fire", 6]]), 6);
-  assert("single type unchanged: all-damage resistance 5 on 10 fire -> 5", dealt(target({ resistances: [w("all damage", 5)] }), [["fire", 10]]), 5);
-  assert("largest type has its own resistance: 10 fire + 6 slash vs fire 5 + all 5 -> 6", dealt(target({ resistances: [w("fire", 5), w("all damage", 5)] }), [["fire", 10], ["slashing", 6]]), 6);
-  assert("largest type has its own weakness: 10 fire + 6 slash vs fire 5 + all 3 -> 24", dealt(target({ weaknesses: [w("fire", 5), w("all damage", 3)] }), [["fire", 10], ["slashing", 6]]), 24);
-  assert("same in the other order -> 24", dealt(target({ weaknesses: [w("fire", 5), w("all damage", 3)] }), [["slashing", 10], ["fire", 6]]), 24);
 }
 
 section("Weak and Elite HP");

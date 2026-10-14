@@ -11799,17 +11799,7 @@ function applyDamage(
       // Track final damage per type to ensure each type doesn't go below 0
       const finalDamageByType = {};
 
-      // Each weakness and resistance applies once per instance of damage, not
-      // once per damage type in it. A category resistance (all damage, a
-      // material) goes to the one type the target chooses, so handle the
-      // largest type first.
-      const appliedWeaknesses = new Set();
-      const appliedResistances = new Set();
-      const damageTypesLargestFirst = Object.keys(damageByTypeAfterHalf).sort(
-        (a, b) => damageByTypeAfterHalf[b] - damageByTypeAfterHalf[a],
-      );
-
-      damageTypesLargestFirst.forEach((type) => {
+      Object.keys(damageByTypeAfterHalf).forEach((type) => {
         const lowerType = type.toLowerCase();
         let damageOfThisType = damageByTypeAfterHalf[type];
 
@@ -11884,12 +11874,14 @@ function applyDamage(
 
         // Apply Weaknesses (add extra damage)
         if (!damageIgnoresWeaknesses.includes(lowerType)) {
+          // Track which weaknesses we've applied to avoid duplicates
+          const appliedWeaknesses = new Set();
+
           // Check for specific type weakness
           const weakness = IWR.weaknesses[lowerType];
-          // Check for "all damage" weakness, unless another type already took it
-          const allDamageWeakness = appliedWeaknesses.has("all damage")
-            ? undefined
-            : IWR.weaknesses["all damage"] || IWR.weaknesses["all-damage"];
+          // Check for "all damage" weakness
+          const allDamageWeakness =
+            IWR.weaknesses["all damage"] || IWR.weaknesses["all-damage"];
 
           const applicableWeakness = weakness || allDamageWeakness;
 
@@ -11910,13 +11902,9 @@ function applyDamage(
                 weaknessValue = weaknessValue * 2;
               }
               damageOfThisType += weaknessValue;
-              // Mark only the weakness applied, so an unused all-damage
-              // weakness is still there for the other damage types
-              if (applicableWeakness === weakness) {
-                appliedWeaknesses.add(lowerType);
-              } else {
-                appliedWeaknesses.add("all damage");
-              }
+              // Mark this weakness as applied
+              if (weakness) appliedWeaknesses.add(lowerType);
+              if (allDamageWeakness) appliedWeaknesses.add("all damage");
             }
           }
 
@@ -11978,12 +11966,14 @@ function applyDamage(
 
         // Apply Resistances (reduce damage)
         if (!damageIgnoresResistances.includes(lowerType)) {
+          // Track which resistances we've applied to avoid duplicates
+          const appliedResistances = new Set();
+
           // Check for specific type resistance
           const resistance = IWR.resistances[lowerType];
-          // Check for "all damage" resistance, unless another type already took it
-          const allDamageResistance = appliedResistances.has("all damage")
-            ? undefined
-            : IWR.resistances["all damage"] || IWR.resistances["all-damage"];
+          // Check for "all damage" resistance
+          const allDamageResistance =
+            IWR.resistances["all damage"] || IWR.resistances["all-damage"];
 
           const applicableResistance = resistance || allDamageResistance;
 
@@ -12004,13 +11994,9 @@ function applyDamage(
                 resistanceValue = resistanceValue * 2;
               }
               damageOfThisType -= resistanceValue;
-              // Mark only the resistance applied, so an unused all-damage
-              // resistance is still there for the other damage types
-              if (applicableResistance === resistance) {
-                appliedResistances.add(lowerType);
-              } else {
-                appliedResistances.add("all damage");
-              }
+              // Mark this resistance as applied
+              if (resistance) appliedResistances.add(lowerType);
+              if (allDamageResistance) appliedResistances.add("all damage");
             }
           }
 
