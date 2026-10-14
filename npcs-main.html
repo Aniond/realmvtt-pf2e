@@ -240,6 +240,35 @@
     }
   }
 
+  // The HP an Elite or Weak adjustment adds (negative for Weak) at a starting
+  // level; 0 for none. Elite and weak use different level bands (Monster
+  // Core pg. 6), and Weak has no HP change at level 0 or lower.
+  function getHpAdjustment(level, adjustment) {
+    if (adjustment === "elite") {
+      if (level <= 1) return 10;
+      if (level <= 4) return 15;
+      if (level <= 19) return 20;
+      return 30;
+    }
+    if (adjustment === "weak") {
+      if (level <= 0) return 0;
+      if (level <= 2) return -10;
+      if (level <= 5) return -15;
+      if (level <= 20) return -20;
+      return -30;
+    }
+    return 0;
+  }
+
+  // An NPC's current HP; full HP when it has none yet
+  function getCurrentHP(npc) {
+    const curhp = npc.data?.curhp;
+    if (curhp === undefined || curhp === null || curhp === "") {
+      return parseInt(npc.data?.hitpoints || "0", 10) || 0;
+    }
+    return parseInt(curhp, 10) || 0;
+  }
+
   function applyAdjustment(adjustmentType) {
     const npcDataPath = getNearestParentDataPath(dataPath);
     const npc = npcDataPath ? api.getValue(npcDataPath) : record;
@@ -291,8 +320,20 @@
         valuesToSet[`${dataPrefix}.hitpoints`] = npc.data.baseHP;
         valuesToSet[`${dataPrefix}.baseHP`] = null;
       }
+      // Current HP moves by as much as max HP does, keeping damage already
+      // taken (max HP stops at 1, so this can be less than the band's HP)
+      if (npc.data?.baseHP !== undefined && npc.data?.baseHP !== null) {
+        const baseHP = parseInt(npc.data.baseHP, 10) || 0;
+        const adjustedHP = parseInt(npc.data?.hitpoints || "0", 10) || 0;
+        if (adjustedHP !== baseHP) {
+          valuesToSet[`${dataPrefix}.curhp`] = Math.min(
+            baseHP,
+            Math.max(0, getCurrentHP(npc) - adjustedHP + baseHP)
+          );
+        }
+      }
+      // Older versions kept the unadjusted current HP here
       if (npc.data?.baseCurHP !== undefined && npc.data?.baseCurHP !== null) {
-        valuesToSet[`${dataPrefix}.curhp`] = npc.data.baseCurHP;
         valuesToSet[`${dataPrefix}.baseCurHP`] = null;
       }
       if (
@@ -383,7 +424,7 @@
       const baseLevel =
         npc.data?.baseLevel !== undefined && npc.data?.baseLevel !== null
           ? npc.data.baseLevel
-          : parseInt(npc.data?.level || "1");
+          : parseInt(npc.data?.level ?? "1", 10) || 0;
       const baseAC =
         npc.data?.baseAC !== undefined && npc.data?.baseAC !== null
           ? npc.data.baseAC
@@ -411,10 +452,6 @@
         npc.data?.baseHP !== undefined && npc.data?.baseHP !== null
           ? npc.data.baseHP
           : parseInt(npc.data?.hitpoints || "0");
-      const baseCurHP =
-        npc.data?.baseCurHP !== undefined && npc.data?.baseCurHP !== null
-          ? npc.data.baseCurHP
-          : parseInt(npc.data?.curhp || "0");
 
       // Save base values if not already saved
       if (npc.data?.baseLevel === undefined || npc.data?.baseLevel === null) {
@@ -450,9 +487,6 @@
       if (npc.data?.baseHP === undefined || npc.data?.baseHP === null) {
         valuesToSet[`${dataPrefix}.baseHP`] = baseHP;
       }
-      if (npc.data?.baseCurHP === undefined || npc.data?.baseCurHP === null) {
-        valuesToSet[`${dataPrefix}.baseCurHP`] = baseCurHP;
-      }
 
       // Apply adjustments from base values
       // Level: for weak decrease by 1 (or 2 if level 1), for elite increase by 1 (or 2 if level <=0)
@@ -474,17 +508,16 @@
       valuesToSet[`${dataPrefix}.reflexMod`] = baseReflex + modifier;
       valuesToSet[`${dataPrefix}.willMod`] = baseWill + modifier;
 
-      // HP: increase/decrease based on starting level
-      let hpChange;
-      if (baseLevel <= 1) hpChange = 10;
-      else if (baseLevel <= 4) hpChange = 15;
-      else if (baseLevel <= 19) hpChange = 20;
-      else hpChange = 30;
-
-      if (!isElite) hpChange = -hpChange; // Weak decreases HP
-
+      // HP: increase/decrease based on starting level. Damage already taken
+      // is kept: current HP moves by as much as max HP does (max HP stops at
+      // 1, so this can be less than the band's HP).
+      const hpChange = getHpAdjustment(baseLevel, adjustmentType);
       const newMaxHP = Math.max(baseHP + hpChange, 1);
-      const newCurHP = Math.max(baseCurHP + hpChange, 1);
+      const oldMaxHP = parseInt(npc.data?.hitpoints || "0", 10) || 0;
+      const newCurHP = Math.min(
+        newMaxHP,
+        Math.max(0, getCurrentHP(npc) - oldMaxHP + newMaxHP)
+      );
       valuesToSet[`${dataPrefix}.hitpoints`] = newMaxHP;
       valuesToSet[`${dataPrefix}.curhp`] = newCurHP;
 
@@ -2589,7 +2622,7 @@
           <numberfield
             width="100%"
             size="xs"
-            field="sealth.value"
+            field="stealth.value"
             label="Stealth DC"
             placeholder="0"
           ></numberfield>

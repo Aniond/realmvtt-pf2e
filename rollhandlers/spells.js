@@ -1092,8 +1092,19 @@ function getSpellSaveMacro(record, spell, spellCastingEntry, dataPathToSpell) {
     ["spellDCBonus", "spellDCPenalty"],
     saveType
   );
-  spellDCMods.forEach((mod) => {
-    saveDC += mod.value;
+  // Bonuses and penalties to checks and DCs of the casting attribute
+  // (stupefied, frightened) apply to the spell DC too
+  const attributeMods = getEffectsAndModifiersForToken(
+    record,
+    ["allBonus", "allPenalty"],
+    spellCastingEntry?.data?.attribute || "int",
+    undefined,
+    undefined,
+    { spell }
+  );
+  mergeModifierLists(spellDCMods, attributeMods).forEach((mod) => {
+    if (mod.active === false) return;
+    saveDC += parseInt(mod.value || 0, 10) || 0;
   });
   return getSaveMacro(saveType, saveDC, true, true);
 }
@@ -1180,6 +1191,16 @@ api.getRecord('${record.recordType}', '${record._id}', (record) => {
     undefined,
     { spell }
   );
+  // A spell attack is an attack roll and a check of the casting attribute, so
+  // attack bonuses (bless) and attribute penalties (stupefied, frightened) apply
+  const spellCheckMods = getEffectsAndModifiersForToken(
+    record,
+    ["attackBonus", "attackPenalty", "allBonus", "allPenalty"],
+    "${spellCastingEntry?.data?.attribute || "int"}",
+    undefined,
+    undefined,
+    { spell }
+  );
 
   // Get damage modifiers based on spell type
   const damageModifierTypes = ${isCantrip}
@@ -1202,7 +1223,8 @@ api.getRecord('${record.recordType}', '${record._id}', (record) => {
       value: ${spellAttackMod},
       active: true
     },
-    ...spellAttackMods
+    // Only the strongest bonus and penalty of each type across both lookups
+    ...mergeModifierLists(spellAttackMods, spellCheckMods)
   ];
   
   // Build criticalOnlyDice array to track splash damage (so it doesn't get doubled)

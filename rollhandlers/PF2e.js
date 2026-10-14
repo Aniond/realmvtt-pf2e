@@ -2220,6 +2220,7 @@ function getArmorSpecializationDetails(armorGroup) {
 
 function getDCForLevel(level, difficulty = null) {
   const dcByLevel = {
+    "-1": 13,
     0: 14,
     1: 15,
     2: 16,
