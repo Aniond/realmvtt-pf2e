@@ -13,9 +13,16 @@
       return;
     }
 
+    // An entry made from the class is remembered, so it isn't made again
+    const source = isManagedSpellcastingEntry(spellcastingEntry)
+      ? spellcastingEntry.data.auto.source
+      : "";
+
     api.showConfirm(
       "Delete Spellcasting Entry",
-      `Are you sure you want to delete the "${spellcastingEntry.name}" entry?`,
+      source
+        ? `"${spellcastingEntry.name}" was created from your class. Delete it and stop creating it automatically? Restore Automatic Entries (under Add Spellcasting Entry) brings it back.`
+        : `Are you sure you want to delete the "${spellcastingEntry.name}" entry?`,
       "Yes",
       "No",
       () => {
@@ -34,9 +41,16 @@
           allSpellcastingEntries[0].fields.moveUpBtn.hidden = true;
         }
 
-        api.setValues({
+        const valuesToSet = {
           "data.spells": allSpellcastingEntries,
-        });
+        };
+        if (source) {
+          valuesToSet["data.spellcastingDismissed"] = [
+            ...new Set([...(record.data?.spellcastingDismissed || []), source]),
+          ];
+          valuesToSet["fields.restoreSpellcastingBtn.hidden"] = false;
+        }
+        api.setValues(valuesToSet);
       }
     );
   }
@@ -48,7 +62,22 @@
     updateSpellcastingEntry(
       record,
       spellcastingEntry,
-      spellcastingEntryDataPath
+      spellcastingEntryDataPath,
+      dataPath.endsWith(".data.type")
+    );
+  }
+
+  // "Set slots from level": turning it back on brings the counts up to date
+  function onAutoSlotsChange(value) {
+    const spellcastingEntryDataPath = getNearestParentDataPath(dataPath);
+    api.setValues(
+      {
+        [`${spellcastingEntryDataPath}.data.autoSlots`]:
+          value === true || value === "true",
+      },
+      (updatedRecord) => {
+        onAddEditFeature(updatedRecord, undefined, true);
+      }
     );
   }
 </script>
@@ -106,6 +135,14 @@
               variant="bold"
               label="Spellcasting Entry Settings"
             ></label>
+            <!-- Only on entries made from the class -->
+            <checkbox
+              field="autoSlots"
+              label="Set slots from level"
+              size="xs"
+              hidden="true"
+              onchange="onAutoSlotsChange(value);"
+            ></checkbox>
             <dropdown
               size="xs"
               field="shownSpells"

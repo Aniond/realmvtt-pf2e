@@ -454,9 +454,16 @@
 
     // A GM may turn variant rules on or off after this character was built
     // (Free Archetype or Ancestry Paragon on a character who already leveled
-    // up): recalculate once so the new feat slots, panels and totals show
-    if ((record.data?.variantRulesKey || "") !== getVariantRulesKey()) {
+    // up): recalculate once so the new feat slots, panels and totals show.
+    // Characters made before spellcasting entries followed the class level
+    // are recalculated once too, taking over their existing entries.
+    const variantsChanged =
+      (record.data?.variantRulesKey || "") !== getVariantRulesKey();
+    const spellcastingOutdated =
+      !!record.data?.initialized && needsSpellcastingSync(record);
+    if (variantsChanged || spellcastingOutdated) {
       const oldFeats = record.data?.feats || [];
+      const oldSpells = record.data?.spells || [];
       onAddEditFeature(
         record,
         () => {
@@ -467,6 +474,13 @@
             );
             if (message) {
               api.showNotification(message, "blue", "Feats");
+            }
+            const spellMessage = describeSpellcastingSync(
+              oldSpells,
+              updatedRecord.data?.spells || [],
+            );
+            if (spellMessage) {
+              api.showNotification(spellMessage, "blue", "Spellcasting");
             }
           });
         },
@@ -1057,6 +1071,7 @@ ${getLevelUpSummary(gains)}`,
         "spells7",
         "spells8",
         "spells9",
+        "spells10",
       ];
 
       // If it's not a focus spell entry we go through each spell list of the entry
