@@ -333,7 +333,7 @@ section("Turning variants on for existing characters");
   assert(
     "player is told what to fill",
     ctx.describeNewFeatSlots(plain, upgraded),
-    "New feat slots from your campaign's variant rules: 2 Ancestry, 3 Archetype. Fill them on the Feats tab.",
+    "New feat slots to fill on the Feats tab: 2 Ancestry, 3 Archetype.",
   );
   assert("nothing new, no message", ctx.describeNewFeatSlots(after, after), "");
 

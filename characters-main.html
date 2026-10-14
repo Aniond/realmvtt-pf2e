@@ -466,7 +466,7 @@
               updatedRecord.data?.feats || [],
             );
             if (message) {
-              api.showNotification(message, "blue", "Variant Rules");
+              api.showNotification(message, "blue", "Feats");
             }
           });
         },
@@ -1359,7 +1359,17 @@ ${getLevelUpSummary(gains)}`,
       alternateAncestryBoosts = false;
     }
 
-    if (!overrideAlternateAncestryBoosts && record.data?.ancestryBoost2) {
+    // Clear the second ancestry boost only when it isn't used. Humans and
+    // ancestries with two free boosts always use it, and so does a character
+    // using alternate boosts. Called with no argument (when the boost
+    // dropdowns load), the saved checkbox decides.
+    const secondBoostUsed =
+      !showAlternateAncestryBoostOptions ||
+      (overrideAlternateAncestryBoosts === undefined
+        ? record.data?.alternateAncestryBoosts === true
+        : overrideAlternateAncestryBoosts === true ||
+          overrideAlternateAncestryBoosts === "true");
+    if (!secondBoostUsed && record.data?.ancestryBoost2) {
       valuesToSet["data.ancestryBoost2"] = "";
     }
 

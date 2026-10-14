@@ -148,12 +148,20 @@
   }
 
   function onNumDailyCraftingChange(value) {
-    // A manual daily limit (for feats that change it)
-    const allowance = {
-      ...getAdvancedAlchemyAllowance(record),
-      limit: parseInt(value, 10) || 0,
-    };
+    // A typed limit overrides the computed one (for feats and familiars the
+    // sheet doesn't know about); typing the computed number clears it
+    const typed = parseInt(value, 10);
+    const computed = getAdvancedAlchemyAllowance({
+      ...record,
+      data: { ...record.data, numDailyCraftingOverride: null },
+    }).computed;
+    const override = isNaN(typed) || typed === computed ? null : typed;
+    const allowance = getAdvancedAlchemyAllowance({
+      ...record,
+      data: { ...record.data, numDailyCraftingOverride: override },
+    });
     api.setValues({
+      "data.numDailyCraftingOverride": override,
       "data.totalDailyCraftingLabel": getAdvancedAlchemyLabel(allowance),
     });
   }
@@ -171,14 +179,9 @@
         }
       });
 
-      const allowance = {
-        ...getAdvancedAlchemyAllowance(updatedRecord),
-        limit:
-          updatedRecord.data?.numDailyCrafting ??
-          getAdvancedAlchemyAllowance(updatedRecord).limit,
-      };
-      valuesToSet["data.totalDailyCraftingLabel"] =
-        getAdvancedAlchemyLabel(allowance);
+      valuesToSet["data.totalDailyCraftingLabel"] = getAdvancedAlchemyLabel(
+        getAdvancedAlchemyAllowance(updatedRecord),
+      );
 
       api.setValues(valuesToSet);
     });
@@ -401,7 +404,7 @@
         >
         </label>
       </div>
-      <div style="width: 150px; flex-shrink: 0"></div>
+      <div style="width: 90px; flex-shrink: 0"></div>
       <box field="tableSpacer" width="16px" hideonlocked="true"></box>
     </div>
 

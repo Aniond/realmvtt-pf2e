@@ -14047,7 +14047,7 @@ function describeNewFeatSlots(oldFeats, newFeats) {
     .filter((type) => after[type] > (before[type] || 0))
     .map((type) => `${after[type] - (before[type] || 0)} ${capitalize(type)}`);
   if (added.length === 0) return "";
-  return `New feat slots from your campaign's variant rules: ${added.join(", ")}. Fill them on the Feats tab.`;
+  return `New feat slots to fill on the Feats tab: ${added.join(", ")}.`;
 }
 
 // Proficiency without Level (GM Core pg. 85) for creatures and hazards: every
@@ -14352,31 +14352,33 @@ function getPreparedQuantity(item) {
 }
 
 // Advanced Alchemy's daily allowance.
-// Remaster (Player Core 2): up to 4 + Int alchemical items.
+// Remaster (Player Core 2): up to 4 + Int alchemical items; 6 + Int with
+// Efficient Alchemy, 8 + Int (10 + Int from 16th) with Advanced Efficient Alchemy.
 // Legacy (Core Rulebook): infused reagents equal to level + Int; each batch of
 // reagents makes 2 of the same item.
+// A number typed into "# / Day" (data.numDailyCraftingOverride) replaces the
+// limit, for feats and familiars the sheet doesn't know about.
 function getAdvancedAlchemyAllowance(record) {
   const alchemist = getAlchemistClass(record);
   const int = parseInt(record.data?.int || 0, 10) || 0;
+  const level = parseInt(record.data?.level || 1, 10) || 1;
   const items = record.data?.advancedAlchemyItems || [];
+  const override = parseInt(record.data?.numDailyCraftingOverride, 10);
+  const withOverride = (computed) => (isNaN(override) ? computed : Math.max(0, override));
   if (alchemist && isLegacyClass(alchemist)) {
-    const level = parseInt(record.data?.level || 1, 10) || 1;
-    const limit = Math.max(0, level + int);
+    const computed = Math.max(0, level + int);
     const used = items.reduce(
       (total, item) => total + Math.ceil(getPreparedQuantity(item) / 2),
       0,
     );
-    return { legacy: true, limit, used, unit: "batch" };
+    return { legacy: true, limit: withOverride(computed), computed, used, unit: "batch" };
   }
-  // Efficient Alchemy: 6 + Int; Advanced Efficient Alchemy: 8 + Int, or 10 + Int
-  // from 16th level (Player Core 2)
-  const level = parseInt(record.data?.level || 1, 10) || 1;
   let base = 4;
   if (hasFeatNamed(record, "Advanced Efficient Alchemy")) base = level >= 16 ? 10 : 8;
   else if (hasFeatNamed(record, "Efficient Alchemy")) base = 6;
-  const limit = Math.max(0, base + int);
+  const computed = Math.max(0, base + int);
   const used = items.reduce((total, item) => total + getPreparedQuantity(item), 0);
-  return { legacy: false, limit, used, unit: "item" };
+  return { legacy: false, limit: withOverride(computed), computed, used, unit: "item" };
 }
 
 function getAdvancedAlchemyLabel(allowance) {
@@ -14535,21 +14537,26 @@ function getCraftRankNeeded(item, version = getCraftingRulesVersion()) {
   return 1;
 }
 
-// What stands in the way of Crafting an item. Problems break a rule; notes are
-// things the GM rules on. Feats like Craft Anything can lift requirements, so
-// the sheet asks before going ahead rather than refusing.
-function getCraftCheck(record, item, version = getCraftingRulesVersion()) {
+// What stands in the way of Crafting (or Growing) an item. Problems break a
+// rule; notes are things the GM rules on. Feats like Craft Anything can lift
+// requirements, so the sheet asks before going ahead rather than refusing.
+// Grow uses the skill the campaign chose for it (Crafting or Nature).
+function getCraftCheck(record, item, version = getCraftingRulesVersion(), method = "craft") {
   const problems = [];
   const notes = [];
   const characterLevel = parseInt(record.data?.level || 0, 10) || 0;
   const itemLevel = parseInt(item?.data?.level || 0, 10) || 0;
-  const rank = parseInt(record.data?.crafting || 0, 10) || 0;
+  const skill = getCraftRollSkill(method);
+  const skillLabel = capitalize(skill);
+  const rank = parseInt(record.data?.[skill] || 0, 10) || 0;
   const needed = getCraftRankNeeded(item, version);
   const hasFormula = hasFormulaFor(record, item);
 
-  if (rank < 1) problems.push("You must be trained in Crafting.");
+  if (rank < 1) problems.push(`You must be trained in ${skillLabel}.`);
   else if (rank < needed) {
-    problems.push(`A level ${itemLevel} item needs you to be ${PROFICIENCY_RANK_LABELS[needed]} in Crafting.`);
+    problems.push(
+      `A level ${itemLevel} item needs you to be ${PROFICIENCY_RANK_LABELS[needed]} in ${skillLabel}.`,
+    );
   }
   if (itemLevel > characterLevel) problems.push(`It is level ${itemLevel}, above your level.`);
   if (itemHasTrait(item, "alchemical") && !hasFeatNamed(record, "Alchemical Crafting")) {
@@ -14576,10 +14583,15 @@ function getCraftableItem(formulaEntry) {
   delete data.craftingDC;
   delete data.craftingQuantity;
   delete data.craftingCost;
+  // The formula row's button values
+  delete data.craftBtn;
+  delete data.growBtn;
+  delete data.prepareBtn;
   return { ...formulaEntry, data };
 }
 
-// A new Craft (or Grow) project for a formula book entry
+// A new Craft (or Grow) project for a formula book entry. The DC is the one in
+// the formula book, which the GM can adjust.
 function buildCraftProject(record, formulaEntry, options = {}) {
   const version = options.version || getCraftingRulesVersion();
   const method = options.method || "craft";
@@ -14593,6 +14605,7 @@ function buildCraftProject(record, formulaEntry, options = {}) {
   const rushDc = options.rush?.dc || 0;
   const setupDays = options.setupDays ?? getCraftSetupDays(version, hasFormula, method);
   const materialsCp = getCraftMaterialsCp(batch.priceCp);
+  const bookDc = parseInt(formulaEntry?.data?.craftingDC, 10);
   return {
     _id: generateUuid(),
     name: batch.count > 1 ? `${item.name} (x${batch.count})` : item.name,
@@ -14602,11 +14615,12 @@ function buildCraftProject(record, formulaEntry, options = {}) {
     data: {
       item,
       method,
+      skill: getCraftRollSkill(method),
       count: batch.count,
       totalCp: batch.priceCp,
       paidCp: materialsCp,
       remainingCp: batch.priceCp - materialsCp,
-      dc: getCraftingDC(item) + rushDc,
+      dc: (isNaN(bookDc) ? getCraftingDC(item) : bookDc) + rushDc,
       setupLabel: options.setupLabel || `${setupDays} day${setupDays === 1 ? "" : "s"}`,
       status: "rolling",
       ratePerDayCp: 0,
@@ -14709,7 +14723,8 @@ function buildFormulaEntry(item) {
 
 // Applies the result of a crafting roll: Craft or Grow, Deconstruct, or the
 // Complex Crafting rushed finish. degree is 2 (critical success) to -1
-// (critical failure). Returns text to add to the roll's chat message.
+// (critical failure). Returns text to add to the roll's chat message. A
+// re-roll (such as a hero point) replaces the earlier result.
 function handleCraftingRollOutcome(record, metadata, degree) {
   const action = metadata?.craftingAction;
   const options = getCraftingOptions();
@@ -14726,12 +14741,28 @@ function handleCraftingRollOutcome(record, metadata, degree) {
     const project = projects[index];
     const path = `data.craftingProjects.${index}`;
     const values = {};
+    let salvage = [...(record.data?.craftingSalvage || [])];
     let text = "";
+
+    // Undo the salvage an earlier result of this roll gave back
+    const earlier = project.data?.refundGiven;
+    if (earlier) {
+      const takeBack = getCoinPayment(record, earlier.coinCp || 0);
+      const creditIndex = earlier.creditId
+        ? salvage.findIndex((c) => c._id === earlier.creditId)
+        : -1;
+      if (!takeBack || (earlier.creditId && creditIndex === -1)) {
+        return `\n\n**${project.name}:** this re-roll can't change the result, because the salvaged materials have already been spent.`;
+      }
+      Object.assign(values, takeBack);
+      if (creditIndex !== -1) salvage.splice(creditIndex, 1);
+      values[`${path}.data.refundGiven`] = null;
+    }
 
     if (degree >= 1) {
       const rate = getCraftingDailyReductionCp(
         record.data?.level,
-        record.data?.crafting,
+        record.data?.[project.data?.skill || "crafting"],
         degree === 2,
       );
       const working = { ...project.data, status: "working", ratePerDayCp: rate };
@@ -14745,22 +14776,44 @@ function handleCraftingRollOutcome(record, metadata, degree) {
         project.data.remainingCp,
       )} to finish now, or work extra days (each takes ${formatCp(rate)} off).`;
     } else {
-      // Salvage what was paid in coin (salvaged parts used are spent)
-      const paid = project.data?.coinPaidCp ?? project.data?.paidCp ?? 0;
-      const salvaged = degree === 0 ? paid : Math.floor(paid * 0.9);
-      Object.assign(values, getCoinRefund(record, salvaged));
+      // The raw materials are salvaged: the coins paid and any salvaged parts
+      // used come back, less 10% on a critical failure
+      const keep = degree === 0 ? 1 : 0.9;
+      const coinCp = Math.floor((project.data?.coinPaidCp ?? project.data?.paidCp ?? 0) * keep);
+      Object.assign(values, getCoinRefundOnto(record, values, coinCp));
+      let creditId = "";
+      const used = project.data?.salvageCredit;
+      if (used) {
+        const valueCp = Math.floor((used.data?.valueCp || 0) * keep);
+        creditId = generateUuid();
+        salvage.push({
+          ...used,
+          _id: creditId,
+          data: {
+            ...used.data,
+            valueCp,
+            valueLabel: `${formatCp(valueCp)} toward ${
+              used.data?.similarOnly ? "a similar item" : "any one item"
+            }`,
+          },
+        });
+      }
+      values[`${path}.data.refundGiven`] = { coinCp, creditId };
       values[`${path}.data.status`] = "failed";
-      values[`${path}.data.paidCp`] = 0;
       values[`${path}.data.statusLabel`] = getCraftProjectStatus({
         data: { ...project.data, status: "failed" },
       });
       values[`${path}.fields.workBtn.hidden`] = true;
       values[`${path}.fields.finishBtn.hidden`] = true;
       values[`${path}.fields.retryBtn.hidden`] = false;
+      const parts = used ? " and the salvaged parts" : "";
       text =
         degree === 0
-          ? `**${project.name}:** the materials are salvaged (${formatCp(salvaged)} back). Start over to try again.`
-          : `**${project.name}:** 10% of the materials are ruined; ${formatCp(salvaged)} is salvaged.`;
+          ? `**${project.name}:** the materials are salvaged (${formatCp(coinCp)}${parts} back). Start over to try again.`
+          : `**${project.name}:** 10% of the materials are ruined; ${formatCp(coinCp)}${parts} salvaged.`;
+    }
+    if (salvage.length !== (record.data?.craftingSalvage || []).length || earlier) {
+      values["data.craftingSalvage"] = salvage;
     }
     api.setValuesOnRecord(record, values);
     return `\n\n${text}${critNote}`;
@@ -14768,11 +14821,12 @@ function handleCraftingRollOutcome(record, metadata, degree) {
 
   if (action === "deconstruct") {
     const inventory = record.data?.inventory || [];
-    const item = inventory.find((i) => i._id === metadata.itemId);
+    const index = inventory.findIndex((i) => i._id === metadata.itemId);
+    const item = inventory[index];
     if (!item) return "";
     if (degree >= 1) {
       const share = getDeconstructShare(degree, metadata.similar === true);
-      const damaged = item.data?.deconstructDamaged ? 0.05 : 0;
+      const damaged = metadata.damaged ? 0.05 : 0;
       const valueCp = Math.floor(getItemPriceCp(item) * Math.max(0, share - damaged));
       const credit = {
         _id: generateUuid(),
@@ -14788,14 +14842,21 @@ function handleCraftingRollOutcome(record, metadata, degree) {
           }`,
         },
       };
-      api.setValuesOnRecord(record, {
-        "data.inventory": inventory.filter((i) => i._id !== item._id),
+      // One item from a stack is taken apart
+      const count = parseFloat(item.data?.count || 1) || 1;
+      const values = {
         "data.craftingSalvage": [...(record.data?.craftingSalvage || []), credit],
-      });
+      };
+      if (count > 1) {
+        values[`data.inventory.${index}.data.count`] = count - 1;
+        values[`data.inventory.${index}.data.deconstructDamaged`] = false;
+      } else {
+        values["data.inventory"] = inventory.filter((i) => i._id !== item._id);
+      }
+      api.setValuesOnRecord(record, values);
       return `\n\n**${item.name}** is taken apart: ${credit.data.valueLabel}.${critNote}`;
     }
     if (degree === -1) {
-      const index = inventory.indexOf(item);
       api.setValuesOnRecord(record, {
         [`data.inventory.${index}.data.deconstructDamaged`]: true,
       });
@@ -14805,21 +14866,7 @@ function handleCraftingRollOutcome(record, metadata, degree) {
   }
 
   if (action === "rushedFinish") {
-    const projects = record.data?.craftingProjects || [];
-    const index = projects.findIndex((p) => p._id === metadata.projectId);
-    if (index === -1) return "";
-    const project = projects[index];
-    if (degree === -1) {
-      const remaining = [...projects];
-      remaining.splice(index, 1);
-      api.setValuesOnRecord(record, { "data.craftingProjects": remaining });
-      return `\n\n**${project.name}** is ruined, or becomes a cursed item attached to you (GM's choice).`;
-    }
-    const quirk = degree === 0 ? "Rushed: this item has a minor quirk (GM's choice)." : "";
-    api.setValuesOnRecord(record, getCraftProjectCompletion(record, index, quirk));
-    return degree === 0
-      ? `\n\n**${project.name}** is finished, but it has a minor quirk (GM's choice).`
-      : `\n\n**${project.name}** is finished and works perfectly.`;
+    return finishRushedCraftProject(record, metadata.projectId, degree);
   }
 
   return "";
@@ -14835,7 +14882,7 @@ function rollCraftProject(record, project) {
   const verb = project.data?.method === "grow" ? "Grow" : "Craft";
   rollSkill(
     record,
-    getCraftRollSkill(project.data?.method),
+    project.data?.skill || getCraftRollSkill(project.data?.method),
     project.data?.dc,
     false,
     0,
@@ -14966,7 +15013,7 @@ function payAndRollCraftProject(recordId, formulaIndex, method, settings, credit
       upfront -= onMaterials;
       value -= onMaterials;
       project.data.remainingCp = Math.max(0, project.data.remainingCp - value);
-      project.data.salvageUsed = credit.name;
+      project.data.salvageCredit = credit;
       values["data.craftingSalvage"] = (record.data?.craftingSalvage || []).filter(
         (c) => c._id !== credit._id,
       );
@@ -14997,21 +15044,26 @@ function findCraftProject(record, projectId) {
   return { index, project: projects[index] };
 }
 
-// Finish: the item comes out, after the Complex Crafting flat check if rushed
+// Finish: the item comes out, after the Complex Crafting flat check if rushed.
+// A flat check against DC 1 or lower always succeeds; DC 21 or higher always fails.
 function completeCraftProject(record, projectId) {
   const { index, project } = findCraftProject(record, projectId);
   if (!project) return;
   if (project.data?.rushedFinish) {
+    const name = project.data?.item?.name || project.name;
+    const dc = getRushedFinishFlatDC(record, project.data?.item);
+    if (dc <= 1 || dc >= 21) {
+      const text = finishRushedCraftProject(record, projectId, dc <= 1 ? 1 : 0);
+      api.sendMessage(
+        `**Rushed Finish: ${name}**\n\nFlat check DC ${dc}: automatic ${dc <= 1 ? "success" : "failure"}.${text}`,
+      );
+      return;
+    }
     api.promptRoll(
-      `Rushed Finish: ${project.data?.item?.name || project.name}`,
+      `Rushed Finish: ${name}`,
       "1d20",
       [],
-      {
-        dc: getRushedFinishFlatDC(record, project.data?.item),
-        craftingAction: "rushedFinish",
-        projectId,
-        rollName: `Rushed Finish: ${project.data?.item?.name || project.name}`,
-      },
+      { dc, craftingAction: "rushedFinish", projectId, rollName: `Rushed Finish: ${name}` },
       "skill",
     );
     return;
@@ -15111,7 +15163,9 @@ function retryCraftProject(recordId, projectId) {
       (formula) => getFormulaBaseName(formula) === base,
     );
     api.setValues({ "data.craftingProjects": projects }, () => {
-      if (formulaIndex !== -1) {
+      if (project.data?.output === "formula") {
+        startReverseEngineering(recordId, project.data.item);
+      } else if (formulaIndex !== -1) {
         startCraftProject(recordId, formulaIndex, project.data?.method || "craft");
       } else {
         api.showNotification(
@@ -15125,11 +15179,25 @@ function retryCraftProject(recordId, projectId) {
 }
 
 // Add an item to the formula book: already known, bought or copied, or
-// reverse-engineered from an item you have
+// reverse-engineered from an item you have. A grade of a formula you already
+// know is added for free, since one formula covers every grade.
 function promptAddFormula(recordId, item) {
   api.getRecord("characters", recordId, (record) => {
-    if (hasFormulaFor(record, item)) {
+    const book = record.data?.craftingItems || [];
+    const exactName = `${item.name || ""}`.toLowerCase();
+    if (book.some((formula) => `${formula.name || ""}`.toLowerCase() === exactName)) {
       api.showNotification(`${item.name} is already in your formula book.`, "yellow", "Formula Book");
+      return;
+    }
+    if (hasFormulaFor(record, item)) {
+      const known = book.find((f) => getFormulaBaseName(f) === getFormulaBaseName(item));
+      api.setValues({ "data.craftingItems": [...book, buildFormulaEntry(item)] }, () => {
+        api.showNotification(
+          `${item.name} added: your ${known?.name || "formula"} covers every grade.`,
+          "green",
+          "Formula Book",
+        );
+      });
       return;
     }
     const price = getFormulaPriceCp(item);
@@ -15151,9 +15219,7 @@ function promptAddFormula(recordId, item) {
       (selected) => {
         const choice = getPromptSelections(selected)[0];
         if (choice === "known") {
-          api.setValues({
-            "data.craftingItems": [...(record.data?.craftingItems || []), buildFormulaEntry(item)],
-          });
+          api.setValues({ "data.craftingItems": [...book, buildFormulaEntry(item)] });
         } else if (choice === "buy") {
           const payment = getCoinPayment(record, price);
           if (!payment) {
@@ -15164,10 +15230,7 @@ function promptAddFormula(recordId, item) {
             );
             return;
           }
-          api.setValues({
-            ...payment,
-            "data.craftingItems": [...(record.data?.craftingItems || []), buildFormulaEntry(item)],
-          });
+          api.setValues({ ...payment, "data.craftingItems": [...book, buildFormulaEntry(item)] });
         } else if (choice === "reverse") {
           startReverseEngineering(recordId, item);
         }
@@ -15179,49 +15242,25 @@ function promptAddFormula(recordId, item) {
   });
 }
 
-// Craft a formula from an item you have: the formula's Price and the item's DC
+// Craft a formula from an item you have: the formula's Price and the item's
+// DC, meeting the item's Craft requirements (except having the formula)
 function startReverseEngineering(recordId, item) {
   api.getRecord("characters", recordId, (record) => {
-    const priceCp = getFormulaPriceCp(item);
-    const materials = getCraftMaterialsCp(priceCp);
-    const payment = getCoinPayment(record, materials);
-    if (!payment) {
-      api.showNotification(
-        `Materials cost ${formatCp(materials)}, but you have ${formatCp(getCoinsCp(record))}.`,
-        "red",
-        "Not Enough Money",
-      );
-      return;
-    }
-    const project = {
-      _id: generateUuid(),
-      name: `Formula: ${item.name}`,
-      portrait: item.portrait,
-      recordType: "items",
-      identified: true,
-      data: {
-        item: getCraftableItem(item),
-        method: "craft",
-        count: 1,
-        totalCp: priceCp,
-        paidCp: materials,
-        coinPaidCp: materials,
-        remainingCp: priceCp - materials,
-        dc: getCraftingDC(item),
-        setupLabel: `${getCraftSetupDays(getCraftingRulesVersion(), false)} days`,
-        status: "rolling",
-        ratePerDayCp: 0,
-        daysWorked: 0,
-        rushedFinish: false,
-        output: "formula",
-      },
-      fields: { workBtn: { hidden: true }, finishBtn: { hidden: true }, retryBtn: { hidden: true } },
-    };
-    project.data.statusLabel = getCraftProjectStatus(project);
-    api.setValues(
-      { ...payment, "data.craftingProjects": [...(record.data?.craftingProjects || []), project] },
-      (updatedRecord) => rollCraftProject(updatedRecord || record, project),
+    const problems = getCraftCheck(record, item).problems.filter(
+      (problem) => problem !== "You need the item's formula.",
     );
+    const begin = () => api.getRecord("characters", recordId, (latest) => payReverseEngineering(latest, item));
+    if (problems.length > 0) {
+      api.showConfirm(
+        "Crafting Requirements",
+        `${problems.join(" ")} Reverse-engineer anyway? Some feats, such as Craft Anything, lift these requirements.`,
+        "Go Ahead",
+        "Cancel",
+        begin,
+      );
+    } else {
+      begin();
+    }
   });
 }
 
@@ -15243,29 +15282,64 @@ function promptDeconstruct(recordId) {
       "Deconstruct",
       "Choose an item to take apart. This takes 1 day and a Crafting check.",
       "Choose an item...",
-      candidates.map((item) => ({ label: `${item.name} (${formatCp(getItemPriceCp(item))})`, value: item._id })),
+      candidates.map((item) => ({
+        label: `${item.name} (${formatCp(getItemPriceCp(item))})${item.data?.deconstructDamaged ? ", damaged" : ""}`,
+        value: item._id,
+      })),
       null,
       (selected) => {
         const itemId = getPromptSelections(selected)[0];
         const item = candidates.find((i) => i._id === itemId);
         if (!item) return;
+        const choosePurpose = (damaged) => {
+          api.showPrompt(
+            "Deconstruct",
+            "Will the parts go toward a similar item (more value) or any one item?",
+            "Choose...",
+            [
+              { label: "A similar item (75%, or 80% on a critical success)", value: "similar" },
+              { label: "Any one item (50%, or 55% on a critical success)", value: "any" },
+            ],
+            null,
+            (purpose) => {
+              const similar = getPromptSelections(purpose)[0] === "similar";
+              rollSkill(record, "crafting", getCraftingDC(item), false, 0, 1, "int", false, false, undefined, {
+                craftingAction: "deconstruct",
+                itemId: item._id,
+                similar,
+                damaged,
+                rollName: `Deconstruct ${item.name}`,
+              });
+            },
+            "OK",
+            "Cancel",
+            1,
+          );
+        };
+        if (!item.data?.deconstructDamaged) {
+          choosePurpose(false);
+          return;
+        }
+        // Damaged by an earlier critical failure: repair it, or lose 5%
         api.showPrompt(
-          "Deconstruct",
-          "Will the parts go toward a similar item (more value) or any one item?",
+          "Damaged Item",
+          `${item.name} was damaged by an earlier attempt. Repair it first, or take it apart as it is and lose 5% of its value.`,
           "Choose...",
           [
-            { label: "A similar item (75%, or 80% on a critical success)", value: "similar" },
-            { label: "Any one item (50%, or 55% on a critical success)", value: "any" },
+            { label: "It has been repaired", value: "repaired" },
+            { label: "Take it apart damaged (lose 5%)", value: "damaged" },
           ],
           null,
-          (purpose) => {
-            const similar = getPromptSelections(purpose)[0] === "similar";
-            rollSkill(record, "crafting", getCraftingDC(item), false, 0, 1, "int", false, false, undefined, {
-              craftingAction: "deconstruct",
-              itemId: item._id,
-              similar,
-              rollName: `Deconstruct ${item.name}`,
-            });
+          (choice) => {
+            const repaired = getPromptSelections(choice)[0] === "repaired";
+            if (!repaired) {
+              choosePurpose(true);
+              return;
+            }
+            const index = (record.data?.inventory || []).findIndex((i) => i._id === item._id);
+            api.setValues({ [`data.inventory.${index}.data.deconstructDamaged`]: false }, () =>
+              choosePurpose(false),
+            );
           },
           "OK",
           "Cancel",
@@ -15313,4 +15387,77 @@ function prepareAdvancedAlchemy(recordId, formulaIndex) {
       add();
     }
   });
+}
+
+// Coin changes that add an amount on top of changes already being made
+function getCoinRefundOnto(record, values, amountCp) {
+  const merged = { ...record, data: { ...record.data } };
+  for (const coin of ["pp", "gp", "sp", "cp"]) {
+    if (values[`data.${coin}`] !== undefined) merged.data[coin] = values[`data.${coin}`];
+  }
+  return getCoinRefund(merged, amountCp);
+}
+
+// The end of a rushed finish (Complex Crafting): a failed flat check leaves a
+// quirk, a critical failure ruins the item. Returns the chat text.
+function finishRushedCraftProject(record, projectId, degree) {
+  const projects = record.data?.craftingProjects || [];
+  const index = projects.findIndex((p) => p._id === projectId);
+  if (index === -1) return "";
+  const project = projects[index];
+  if (degree === -1) {
+    const remaining = [...projects];
+    remaining.splice(index, 1);
+    api.setValuesOnRecord(record, { "data.craftingProjects": remaining });
+    return `\n\n**${project.name}** is ruined, or becomes a cursed item attached to you (GM's choice).`;
+  }
+  const quirk = degree === 0 ? "Rushed: this item has a minor quirk (GM's choice)." : "";
+  api.setValuesOnRecord(record, getCraftProjectCompletion(record, index, quirk));
+  return degree === 0
+    ? `\n\n**${project.name}** is finished, but it has a minor quirk (GM's choice).`
+    : `\n\n**${project.name}** is finished and works perfectly.`;
+}
+
+function payReverseEngineering(record, item) {
+  const priceCp = getFormulaPriceCp(item);
+  const materials = getCraftMaterialsCp(priceCp);
+  const payment = getCoinPayment(record, materials);
+  if (!payment) {
+    api.showNotification(
+      `Materials cost ${formatCp(materials)}, but you have ${formatCp(getCoinsCp(record))}.`,
+      "red",
+      "Not Enough Money",
+    );
+    return;
+  }
+  const project = {
+    _id: generateUuid(),
+    name: `Formula: ${item.name}`,
+    portrait: item.portrait,
+    recordType: "items",
+    identified: true,
+    data: {
+      item: getCraftableItem(item),
+      method: "craft",
+      skill: "crafting",
+      count: 1,
+      totalCp: priceCp,
+      paidCp: materials,
+      coinPaidCp: materials,
+      remainingCp: priceCp - materials,
+      dc: getCraftingDC(item),
+      setupLabel: `${getCraftSetupDays(getCraftingRulesVersion(), false)} days`,
+      status: "rolling",
+      ratePerDayCp: 0,
+      daysWorked: 0,
+      rushedFinish: false,
+      output: "formula",
+    },
+    fields: { workBtn: { hidden: true }, finishBtn: { hidden: true }, retryBtn: { hidden: true } },
+  };
+  project.data.statusLabel = getCraftProjectStatus(project);
+  api.setValues(
+    { ...payment, "data.craftingProjects": [...(record.data?.craftingProjects || []), project] },
+    (updatedRecord) => rollCraftProject(updatedRecord || record, project),
+  );
 }
