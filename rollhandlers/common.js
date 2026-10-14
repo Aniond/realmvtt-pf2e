@@ -2418,6 +2418,13 @@ function getEffectsAndModifiersForToken(
     }
   });
 
+  // Module conditions carry string values ("@effect.count" becomes "-2"), so
+  // compare as numbers: as strings "-1" sorts below "-2" and "2" above "10"
+  const numericModValue = (mod) => {
+    const match = String(mod.value ?? "").match(/^\s*-?\d+/);
+    return match ? parseInt(match[0], 10) : 0;
+  };
+
   // For each type, keep only the highest value. Prefer active modifiers so a
   // predicate-failed (inactive) modifier can't shadow an active one of the same type
   // - e.g. Swashbuckler's Speed grants +10 with panache OR +5 without (mutually
@@ -2429,7 +2436,7 @@ function getEffectsAndModifiersForToken(
       const activeBonuses = bonusGroups[type].filter((m) => m.active);
       const pool = activeBonuses.length > 0 ? activeBonuses : bonusGroups[type];
       const highestBonus = pool.reduce((highest, current) =>
-        (current.value || 0) > (highest.value || 0) ? current : highest,
+        numericModValue(current) > numericModValue(highest) ? current : highest,
       );
       filteredResults.push(highestBonus);
     }
@@ -2439,7 +2446,7 @@ function getEffectsAndModifiersForToken(
       const pool =
         activePenalties.length > 0 ? activePenalties : penaltyGroups[type];
       const highestPenalty = pool.reduce((highest, current) =>
-        (current.value || 0) < (highest.value || 0) ? current : highest,
+        numericModValue(current) < numericModValue(highest) ? current : highest,
       );
       filteredResults.push(highestPenalty);
     }
@@ -3283,7 +3290,10 @@ function getResilientArmorBonus(record, bestArmor) {
     (item) => item._id === bestArmor?.armor?.armorId,
   );
 
-  if (armor) {
+  // Rune armor requires investment (the rule getEffectsAndModifiersForToken
+  // uses for rune modifiers); NPCs don't invest
+  const needsInvestment = record.recordType === "characters";
+  if (armor && (!needsInvestment || armor.data?.invested === "true")) {
     const resiliencyRune = parseInt(armor?.data?.runes?.resilient || 0, 10);
     if (resiliencyRune > 0) {
       let runeName = "Resilient";
@@ -3310,6 +3320,15 @@ function getResilientArmorBonus(record, bestArmor) {
   return null;
 }
 
+// An armor's Strength requirement as a modifier. Remaster data stores the
+// modifier (Full Plate 4); legacy data may store the score (18), so convert
+// anything 10 or higher. Null when the armor has none.
+function getArmorStrengthRequirement(value) {
+  const required = parseInt(value, 10);
+  if (isNaN(required)) return null;
+  return required >= 10 ? Math.floor((required - 10) / 2) : required;
+}
+
 // Returns the penalty if necessary for the armor worn
 function getCheckPenaltyForArmor(record, bestArmor) {
   if (!record) {
@@ -3321,8 +3340,10 @@ function getCheckPenaltyForArmor(record, bestArmor) {
       ? bestArmor.armor.checkPenalty
       : 0;
   const strength = record.data?.str != undefined ? record.data?.str : 0;
-  const armorStrengthRequired = bestArmor?.armor?.strength;
-  if (armorStrengthRequired !== undefined && strength < armorStrengthRequired) {
+  const armorStrengthRequired = getArmorStrengthRequirement(
+    bestArmor?.armor?.strength,
+  );
+  if (armorStrengthRequired !== null && strength < armorStrengthRequired) {
     return [
       {
         value: -1 * Math.abs(checkPenalty),
@@ -3349,11 +3370,25 @@ function getCheckPenaltyForArmor(record, bestArmor) {
   return null;
 }
 
+// The attribute a saving throw is based on
+function getSaveAttribute(saveType) {
+  if (saveType === "reflex") return "dex";
+  if (saveType === "will") return "wis";
+  return "con";
+}
+
 function getSaveDCForToken(token, saveType) {
   const saveMods = getEffectsAndModifiersForToken(
     token,
     [`saveBonus`, `savePenalty`],
     saveType,
+  );
+  // Bonuses and penalties to all checks and DCs of the save's attribute
+  // (frightened, sickened, clumsy for Reflex), as rollSave adds to the roll
+  const attributeMods = getEffectsAndModifiersForToken(
+    token,
+    [`allBonus`, `allPenalty`],
+    getSaveAttribute(saveType),
   );
 
   const saveValue = parseInt(token.data?.[`${saveType}Mod`] || "0", 10);
@@ -3361,7 +3396,11 @@ function getSaveDCForToken(token, saveType) {
   // Proficiency without Level: creatures subtract their level
   let saveDC = 10 + saveValue + getNpcProficiencyWithoutLevelAdjustment(token);
 
-  saveMods.forEach((mod) => {
+  const seen = new Set();
+  [...saveMods, ...attributeMods].forEach((mod) => {
+    const modString = modToString(mod);
+    if (seen.has(modString) || mod.active === false) return;
+    seen.add(modString);
     const value = parseInt(mod.value || 0, 10);
     saveDC += value;
   });
@@ -3379,10 +3418,12 @@ function getArmorClassForToken(token, targetIsOffGuardDueToFlanking = false) {
     armorItem = inventory.find((item) => item._id === bestArmor.armor.armorId);
   }
 
+  // AC is a Dex-based DC: clumsy and penalties to all checks and DCs
+  // (frightened, sickened) lower it, but enfeebled, stupefied and drained don't
   const acModifiers = getEffectsAndModifiersForToken(
     token,
     ["armorClassBonus", "armorClassPenalty", "allBonus", "allPenalty"],
-    undefined,
+    "dex",
     undefined,
     undefined,
     armorItem ? { item: armorItem } : {},
@@ -3614,12 +3655,16 @@ function updateAttribute({
 
   valuesToSet[`data.ac`] = ac;
 
-  // Check for speed penalty. Note: getBestEquippedArmor returns speedPenalty: null
-  // (not undefined) when unarmored, so guard against a non-positive base penalty -
+  // Check for speed penalty. Module data stores it as a negative number (Full
+  // Plate -10), so use its size. getBestEquippedArmor returns speedPenalty: null
+  // (not undefined) when unarmored, so guard against a zero base penalty -
   // otherwise the strength-requirement reduction below turns 0 into -5.
   let totalSpeedPenalty = 0;
-  const armorSpeedPenalty = parseInt(bestArmor?.armor?.speedPenalty, 10) || 0;
-  const armorStrength = parseInt(bestArmor?.armor?.strength, 10) || 0;
+  const armorSpeedPenalty = Math.abs(
+    parseInt(bestArmor?.armor?.speedPenalty, 10) || 0,
+  );
+  const armorStrength =
+    getArmorStrengthRequirement(bestArmor?.armor?.strength) ?? 0;
   if (armorSpeedPenalty > 0) {
     totalSpeedPenalty = armorSpeedPenalty;
     // If we meet the strength requirement, reduce speed penalty by 5 (min 0)
@@ -3628,7 +3673,9 @@ function updateAttribute({
     }
   }
   // If the shield has a speed penalty always add it
-  const shieldSpeedPenalty = parseInt(bestArmor?.shield?.speedPenalty, 10) || 0;
+  const shieldSpeedPenalty = Math.abs(
+    parseInt(bestArmor?.shield?.speedPenalty, 10) || 0,
+  );
   if (shieldSpeedPenalty > 0) {
     totalSpeedPenalty += shieldSpeedPenalty;
   }
@@ -3664,11 +3711,16 @@ function updateAttribute({
   const speedMatch = baseSpeedStr.match(/(\d+)/);
   if (speedMatch) {
     const baseSpeed = parseInt(speedMatch[1], 10);
-    // Net: feat/effect/item speed modifiers minus the armor speed penalty.
-    const effectiveSpeed = Math.max(
-      0,
-      baseSpeed + totalSpeedModifier - totalSpeedPenalty,
-    );
+    // Net: feat/effect/item speed modifiers minus the armor speed penalty,
+    // which can't reduce Speed below 5 feet.
+    const speedBeforePenalty = Math.max(0, baseSpeed + totalSpeedModifier);
+    const effectiveSpeed =
+      totalSpeedPenalty > 0
+        ? Math.max(
+            Math.min(5, speedBeforePenalty),
+            speedBeforePenalty - totalSpeedPenalty,
+          )
+        : speedBeforePenalty;
     // Preserve the unit from the base speed (e.g., "feet").
     const unitMatch = baseSpeedStr.match(/\d+\s+(\w+)/);
     const unit = unitMatch ? unitMatch[1] : "feet";
@@ -6613,12 +6665,7 @@ function rollSave(record, type, dc = null, isSpell = false, isMacro = false) {
   }
 
   // Determine the attribute for this save
-  let attribute = "con"; // Fortitude uses CON
-  if (saveType === "reflex") {
-    attribute = "dex";
-  } else if (saveType === "will") {
-    attribute = "wis";
-  }
+  const attribute = getSaveAttribute(saveType);
 
   // Get all bonuses/penalties that apply to the save's attribute
   const allEffectMods = getEffectsAndModifiersForToken(
@@ -11685,7 +11732,17 @@ function applyDamage(
       // Track final damage per type to ensure each type doesn't go below 0
       const finalDamageByType = {};
 
-      Object.keys(damageByTypeAfterHalf).forEach((type) => {
+      // Each weakness and resistance applies once per instance of damage, not
+      // once per damage type in it. A category resistance (all damage, a
+      // material) goes to the one type the target chooses, so handle the
+      // largest type first.
+      const appliedWeaknesses = new Set();
+      const appliedResistances = new Set();
+      const damageTypesLargestFirst = Object.keys(damageByTypeAfterHalf).sort(
+        (a, b) => damageByTypeAfterHalf[b] - damageByTypeAfterHalf[a],
+      );
+
+      damageTypesLargestFirst.forEach((type) => {
         const lowerType = type.toLowerCase();
         let damageOfThisType = damageByTypeAfterHalf[type];
 
@@ -11760,14 +11817,12 @@ function applyDamage(
 
         // Apply Weaknesses (add extra damage)
         if (!damageIgnoresWeaknesses.includes(lowerType)) {
-          // Track which weaknesses we've applied to avoid duplicates
-          const appliedWeaknesses = new Set();
-
           // Check for specific type weakness
           const weakness = IWR.weaknesses[lowerType];
-          // Check for "all damage" weakness
-          const allDamageWeakness =
-            IWR.weaknesses["all damage"] || IWR.weaknesses["all-damage"];
+          // Check for "all damage" weakness, unless another type already took it
+          const allDamageWeakness = appliedWeaknesses.has("all damage")
+            ? undefined
+            : IWR.weaknesses["all damage"] || IWR.weaknesses["all-damage"];
 
           const applicableWeakness = weakness || allDamageWeakness;
 
@@ -11852,14 +11907,12 @@ function applyDamage(
 
         // Apply Resistances (reduce damage)
         if (!damageIgnoresResistances.includes(lowerType)) {
-          // Track which resistances we've applied to avoid duplicates
-          const appliedResistances = new Set();
-
           // Check for specific type resistance
           const resistance = IWR.resistances[lowerType];
-          // Check for "all damage" resistance
-          const allDamageResistance =
-            IWR.resistances["all damage"] || IWR.resistances["all-damage"];
+          // Check for "all damage" resistance, unless another type already took it
+          const allDamageResistance = appliedResistances.has("all damage")
+            ? undefined
+            : IWR.resistances["all damage"] || IWR.resistances["all-damage"];
 
           const applicableResistance = resistance || allDamageResistance;
 

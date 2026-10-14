@@ -474,14 +474,20 @@
       valuesToSet[`${dataPrefix}.reflexMod`] = baseReflex + modifier;
       valuesToSet[`${dataPrefix}.willMod`] = baseWill + modifier;
 
-      // HP: increase/decrease based on starting level
+      // HP: increase/decrease based on starting level. Elite and weak use
+      // different level bands (Monster Core pg. 6)
       let hpChange;
-      if (baseLevel <= 1) hpChange = 10;
-      else if (baseLevel <= 4) hpChange = 15;
-      else if (baseLevel <= 19) hpChange = 20;
-      else hpChange = 30;
-
-      if (!isElite) hpChange = -hpChange; // Weak decreases HP
+      if (isElite) {
+        if (baseLevel <= 1) hpChange = 10;
+        else if (baseLevel <= 4) hpChange = 15;
+        else if (baseLevel <= 19) hpChange = 20;
+        else hpChange = 30;
+      } else {
+        if (baseLevel <= 2) hpChange = -10;
+        else if (baseLevel <= 5) hpChange = -15;
+        else if (baseLevel <= 20) hpChange = -20;
+        else hpChange = -30;
+      }
 
       const newMaxHP = Math.max(baseHP + hpChange, 1);
       const newCurHP = Math.max(baseCurHP + hpChange, 1);
@@ -658,6 +664,19 @@
       // Update damage fields after adjusting formulas
       setNPCDamageFields(api.getValue(npcDataPath || ""));
     });
+  }
+
+  // The hazard Stealth DC field was bound to data.sealth.value; move a DC typed
+  // there to data.stealth.value, where imported hazards keep it
+  function onHazardStealthLoad() {
+    const typed = record.data?.sealth?.value;
+    if (typed === undefined || typed === null || typed === "") return;
+    const valuesToSet = { "data.sealth": null };
+    const current = record.data?.stealth?.value;
+    if (current === undefined || current === null || current === "") {
+      valuesToSet["data.stealth.value"] = typed;
+    }
+    api.setValues(valuesToSet);
   }
 
   function onAddRemoveElite(value) {
@@ -2589,9 +2608,10 @@
           <numberfield
             width="100%"
             size="xs"
-            field="sealth.value"
+            field="stealth.value"
             label="Stealth DC"
             placeholder="0"
+            onload="onHazardStealthLoad()"
           ></numberfield>
         </div>
         <richtextfield
