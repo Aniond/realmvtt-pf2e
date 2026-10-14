@@ -176,10 +176,12 @@ section("Every caster class and edition against the tables");
           const actual = spec.counts[`numSpells${rank}`];
           if (actual !== expected) mismatches.push(`L${level} rank ${rank}: ${actual}`);
         }
-        // The Advanced Player's Guide oracle also knows its mystery's cantrip
+        // The Advanced Player's Guide oracle also knows its mystery's cantrip,
+        // and a psychic their psi cantrips
         const cantrips =
           (Array.isArray(rules.cantrips) ? rules.cantrips[level - 1] : rules.cantrips) +
-          (slug === "oracle" && edition === "legacy" ? 1 : 0);
+          (slug === "oracle" && edition === "legacy" ? 1 : 0) +
+          (rules.type === "spontaneous" ? rules.psiCantrips?.[level - 1] || 0 : 0);
         const actualCantrips =
           rules.type === "prepared" ? spec.counts.numCantrips : spec.repertoire.repCantrips;
         if (actualCantrips !== cantrips) mismatches.push(`L${level} cantrips: ${actualCantrips}`);
@@ -370,6 +372,11 @@ section("Traditions from bloodline, patron and eidolon");
   assert("Draconic: adamantine dragon", dragon("adamantine-dragon"), "Primal");
   assert("Draconic: legacy dragon defaults to arcane", dragon("red-dragon"), "Arcane");
   assert("Draconic before the dragon is chosen", dragon(null), null);
+  assert("Draconic: brine dragon (Draconic Codex)", dragon("brine-dragon"), "Primal");
+  assert("Draconic: sovereign dragon", dragon("sovereign-dragon"), "Occult");
+  assert("Draconic: sky dragon", dragon("sky-dragon"), "Divine");
+  assert("Draconic: umbral dragon", dragon("umbral-dragon"), "Occult");
+  assert("Draconic: magma dragon", dragon("magma-dragon"), "Primal");
 
   // An unknown tradition leaves the entry's empty until the choice is made
   let record = synced(sorcererWith(draconic, { bloodline: "bloodline-draconic" }));
@@ -412,6 +419,36 @@ section("Psychic attribute");
   let record = synced(psychic({ keyAbility: "int" }));
   record = synced(apply(record, { "data.keyAbility": "cha" }));
   assert("entry follows a new key attribute", record.data.spells[0].data.attribute, "cha");
+
+  // The subconscious mind names the attribute, even over the class's default key
+  const withMind = (name, slug, ability, data) =>
+    character(
+      classRecord("Psychic", false, {
+        keyAbility: ["int", "cha"],
+        features: [
+          { _id: slug, name, recordType: "features", data: { type: "classfeature", level: 1, keyOptions: [ability] } },
+        ],
+      }),
+      1,
+      { flags: { subconsciousMind: slug }, ...data },
+    );
+  assert(
+    "Emotional Acceptance over a default Intelligence key",
+    attribute(withMind("Emotional Acceptance", "emotional-acceptance", "cha", { keyAbility: "int", int: 4, cha: 3 })),
+    "cha",
+  );
+  assert(
+    "Gathered Lore before a key is chosen",
+    attribute(withMind("Gathered Lore", "gathered-lore", "int", { keyAbility: "none", int: 3, cha: 4 })),
+    "int",
+  );
+  assert(
+    "a mind that isn't on the character falls back to the key attribute",
+    attribute(psychic({ keyAbility: "cha", flags: { subconsciousMind: "gathered-lore" } })),
+    "cha",
+  );
+  const psychic6 = ctx.getWantedSpellcastingEntries(character(classRecord("Psychic", false), 6), 6)[0];
+  assert("psychic: 3 cantrips plus 4 psi cantrips at 6th", psychic6.repertoire.repCantrips, 7);
 }
 
 section("New entries");
@@ -451,6 +488,17 @@ section("New entries");
   const psychic = ctx.getWantedSpellcastingEntries(character(classRecord("Psychic", false), 19, { keyAbility: "int" }), 19)[0];
   assert("psychic: conscious mind spell per rank", psychic.repertoire.rep1, 3);
   assert("psychic: 2 10th-rank spells", psychic.repertoire.rep10, 2);
+
+  // Secrets of Magic summoner: two 1st-rank spells, 5 in all from 4th level
+  const summonerTotals = LEVELS.map((level) => {
+    const rep = ctx.getWantedSpellcastingEntries(character(classRecord("Summoner", false), level), level)[0].repertoire;
+    return LEVELS.slice(0, 10).reduce((total, rank) => total + rep[`rep${rank}`], 0);
+  });
+  assert("legacy summoner: repertoire of 2, 3, 4, then 5", summonerTotals, [2, 3, 4, ...Array(17).fill(5)]);
+  const summoner5 = ctx.getWantedSpellcastingEntries(character(classRecord("Summoner", false), 5), 5)[0];
+  assert("legacy summoner at 5th: the extra spell at the lower rank", [summoner5.repertoire.rep2, summoner5.repertoire.rep3], [3, 2]);
+  const remasterSummoner = ctx.getWantedSpellcastingEntries(character(classRecord("Summoner"), 1), 1)[0];
+  assert("remaster summoner: one 1st-rank spell", remasterSummoner.repertoire.rep1, 1);
 
   const animist = synced(character(classRecord("Animist"), 1));
   assert("animist has two entries", animist.data.spells.map((e) => e.name), ["Animist Spells", "Apparition Spells"]);
@@ -517,6 +565,14 @@ section("Player changes survive leveling up");
   entry = record.data.spells[0];
   assert("back on: 3rd rank from the table", entry.data.numSpells3, 3);
   assert("back on: the extra slot is still there", entry.data.numSpells1, 5);
+
+  // Counts typed while it was off aren't added on top of the table again
+  let r = synced(character(classRecord("Wizard"), 3));
+  r = synced(apply(r, { "data.spells.0.data.autoSlots": false }));
+  r = atLevel(r, 5);
+  r = apply(r, { "data.spells.0.data.numSpells2": 3, "data.spells.0.data.numSpells3": 2 });
+  r = synced(apply(r, { "data.spells.0.data.autoSlots": true }));
+  assert("back on: counts typed while off are not added twice", [r.data.spells[0].data.numSpells2, r.data.spells[0].data.numSpells3], [3, 2]);
 }
 
 section("Existing characters: adoption");
@@ -548,7 +604,7 @@ section("Existing characters: adoption");
   assert(
     "notice",
     ctx.describeSpellcastingSync(before.data.spells, record.data.spells),
-    "Arcane Prepared Spells now follow your level (higher counts kept). Turn this off in the entry's settings.",
+    'Arcane Prepared Spells now follow your level (higher counts kept). To stop this, uncheck "Set slots from level" in its settings.',
   );
   record = atLevel(record, 2);
   assert("the extra slots carry on", record.data.spells[0].data.numSpells1, 6);
@@ -596,6 +652,54 @@ section("Existing characters: adoption");
       ["Divine Font", "class:cleric:font"],
     ],
   );
+
+  // A font entry listed first goes to the font, not the class
+  const fontFirst = synced(
+    character(classRecord("Cleric"), 1, {
+      spells: [
+        manual({ tradition: "Divine", numSpells1: 4 }, "Divine Font"),
+        manual({ tradition: "Divine", numSpells1: 2 }, "Divine Prepared Spells"),
+      ],
+    }),
+  );
+  assert(
+    "cleric: a font entry listed first is adopted by the font",
+    fontFirst.data.spells.map((e) => [e.name, e.data.auto.source]),
+    [
+      ["Divine Font", "class:cleric:font"],
+      ["Divine Prepared Spells", "class:cleric"],
+    ],
+  );
+
+  // An archetype's entry is never taken; one named for the class wins
+  const archetypeFirst = synced(
+    character(classRecord("Wizard"), 6, {
+      spells: [
+        manual({ numCantrips: 2, numSpells1: 1 }, "Magus Dedication Spells"),
+        manual({ numCantrips: 5, numSpells1: 4 }, "My Spellbook"),
+        manual({ numCantrips: 5, numSpells1: 3 }, "Wizard Spells"),
+      ],
+    }),
+  );
+  assert(
+    "the archetype entry is left alone, the class-named one adopted",
+    archetypeFirst.data.spells.map((e) => [e.name, e.data.auto?.source || null]),
+    [
+      ["Magus Dedication Spells", null],
+      ["My Spellbook", null],
+      ["Wizard Spells", "class:wizard"],
+    ],
+  );
+
+  // Unknown tradition and two entries of the type: nothing added until chosen
+  const unknown = sorcererWith(null, { bloodline: "bloodline-draconic" });
+  unknown.data.spells = [
+    manual({ type: "spontaneous", tradition: "Arcane" }, "Arcane Spontaneous Spells"),
+    manual({ type: "spontaneous", tradition: "Occult" }, "Occult Spontaneous Spells"),
+  ];
+  let unknownSynced = synced(unknown);
+  assert("two candidates, tradition unknown: no third entry", unknownSynced.data.spells.length, 2);
+  assert("and neither is taken", unknownSynced.data.spells.map((e) => e.data.auto?.source || null), [null, null]);
 
   assert("an outdated character needs the sync", ctx.needsSpellcastingSync(before), true);
   assert("a synced one doesn't", ctx.needsSpellcastingSync(record), false);

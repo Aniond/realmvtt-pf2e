@@ -5034,16 +5034,21 @@ const CLASS_SPELLCASTING = {
       studious: [0, 0, 0, 0, 0, 0, 2, 2, 2, 2, 3, 3, 4, 4, 4, 4, 4, 4, 4, 4],
     },
   },
+  // Secrets of Magic: bounded casting. The repertoire starts with two 1st-rank
+  // spells and reaches its maximum of 5 at 4th level, which it keeps as low
+  // ranks are lost; the spell over the slot count sits at the lowest rank.
   summoner: {
     type: "spontaneous",
     tradition: { flag: "eidolon" },
     attribute: "cha",
     cantrips: 5,
     table: "TWO_NO10",
-    legacy: { table: "BOUNDED" },
+    legacy: { table: "BOUNDED", repertoireExtraLowest: 1 },
   },
   // Intelligence or Charisma by subconscious mind (the key attribute). The
-  // conscious mind adds a spell of each rank to the repertoire.
+  // conscious mind adds a spell of each rank to the repertoire, and psi
+  // cantrips on top of the 3: 2 standard and the surface one, the deeper one
+  // at 6th level and the deepest at 10th.
   psychic: {
     type: "spontaneous",
     tradition: "Occult",
@@ -5051,6 +5056,7 @@ const CLASS_SPELLCASTING = {
     cantrips: 3,
     table: "TWO",
     repertoireExtraPerRank: 1,
+    psiCantrips: [3, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5],
   },
   // Apparition spellcasting is a second, spontaneous entry. Each attuned
   // apparition adds a cantrip and a spell of each rank to its repertoire.
@@ -5081,21 +5087,58 @@ const CLASS_SPELLCASTING = {
 };
 
 // Draconic bloodline (Player Core 2 pg. 150): the tradition of the chosen
-// dragon. Dragons without a remaster tradition default to arcane, as in the
-// Core Rulebook; the player can change it on the entry.
+// dragon, from its Monster Core, Monster Core 2 or Draconic Codex entry (the
+// same table as Foundry's dragonBloodline choice). The chromatic and metallic
+// dragons were never remastered and stay arcane, as in the Core Rulebook; a
+// dragon not listed here also defaults to arcane, and the player can change it
+// on the entry.
 const DRAGON_TRADITIONS = {
   "arcane-dragon": "Arcane",
   "divine-dragon": "Divine",
   "occult-dragon": "Occult",
   "primal-dragon": "Primal",
-  "fortune-dragon": "Arcane",
-  "mirage-dragon": "Arcane",
+  // Monster Core and Monster Core 2
+  "adamantine-dragon": "Primal",
+  "cinder-dragon": "Primal",
+  "conspirator-dragon": "Occult",
+  "coral-dragon": "Primal",
+  "despair-dragon": "Occult",
   "diabolic-dragon": "Divine",
   "empyreal-dragon": "Divine",
-  "conspirator-dragon": "Occult",
-  "omen-dragon": "Occult",
-  "adamantine-dragon": "Primal",
+  "fortune-dragon": "Arcane",
   "horned-dragon": "Primal",
+  "mirage-dragon": "Arcane",
+  "omen-dragon": "Occult",
+  "phase-dragon": "Arcane",
+  "requiem-dragon": "Divine",
+  "resurrection-dragon": "Divine",
+  "rune-dragon": "Arcane",
+  "whisper-dragon": "Occult",
+  // Draconic Codex, including the remastered imperial and primal dragons
+  "barrage-dragon": "Arcane",
+  "bog-dragon": "Primal",
+  "brine-dragon": "Primal",
+  "cloud-dragon": "Primal",
+  "crystal-dragon": "Primal",
+  "delight-dragon": "Divine",
+  "executor-dragon": "Divine",
+  "forest-dragon": "Primal",
+  "magma-dragon": "Primal",
+  "mocking-dragon": "Occult",
+  "oath-dragon": "Divine",
+  "rime-dragon": "Primal",
+  "sage-dragon": "Occult",
+  "sea-dragon": "Arcane",
+  "sky-dragon": "Divine",
+  "sovereign-dragon": "Occult",
+  "stormcrown-dragon": "Primal",
+  "time-dragon": "Arcane",
+  "umbral-dragon": "Occult",
+  "underworld-dragon": "Arcane",
+  "vizier-dragon": "Occult",
+  "vorpal-dragon": "Arcane",
+  "wailing-dragon": "Arcane",
+  "wish-dragon": "Arcane",
 };
 
 // Traditions of bloodlines, patrons and eidolons by name, for when the chosen
@@ -5251,10 +5294,19 @@ function getSubclassTradition(record, flag, nestedFlag) {
   return SPELL_TRADITIONS.includes(tradition) ? tradition : null;
 }
 
-// A psychic casts with Intelligence or Charisma, the key attribute their
-// subconscious mind gives; the higher of the two until one is chosen
+// A psychic casts with Intelligence or Charisma, the attribute their
+// subconscious mind names (also their key attribute). Without a mind, the key
+// attribute; the higher of the two until either is chosen.
 function getKeySpellcastingAttribute(record, valuesToSet = {}) {
   const key = record.data?.keyAbility;
+  const mindFlag = record.data?.flags?.subconsciousMind;
+  const mind = mindFlag ? findChosenFeature(record, mindFlag) : null;
+  const mindOptions = (mind?.data?.keyOptions || []).filter(
+    (ability) => ability === "int" || ability === "cha",
+  );
+  if (mindOptions.length > 0) {
+    return mindOptions.includes(key) ? key : mindOptions[0];
+  }
   if (key === "int" || key === "cha") {
     return key;
   }
@@ -5304,7 +5356,10 @@ function getClassSpellcastingSpec(record, config, level, spec) {
   // feature adds 2 spells for its 1 slot.
   let repertoire = null;
   if (config.type === "spontaneous") {
-    repertoire = { repCantrips: numCantrips };
+    const lowestRank = [1, 2, 3, 4, 5, 6, 7, 8, 9].find((rank) => slots[rank] > 0);
+    repertoire = {
+      repCantrips: numCantrips + (config.psiCantrips?.[level - 1] || 0),
+    };
     for (let rank = 1; rank <= 10; rank++) {
       let known = 0;
       if (slots[rank] > 0 && config.attunedRepertoire) {
@@ -5315,7 +5370,8 @@ function getClassSpellcastingSpec(record, config, level, spec) {
         known =
           slots[rank] +
           (config.repertoireExtra?.[rank] || 0) +
-          (config.repertoireExtraPerRank || 0);
+          (config.repertoireExtraPerRank || 0) +
+          (rank === lowestRank ? config.repertoireExtraLowest || 0 : 0);
       }
       repertoire[`rep${rank}`] = known;
     }
@@ -5536,27 +5592,58 @@ function resizeSpellRows(rows, wantRows, kind, rank) {
   return resized;
 }
 
-// An entry without data.auto to take over for a spec, so existing characters
-// don't get a second copy: the same type and tradition (the only entry of the
-// type while the tradition is unknown). The Divine Font only takes an entry
-// named for it.
-function findAdoptableSpellcastingEntry(entries, spec) {
-  const candidates = entries.filter(
-    (entry) =>
-      !entry.data?.auto?.source &&
-      (entry.data?.type || "prepared") === spec.type &&
-      (!spec.fontRank || /font/i.test(entry.name || "")),
-  );
-  if (spec.tradition) {
-    return (
-      candidates.find(
-        (entry) =>
-          `${entry.data?.tradition || ""}`.toLowerCase() ===
-          spec.tradition.toLowerCase(),
-      ) || null
-    );
+// The entries without data.auto a spec could take over, so existing
+// characters don't get a second copy: those of the same type. The Divine Font
+// only takes an entry named for it; a class with a font leaves those to it,
+// and no class takes an archetype's entry.
+function getAdoptableSpellcastingEntries(entries, spec, hasFont = false) {
+  return entries.filter((entry) => {
+    const name = `${entry.name || ""}`;
+    if (entry.data?.auto?.source || (entry.data?.type || "prepared") !== spec.type) {
+      return false;
+    }
+    if (/dedication|archetype/i.test(name)) {
+      return false;
+    }
+    const isFontName = /font/i.test(name);
+    return spec.fontRank ? isFontName : !(hasFont && isFontName);
+  });
+}
+
+// The entry to take over for a spec: one with the same tradition (the only
+// entry of the type while the tradition is unknown). When several match, one
+// named like the class ("Cleric Spells") or by the Add Spellcasting Entry
+// popover ("Divine Prepared Spells") wins, then the one closest to the class
+// table; list order only breaks ties.
+function findAdoptableSpellcastingEntry(entries, spec, hasFont = false) {
+  const candidates = getAdoptableSpellcastingEntries(entries, spec, hasFont);
+  if (!spec.tradition) {
+    return candidates.length === 1 ? candidates[0] : null;
   }
-  return candidates.length === 1 ? candidates[0] : null;
+  const className = `${spec.name || ""}`.replace(/ Spells$/, "").toLowerCase();
+  const tableDistance = (entry) =>
+    Object.keys(spec.counts || {}).reduce(
+      (total, key) =>
+        total +
+        Math.abs((parseInt(entry.data?.[key] || 0, 10) || 0) - (spec.counts[key] || 0)),
+      0,
+    );
+  let best = null;
+  let bestRank = null;
+  for (const entry of candidates) {
+    if (`${entry.data?.tradition || ""}`.toLowerCase() !== spec.tradition.toLowerCase()) {
+      continue;
+    }
+    const named =
+      isDefaultSpellcastingEntryName(entry.name) ||
+      `${entry.name || ""}`.toLowerCase().includes(className);
+    const rank = [named ? 0 : 1, tableDistance(entry)];
+    if (!best || rank[0] < bestRank[0] || (rank[0] === bestRank[0] && rank[1] < bestRank[1])) {
+      best = entry;
+      bestRank = rank;
+    }
+  }
+  return best;
 }
 
 // Brings one managed entry in line with its spec. The player's changes are
@@ -5596,6 +5683,13 @@ function applySpellcastingSpec(spellcastingEntry, spec) {
   Object.assign(entry.fields, getSpellcastingEntryTypeFields(type));
 
   if (entry.data.autoSlots === false || (type !== "prepared" && type !== "spontaneous")) {
+    // The counts stop following the table here, so the last table counts no
+    // longer tell the player's changes apart. Once the sync runs again the
+    // entry is taken over like an adopted one: higher counts are kept and
+    // the rest come up to the table.
+    if (auto.base) {
+      auto.base = null;
+    }
     return;
   }
 
@@ -5751,12 +5845,22 @@ function syncSpellcastingEntries(record, valuesToSet) {
   }
 
   const specs = getWantedSpellcastingEntries(record, level, valuesToSet);
+  const hasFont = specs.some((spec) => spec.fontRank);
   for (const spec of specs) {
     if (dismissed.includes(spec.source)) continue;
     let entry =
       entries.find((e) => e.data?.auto?.source === spec.source) ||
-      findAdoptableSpellcastingEntry(entries, spec);
+      findAdoptableSpellcastingEntry(entries, spec, hasFont);
     if (!entry) {
+      // While the tradition is unknown, which of several entries of the type
+      // is the class's can't be told, so none is added. A sync after the
+      // bloodline, patron or eidolon is chosen takes the matching one over.
+      if (
+        !spec.tradition &&
+        getAdoptableSpellcastingEntries(entries, spec, hasFont).length > 1
+      ) {
+        continue;
+      }
       entry = buildSpellcastingEntry({
         name: spec.name,
         type: spec.type,
@@ -5822,7 +5926,7 @@ function describeSpellcastingSync(oldEntries, newEntries) {
   if (adopted.length > 0) {
     const verb = adopted.length === 1 && !/s$/i.test(adopted[0]) ? "follows" : "follow";
     messages.push(
-      `${join(adopted)} now ${verb} your level (higher counts kept). Turn this off in the entry's settings.`,
+      `${join(adopted)} now ${verb} your level (higher counts kept). To stop this, uncheck "Set slots from level" in ${adopted.length === 1 ? "its" : "each one's"} settings.`,
     );
   }
   if (added.length > 0) {

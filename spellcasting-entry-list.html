@@ -21,7 +21,7 @@
     api.showConfirm(
       "Delete Spellcasting Entry",
       source
-        ? `"${spellcastingEntry.name}" was created from your class. Delete it and stop creating it automatically? Restore Automatic Entries (under Add Spellcasting Entry) brings it back.`
+        ? `Delete "${spellcastingEntry.name}"? Your class won't add it again unless you use Restore Automatic Entries (under Add Spellcasting Entry).`
         : `Are you sure you want to delete the "${spellcastingEntry.name}" entry?`,
       "Yes",
       "No",
