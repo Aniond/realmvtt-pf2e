@@ -2396,8 +2396,15 @@ function getEffectsAndModifiersForToken(
 // consumers read them (parseInt takes "+2" as 2).
 function getModifierSortValue(mod) {
   if (typeof mod?.value === "number") return mod.value;
-  const value = parseInt(String(mod?.value ?? "").trim(), 10);
-  return isNaN(value) ? 0 : value;
+  const text = String(mod?.value ?? "").trim();
+  const value = parseInt(text, 10);
+  if (!isNaN(value)) return value;
+  // Plain arithmetic left after replacements, such as "-(2 + 5)"
+  if (/^[\d\s+\-*/().]+$/.test(text) && /\d/.test(text)) {
+    const result = evaluateMath(text);
+    if (typeof result === "number" && isFinite(result)) return Math.trunc(result);
+  }
+  return 0;
 }
 
 // A dice value such as "1d6" or "1d6 fire"
@@ -2446,8 +2453,14 @@ function keepStrongestPerType(mods) {
     }
 
     // A negative value is a penalty, whatever the rule is called; a negative
-    // bonus is relabeled as a penalty
-    const isPenalty = getModifierSortValue(result) < 0;
+    // bonus is relabeled as a penalty. A value that doesn't read as a number
+    // sorts as 0, so its rule name or sign decides.
+    const sortValue = getModifierSortValue(result);
+    const isPenalty =
+      sortValue < 0 ||
+      (sortValue === 0 &&
+        (/penalty/i.test(result.modifierType || "") ||
+          String(result.value ?? "").trim().startsWith("-")));
     if (isPenalty && /bonus/i.test(result.modifierType || "")) {
       result.modifierType = result.modifierType.replace(/bonus/gi, "penalty");
       result.isPenalty = true;
@@ -3509,14 +3522,39 @@ function getArmorClassForToken(token, targetIsOffGuardDueToFlanking = false) {
       .map(getModifierSortValue),
   );
 
+  // A character's features and items are already in data.ac, stacked there
+  // without effects (see updateAttribute). An effect that wins a type here
+  // replaces that type's feature modifier, so take that modifier back out.
+  const isCharacter = token.recordType === "characters";
+  const sheetModifiers = isCharacter
+    ? getEffectsAndModifiersForToken(
+        { ...token, effects: [], effectIds: [] },
+        ["armorClassBonus", "armorClassPenalty"],
+        "all",
+        undefined,
+        undefined,
+        armorItem ? { item: armorItem } : {},
+      ).filter((mod) => mod.active)
+    : [];
+
   // Apply all modifiers from getEffectsAndModifiersForToken
   // (already returns highest of each type)
   acModifiers.forEach((mod) => {
     // Only if it's from an effect, because features/feats adjust it directly if it's a character
     // and if the modifier was active
-    if ((mod.isEffect || token.recordType !== "characters") && mod.active) {
+    if ((mod.isEffect || !isCharacter) && mod.active) {
       const value = parseInt(mod.value || 0, 10);
       ac += value;
+      if (isCharacter && ["circumstance", "item", "status"].includes(mod.type)) {
+        const replaced = sheetModifiers.find(
+          (sheetMod) =>
+            sheetMod.type === mod.type &&
+            getModifierSortValue(sheetMod) < 0 === value < 0,
+        );
+        if (replaced) {
+          ac -= getModifierSortValue(replaced);
+        }
+      }
     }
   });
 
@@ -3651,8 +3689,12 @@ function updateAttribute({
   // (Proficiency without Level drops the level, and untrained is -2)
   ac += getProficiencyBonusForRank(armorProf || 0, record?.data?.level || 0);
 
+  // data.ac holds features and items only, looked up without effects so an
+  // effect of the same type can't knock a feature's bonus out of it;
+  // getArmorClassForToken stacks a character's effects on top
+  const sheetAcSource = { ...record, effects: [], effectIds: [] };
   const acBonus = getEffectsAndModifiersForToken(
-    record,
+    sheetAcSource,
     ["armorClassBonus", "armorClassPenalty"],
     "all",
     undefined,
@@ -3676,7 +3718,7 @@ function updateAttribute({
   // Also get the armor type bonuses
   if (bestArmor.armorType) {
     const armorTypeBonus = getEffectsAndModifiersForToken(
-      record,
+      sheetAcSource,
       ["armorClassBonus", "armorClassPenalty"],
       bestArmor.armorType,
       undefined,
@@ -3699,7 +3741,7 @@ function updateAttribute({
   // Also get the shield bonuses
   if (bestArmor.shieldName) {
     const shieldBonus = getEffectsAndModifiersForToken(
-      record,
+      sheetAcSource,
       ["armorClassBonus", "armorClassPenalty"],
       "Shield",
       undefined,

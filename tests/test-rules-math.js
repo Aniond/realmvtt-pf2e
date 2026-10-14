@@ -138,6 +138,25 @@ section("armor check penalty");
   assert("check penalty -1 and shoddy -2 both apply", listMods(modifiers.filter((m) => parseInt(m.value, 10) < 0)), "Check Penalty -1, Shoddy -2");
 }
 
+section("sheet AC and effects of the same type");
+{
+  const shieldOfFaith = { _id: "sf", name: "Ward", data: { modifiers: [{ data: { type: "armorClassBonus", modifierType: "item", valueType: "number", value: "1" } }] } };
+  const mysticArmor = condition("ma", "Mystic Armor", [{ type: "armorClassBonus-item", field: "", valueType: "number", value: "2" }]);
+  const pc = (withFeature, conditions = []) => {
+    const token = { ...npcToken({ level: 1, dex: 0, inventory: [], feats: withFeature ? [shieldOfFaith] : [] }, conditions), recordType: "characters" };
+    const written = {};
+    ctx.updateAttribute({ record: token, attribute: "dex", value: 0, moreValuesToSet: written });
+    token.data.ac = written["data.ac"];
+    return token;
+  };
+  const without = pc(false).data.ac;
+  const withFeature = pc(true).data.ac;
+  assert("the feature's +1 is on the sheet", withFeature - without, 1);
+  assert("the sheet keeps it while a bigger effect is active", pc(true, [[mysticArmor, 1]]).data.ac, withFeature);
+  assert("token AC: the +2 effect replaces the +1 feature", ctx.getArmorClassForToken(pc(true, [[mysticArmor, 1]])), without + 2);
+  assert("token AC without the effect: the feature's +1", ctx.getArmorClassForToken(pc(true)), without + 1);
+}
+
 section("conditions on AC");
 {
   const ac = (conditions) => ctx.getArmorClassForToken(npcToken({ ac: 20 }, conditions));
@@ -212,6 +231,17 @@ section("only the strongest bonus or penalty of a type counts");
   const featured = (type, value) => ({ recordType: "characters", data: { level: 1, feats: [feat(type, value)] } });
   assert("a feature's skill penalty of 2 is -2", ctx.getEffectsAndModifiersForToken(featured("skillPenalty", "2"), ["skillPenalty"], "athletics").map((m) => m.value).join(), "-2");
   assert("ignore range penalty stays positive", ctx.getEffectsAndModifiersForToken(featured("ignoreRangePenalty", "1"), ["ignoreRangePenalty"]).map((m) => m.value).join(), "1");
+}
+
+section("a formula penalty stays a penalty");
+{
+  const npc = npcToken({ level: 5 }, [
+    [condition("cr", "Cringe", [{ type: "damagePenalty-circumstance", field: "all", valueType: "string", value: "(2 + @record.data.level)" }]), 1],
+    [condition("db", "Damage Bonus", [{ type: "damageBonus-circumstance", field: "all", valueType: "number", value: "2" }]), 1],
+  ]);
+  const mods = ctx.getEffectsAndModifiersForToken(npc, ["damageBonus", "damagePenalty"], "all");
+  assert("both the circumstance bonus and the formula penalty apply", mods.map((m) => m.name).sort(), ["Cringe", "Damage Bonus"]);
+  assert("the formula is read as -7", ctx.getModifierSortValue({ value: "-(2 + 5)" }), -7);
 }
 
 section("conditions on save DCs");
@@ -377,6 +407,15 @@ section("Weak and Elite HP");
   assert("and max HP 85", written["data.hitpoints"], 85);
   assert("elite removed: 90 - 20 = 70", adjust("remove", damagedElite)["data.curhp"], 70);
   assert("weak can take current HP to 0", adjust("weak", { level: 5, curhp: 10 })["data.curhp"], 0);
+
+  // An NPC made Weak by an older version (-10 at level 0) gets back what it lost
+  const oldWeak = { level: -1, baseLevel: 0, hitpoints: 90, baseHP: 100, curhp: 90, baseCurHP: 100, adjustment: "weak" };
+  assert("old Weak at level 0 removed: back to 100", adjust("remove", oldWeak)["data.curhp"], 100);
+
+  // Max HP stops at 1, and current HP moves only as far as max HP did
+  assert("weak on an 8 HP level 1 creature: 1 of 1, not 0", adjust("weak", { level: 1, hitpoints: 8, curhp: 8 })["data.curhp"], 1);
+  const weakLow = { level: -1, baseLevel: 1, hitpoints: 1, baseHP: 8, curhp: 1, adjustment: "weak" };
+  assert("and removing it gives back 8 of 8, not 11", adjust("remove", weakLow)["data.curhp"], 8);
 
   // Hazard Stealth DC typed into the old field moves to data.stealth.value
   written = {};

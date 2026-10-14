@@ -320,17 +320,17 @@
         valuesToSet[`${dataPrefix}.hitpoints`] = npc.data.baseHP;
         valuesToSet[`${dataPrefix}.baseHP`] = null;
       }
-      // Current HP loses the adjustment's HP but keeps damage already taken
-      const baseLevel =
-        npc.data?.baseLevel !== undefined && npc.data?.baseLevel !== null
-          ? npc.data.baseLevel
-          : parseInt(npc.data?.level ?? "1", 10) || 0;
-      const hpAdjustment = getHpAdjustment(baseLevel, npc.data?.adjustment);
-      if (hpAdjustment !== 0) {
-        valuesToSet[`${dataPrefix}.curhp`] = Math.max(
-          0,
-          getCurrentHP(npc) - hpAdjustment
-        );
+      // Current HP moves by as much as max HP does, keeping damage already
+      // taken (max HP stops at 1, so this can be less than the band's HP)
+      if (npc.data?.baseHP !== undefined && npc.data?.baseHP !== null) {
+        const baseHP = parseInt(npc.data.baseHP, 10) || 0;
+        const adjustedHP = parseInt(npc.data?.hitpoints || "0", 10) || 0;
+        if (adjustedHP !== baseHP) {
+          valuesToSet[`${dataPrefix}.curhp`] = Math.min(
+            baseHP,
+            Math.max(0, getCurrentHP(npc) - adjustedHP + baseHP)
+          );
+        }
       }
       // Older versions kept the unadjusted current HP here
       if (npc.data?.baseCurHP !== undefined && npc.data?.baseCurHP !== null) {
@@ -509,14 +509,14 @@
       valuesToSet[`${dataPrefix}.willMod`] = baseWill + modifier;
 
       // HP: increase/decrease based on starting level. Damage already taken
-      // is kept: take off the old adjustment's HP and add the new one's.
+      // is kept: current HP moves by as much as max HP does (max HP stops at
+      // 1, so this can be less than the band's HP).
       const hpChange = getHpAdjustment(baseLevel, adjustmentType);
       const newMaxHP = Math.max(baseHP + hpChange, 1);
-      const newCurHP = Math.max(
-        0,
-        getCurrentHP(npc) -
-          getHpAdjustment(baseLevel, npc.data?.adjustment) +
-          hpChange
+      const oldMaxHP = parseInt(npc.data?.hitpoints || "0", 10) || 0;
+      const newCurHP = Math.min(
+        newMaxHP,
+        Math.max(0, getCurrentHP(npc) - oldMaxHP + newMaxHP)
       );
       valuesToSet[`${dataPrefix}.hitpoints`] = newMaxHP;
       valuesToSet[`${dataPrefix}.curhp`] = newCurHP;
