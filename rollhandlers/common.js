@@ -2052,7 +2052,7 @@ function getEffectsAndModifiersForToken(
       const bonusPenaltyType = modifier.data?.modifierType || "";
       const isPenalty =
         ruleType.toLowerCase().includes("penalty") &&
-        !ruleType.toLowerCase() === "ignoreRangePenalty";
+        ruleType.toLowerCase() !== "ignorerangepenalty";
       let value = modifier.data?.value || "";
 
       // Check for predicate value in modifier data first
@@ -2392,19 +2392,17 @@ function getEffectsAndModifiersForToken(
 
 // A modifier's size for comparing bonuses and penalties of one type. Module
 // conditions carry string values ("@effect.count" becomes "-2"), and as strings
-// "-1" sorts below "-2" and "2" above "10", so compare numbers: flat values the
-// way consumers read them (parseInt takes "+2" as 2), dice by their average.
+// "-1" sorts below "-2" and "2" above "10", so compare numbers, read the way
+// consumers read them (parseInt takes "+2" as 2).
 function getModifierSortValue(mod) {
   if (typeof mod?.value === "number") return mod.value;
-  const text = String(mod?.value ?? "").trim();
-  const dice = text.match(/^([+-]?)\s*(\d*)d(\d+)/i);
-  if (dice) {
-    const count = parseInt(dice[2] || "1", 10);
-    const size = parseInt(dice[3], 10);
-    return ((dice[1] === "-" ? -1 : 1) * count * (size + 1)) / 2;
-  }
-  const value = parseInt(text, 10);
+  const value = parseInt(String(mod?.value ?? "").trim(), 10);
   return isNaN(value) ? 0 : value;
+}
+
+// A dice value such as "1d6" or "1d6 fire"
+function isDiceModifierValue(value) {
+  return /^\s*[+-]?\s*\d*d\d+/i.test(String(value ?? ""));
 }
 
 // Only the highest bonus and the worst penalty of each type (circumstance,
@@ -2412,11 +2410,15 @@ function getModifierSortValue(mod) {
 // getEffectsAndModifiersForToken lookup already does this for its own results,
 // so run it again on a list merged from several lookups: frightened (a status
 // penalty to all checks) and fatigued (a status penalty to saves) are still
-// both status penalties.
+// both status penalties. As in Foundry's PF2e, the sign picks the bonus or
+// penalty pool, dice always stack, and persistent damage stacks apart from
+// the rest of the damage.
 function keepStrongestPerType(mods) {
   const filteredResults = [];
-  const bonusGroups = { circumstance: [], item: [], status: [] };
-  const penaltyGroups = { circumstance: [], item: [], status: [] };
+  const stackingTypes = ["circumstance", "item", "status"];
+  // Pools keyed by type, plus ":persistent" for persistent damage
+  const bonusGroups = {};
+  const penaltyGroups = {};
 
   // Group results by type and bonus/penalty
   (mods || []).forEach((result) => {
@@ -2424,42 +2426,39 @@ function keepStrongestPerType(mods) {
       result.type === undefined ||
       result.type === null ||
       result.type === "" ||
-      result.type === "none"
+      result.type === "none" ||
+      result.type === "untyped"
     ) {
       // Keep non-typed modifiers as-is
       filteredResults.push(result);
       return;
     }
 
-    // Check if this is a negative bonus and convert it to a penalty
-    const modifierType = String(result.modifierType || "").toLowerCase();
-    let isPenalty = modifierType.includes("penalty");
-    const isBonus = modifierType.includes("bonus");
-
-    // Parse the value to check if it's negative
-    let numericValue = 0;
-    if (typeof result.value === "number") {
-      numericValue = result.value;
-    } else if (typeof result.value === "string") {
-      // Try to extract numeric value from string (e.g., "-2" or "1d4")
-      const match = String(result.value).match(/^-?\d+/);
-      if (match) {
-        numericValue = parseInt(match[0], 10);
-      }
+    // Other types are left out, as before
+    if (!stackingTypes.includes(result.type)) {
+      return;
     }
 
-    // If this is a bonus but has a negative value, convert to penalty
-    if (isBonus && !isPenalty && numericValue < 0) {
+    // Dice always stack
+    if (isDiceModifierValue(result.value)) {
+      filteredResults.push(result);
+      return;
+    }
+
+    // A negative value is a penalty, whatever the rule is called; a negative
+    // bonus is relabeled as a penalty
+    const isPenalty = getModifierSortValue(result) < 0;
+    if (isPenalty && /bonus/i.test(result.modifierType || "")) {
       result.modifierType = result.modifierType.replace(/bonus/gi, "penalty");
       result.isPenalty = true;
-      isPenalty = true;
     }
 
     const groups = isPenalty ? penaltyGroups : bonusGroups;
-
-    if (groups[result.type]) {
-      groups[result.type].push(result);
-    }
+    const key = /persistent/i.test(String(result.value ?? ""))
+      ? `${result.type}:persistent`
+      : result.type;
+    groups[key] = groups[key] || [];
+    groups[key].push(result);
   });
 
   // For each type, keep only the highest value. Prefer active modifiers so a
@@ -2468,28 +2467,27 @@ function keepStrongestPerType(mods) {
   // exclusive predicates); the inactive higher value must not win the dedup and then
   // get dropped by the consumer's active check. Fall back to inactive only when
   // nothing in the group is active, so roll prompts still show a toggleable option.
-  Object.keys(bonusGroups).forEach((type) => {
-    if (bonusGroups[type].length > 0) {
-      const activeBonuses = bonusGroups[type].filter((m) => m.active);
-      const pool = activeBonuses.length > 0 ? activeBonuses : bonusGroups[type];
-      const highestBonus = pool.reduce((highest, current) =>
-        getModifierSortValue(current) > getModifierSortValue(highest) ? current : highest,
-      );
-      filteredResults.push(highestBonus);
-    }
-
-    if (penaltyGroups[type].length > 0) {
-      const activePenalties = penaltyGroups[type].filter((m) => m.active);
-      const pool =
-        activePenalties.length > 0 ? activePenalties : penaltyGroups[type];
-      const highestPenalty = pool.reduce((highest, current) =>
-        getModifierSortValue(current) < getModifierSortValue(highest) ? current : highest,
-      );
-      filteredResults.push(highestPenalty);
-    }
+  Object.keys(bonusGroups).forEach((key) => {
+    const activeBonuses = bonusGroups[key].filter((m) => m.active);
+    const pool = activeBonuses.length > 0 ? activeBonuses : bonusGroups[key];
+    const highestBonus = pool.reduce((highest, current) =>
+      getModifierSortValue(current) > getModifierSortValue(highest) ? current : highest,
+    );
+    filteredResults.push(highestBonus);
+  });
+  Object.keys(penaltyGroups).forEach((key) => {
+    const activePenalties = penaltyGroups[key].filter((m) => m.active);
+    const pool =
+      activePenalties.length > 0 ? activePenalties : penaltyGroups[key];
+    const highestPenalty = pool.reduce((highest, current) =>
+      getModifierSortValue(current) < getModifierSortValue(highest) ? current : highest,
+    );
+    filteredResults.push(highestPenalty);
   });
 
-  return filteredResults;
+  // Keep the order they came in, so roll prompts list them as before
+  const kept = new Set(filteredResults);
+  return (mods || []).filter((mod) => kept.has(mod));
 }
 
 // Merges modifier lists from several lookups: drops repeats, then keeps only
@@ -3217,13 +3215,19 @@ function onItemEquippedFor(itemDataPath, newValue) {
   }
 }
 
-// Gets the AC for an armor item
-function getACForArmor(item) {
+// Gets the AC for an armor item worn by record
+function getACForArmor(item, record) {
   let ac = item?.data?.acBonus || 0;
-  // Check for potency runes (Automatic Bonus Progression replaces them)
+  // Check for potency runes (Automatic Bonus Progression replaces them).
+  // A character's rune armor must be invested; NPCs don't invest.
   if (!getVariantRules().automaticBonusProgression) {
     const potencyRune = parseInt(item?.data?.runes?.potency || 0, 10);
-    ac += potencyRune;
+    if (
+      record?.recordType !== "characters" ||
+      item?.data?.invested === "true"
+    ) {
+      ac += potencyRune;
+    }
   }
   return ac;
 }
@@ -3258,6 +3262,7 @@ function getBestEquippedArmor(record) {
       armorCategory: "unarmored",
       group: "",
       propertyRunes: [],
+      traits: [],
     },
     shield: {
       shieldId: null,
@@ -3276,7 +3281,7 @@ function getBestEquippedArmor(record) {
   const items = record?.data?.inventory || [];
   items.forEach((item, index) => {
     if (item.data?.carried === "equipped" && item.data?.type === "armor") {
-      const ac = getACForArmor(item);
+      const ac = getACForArmor(item, record);
       const dexCap = item?.data?.dexCap ? item?.data?.dexCap : 0;
       if (ac > bestEquippedArmor.armor.acBonus) {
         bestEquippedArmor.armor.acBonus = ac;
@@ -3292,6 +3297,7 @@ function getBestEquippedArmor(record) {
           item?.data?.itemCategory || "unarmored"
         ).toLowerCase();
         bestEquippedArmor.armor.group = (item?.data?.group || "").toLowerCase();
+        bestEquippedArmor.armor.traits = item?.data?.traits || [];
       }
     } else if (
       item.data?.carried === "equipped" &&
@@ -3335,10 +3341,14 @@ function getResilientArmorBonus(record, bestArmor) {
     (item) => item._id === bestArmor?.armor?.armorId,
   );
 
+  // NPC stat-block saves already include the rune
+  if (record.recordType !== "characters") {
+    return null;
+  }
+
   // Rune armor requires investment (the rule getEffectsAndModifiersForToken
-  // uses for rune modifiers); NPCs don't invest
-  const needsInvestment = record.recordType === "characters";
-  if (armor && (!needsInvestment || armor.data?.invested === "true")) {
+  // uses for rune modifiers)
+  if (armor && armor.data?.invested === "true") {
     const resiliencyRune = parseInt(armor?.data?.runes?.resilient || 0, 10);
     if (resiliencyRune > 0) {
       let runeName = "Resilient";
@@ -3374,16 +3384,20 @@ function getArmorStrengthRequirement(value) {
   return required >= 10 ? Math.floor((required - 10) / 2) : required;
 }
 
-// Returns the penalty if necessary for the armor worn
+// Returns the penalty if necessary for the armor worn. Only characters take
+// it: NPC stat-block skills already include it. It is untyped, so it stacks
+// with item penalties such as shoddy.
 function getCheckPenaltyForArmor(record, bestArmor) {
-  if (!record) {
+  if (!record || record.recordType !== "characters") {
     return null;
   }
 
-  const checkPenalty =
-    bestArmor?.armor?.checkPenalty !== undefined
-      ? bestArmor.armor.checkPenalty
-      : 0;
+  const checkPenalty = Math.abs(
+    parseInt(bestArmor?.armor?.checkPenalty, 10) || 0,
+  );
+  if (checkPenalty === 0) {
+    return null;
+  }
   const strength = record.data?.str != undefined ? record.data?.str : 0;
   const armorStrengthRequired = getArmorStrengthRequirement(
     bestArmor?.armor?.strength,
@@ -3391,24 +3405,26 @@ function getCheckPenaltyForArmor(record, bestArmor) {
   if (armorStrengthRequired !== null && strength < armorStrengthRequired) {
     return [
       {
-        value: -1 * Math.abs(checkPenalty),
+        value: -checkPenalty,
         isPenalty: true,
         valueType: "number",
         name: "Check Penalty",
-        type: "item",
+        type: "",
         modifierType: "skillPenalty",
         field: "str",
         active: true,
+        slug: "armor-check-penalty",
       },
       {
-        value: -1 * Math.abs(checkPenalty),
+        value: -checkPenalty,
         isPenalty: true,
         valueType: "number",
         name: "Check Penalty",
-        type: "item",
+        type: "",
         modifierType: "skillPenalty",
         field: "dex",
         active: true,
+        slug: "armor-check-penalty",
       },
     ];
   }
@@ -3429,17 +3445,23 @@ function getSaveDCForToken(token, saveType) {
     saveType,
   );
   // Bonuses and penalties to all checks and DCs of the save's attribute
-  // (frightened, sickened, clumsy for Reflex), as rollSave adds to the roll
+  // (frightened, sickened, clumsy for Reflex), as rollSave adds to the roll.
+  // A rule can also name saving throws (Imperial Blood Magic's saves choice).
   const attributeMods = getEffectsAndModifiersForToken(
     token,
     [`allBonus`, `allPenalty`],
-    getSaveAttribute(saveType),
+    [getSaveAttribute(saveType), "saving-throw"],
   );
 
   const saveValue = parseInt(token.data?.[`${saveType}Mod`] || "0", 10);
 
   // Proficiency without Level: creatures subtract their level
   let saveDC = 10 + saveValue + getNpcProficiencyWithoutLevelAdjustment(token);
+
+  // An NPC's bonus to all saves, as rollSave adds to the roll
+  if (token.recordType === "npcs" || token.recordType === "tokens") {
+    saveDC += parseInt(token.data?.saveBonus || "0", 10) || 0;
+  }
 
   mergeModifierLists(saveMods, attributeMods).forEach((mod) => {
     if (mod.active === false) return;
@@ -3479,9 +3501,12 @@ function getArmorClassForToken(token, targetIsOffGuardDueToFlanking = false) {
   // Proficiency without Level: creatures subtract their level
   ac += getNpcProficiencyWithoutLevelAdjustment(token);
 
-  // Check if there's already a circumstance penalty
-  const existingCircumstancePenalty = acModifiers.find(
-    (mod) => mod.modifierType === "circumstance" && mod.isPenalty,
+  // The worst circumstance penalty the target already has (off-guard is -2)
+  const worstCircumstancePenalty = Math.min(
+    0,
+    ...acModifiers
+      .filter((mod) => mod.type === "circumstance" && mod.active)
+      .map(getModifierSortValue),
   );
 
   // Apply all modifiers from getEffectsAndModifiersForToken
@@ -3495,16 +3520,10 @@ function getArmorClassForToken(token, targetIsOffGuardDueToFlanking = false) {
     }
   });
 
-  // Handle flanking: -2 circumstance penalty
+  // Handle flanking: off-guard, a -2 circumstance penalty, which doesn't stack
+  // with a circumstance penalty the target already has
   if (targetIsOffGuardDueToFlanking) {
-    if (!existingCircumstancePenalty) {
-      // No circumstance penalty exists, add -2 for flanking
-      ac -= 2;
-    } else if (existingCircumstancePenalty.value === -1) {
-      // Existing penalty is -1, but flanking is -2 (higher)
-      // Add an additional -1 to reach -2 total
-      ac -= 1;
-    }
+    ac -= Math.max(0, 2 + worstCircumstancePenalty);
   }
 
   return ac;
@@ -3642,10 +3661,12 @@ function updateAttribute({
   );
   const armorModsSet = new Set();
   acBonus.forEach((modifier) => {
-    // Only if it was from a feature or item, not effect
+    // Only if it was from a feature or item, not effect (getArmorClassForToken
+    // adds a character's effects to this AC)
     // And also if it had a predicate, only if it evaluates to true (modifier.active is true)
     if (
-      !armorModsSet.has(JSON.stringify(modifier) && !modifier.isEffect) &&
+      !armorModsSet.has(JSON.stringify(modifier)) &&
+      !modifier.isEffect &&
       modifier.active
     ) {
       ac += modifier.value;
@@ -3666,7 +3687,8 @@ function updateAttribute({
       // Only if it was from a feature or item, not effect
       // And also if it had a predicate, only if it evaluates to true (modifier.active is true)
       if (
-        !armorModsSet.has(JSON.stringify(modifier) && !modifier.isEffect) &&
+        !armorModsSet.has(JSON.stringify(modifier)) &&
+        !modifier.isEffect &&
         modifier.active
       ) {
         ac += modifier.value;
@@ -3687,7 +3709,8 @@ function updateAttribute({
     shieldBonus.forEach((modifier) => {
       // Only if it was from a feature or item, not effect
       if (
-        !armorModsSet.has(JSON.stringify(modifier) && !modifier.isEffect) &&
+        !armorModsSet.has(JSON.stringify(modifier)) &&
+        !modifier.isEffect &&
         modifier.active
       ) {
         ac += modifier.value;
@@ -3709,11 +3732,12 @@ function updateAttribute({
   const armorStrength =
     getArmorStrengthRequirement(bestArmor?.armor?.strength) ?? 0;
   if (armorSpeedPenalty > 0) {
-    totalSpeedPenalty = armorSpeedPenalty;
-    // If we meet the strength requirement, reduce speed penalty by 5 (min 0)
-    if (strength >= armorStrength) {
-      totalSpeedPenalty -= 5;
-    }
+    // If we meet the strength requirement, reduce the armor's own speed
+    // penalty by 5 (min 0) before the shield's is added
+    totalSpeedPenalty =
+      strength >= armorStrength
+        ? Math.max(0, armorSpeedPenalty - 5)
+        : armorSpeedPenalty;
   }
   // If the shield has a speed penalty always add it
   const shieldSpeedPenalty = Math.abs(
@@ -3722,8 +3746,13 @@ function updateAttribute({
   if (shieldSpeedPenalty > 0) {
     totalSpeedPenalty += shieldSpeedPenalty;
   }
-  // A speed penalty can never be negative (the strength reduction floors at 0).
-  totalSpeedPenalty = Math.max(0, totalSpeedPenalty);
+  // Hindering armor: a separate 5-foot penalty that Strength doesn't reduce
+  const armorTraits = bestArmor?.armor?.traits || [];
+  if (
+    armorTraits.some((trait) => String(trait).toLowerCase() === "hindering")
+  ) {
+    totalSpeedPenalty += 5;
+  }
 
   // Collect speed bonus/penalty modifiers from feats, features, items, and effects.
   // getEffectsAndModifiersForToken already negates penalty values and returns the
@@ -3767,16 +3796,12 @@ function updateAttribute({
   const speedMatch = baseSpeedStr.match(/(\d+)/);
   if (speedMatch) {
     const baseSpeed = parseInt(speedMatch[1], 10);
-    // Net: feat/effect/item speed modifiers minus the armor speed penalty,
-    // which can't reduce Speed below 5 feet.
-    const speedBeforePenalty = Math.max(0, baseSpeed + totalSpeedModifier);
+    // Net: feat/effect/item speed modifiers minus the armor and shield speed
+    // penalties. Penalties can't reduce a Speed below 5 feet, so the whole
+    // Speed stops at 5 feet unless the base Speed is 0.
+    const totalSpeed = baseSpeed + totalSpeedModifier - totalSpeedPenalty;
     const effectiveSpeed =
-      totalSpeedPenalty > 0
-        ? Math.max(
-            Math.min(5, speedBeforePenalty),
-            speedBeforePenalty - totalSpeedPenalty,
-          )
-        : speedBeforePenalty;
+      baseSpeed > 0 ? Math.max(5, totalSpeed) : Math.max(0, totalSpeed);
     // Preserve the unit from the base speed (e.g., "feet").
     const unitMatch = baseSpeedStr.match(/\d+\s+(\w+)/);
     const unit = unitMatch ? unitMatch[1] : "feet";
@@ -6726,11 +6751,12 @@ function rollSave(record, type, dc = null, isSpell = false, isMacro = false) {
   // Determine the attribute for this save
   const attribute = getSaveAttribute(saveType);
 
-  // Get all bonuses/penalties that apply to the save's attribute
+  // Get all bonuses/penalties that apply to the save's attribute, or to all
+  // saving throws (Imperial Blood Magic's saves choice)
   const allEffectMods = getEffectsAndModifiersForToken(
     record,
     [`allBonus`, `allPenalty`],
-    attribute,
+    [attribute, "saving-throw"],
   );
 
   // Add save-specific modifiers
@@ -9705,12 +9731,15 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber = 1) {
     const potencyRune = abp
       ? abp.attack
       : parseInt(weapon.data?.runes?.potency || "0", 10);
+    // The potency rune is an item bonus, so it doesn't stack with other item
+    // bonuses to attack; ABP's attack potency stacks with them
     if (potencyRune > 0) {
       modifiers.push({
         name: abp
           ? `Attack Potency +${potencyRune}`
           : `Weapon Potency +${potencyRune}`,
         value: potencyRune,
+        type: abp ? "" : "item",
         isPenalty: false,
         active: true,
         valueType: "number",
@@ -9790,30 +9819,31 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber = 1) {
       trait.toLowerCase().trim() === "non-lethal",
   );
 
-  if (hasNonlethalTrait) {
-    // Check if there's already a circumstance penalty of -2 or more
-    // Circumstance penalties don't stack, so we only add this if needed
-    const existingCircumstancePenalties = otherBonusesAndPenalties.filter(
-      (mod) =>
-        mod.modifierType === "circumstance" &&
-        mod.value < 0 &&
-        Math.abs(mod.value) >= 2,
-    );
-
-    let lethalPenaltyValue = -2;
-    if (existingCircumstancePenalties.length > 0) {
-      // Already have a -2 or worse circumstance penalty, so this adds nothing
-      lethalPenaltyValue = 0;
+  // The modifiers for the roll prompt: only the strongest bonus and penalty of
+  // each type apply across the lookups above and the target's effects. The
+  // lethal option is added after stacking so it stays in the prompt. It is a
+  // -2 circumstance penalty, and circumstance penalties don't stack, so it adds
+  // only the part of -2 that the attack's worst circumstance penalty doesn't
+  // already cover.
+  const getRollModifiers = () => {
+    const rollModifiers = keepStrongestPerType(modifiers);
+    if (hasNonlethalTrait) {
+      const worstCircumstancePenalty = Math.min(
+        0,
+        ...rollModifiers
+          .filter((mod) => mod.type === "circumstance" && mod.active !== false)
+          .map(getModifierSortValue),
+      );
+      rollModifiers.push({
+        name: "Make Attack Lethal",
+        type: "circumstance",
+        value: Math.min(0, -2 - worstCircumstancePenalty),
+        active: false, // Inactive by default - player must opt in
+        modifierType: "circumstance",
+      });
     }
-
-    modifiers.push({
-      name: "Make Attack Lethal",
-      type: "circumstance",
-      value: lethalPenaltyValue,
-      active: false, // Inactive by default - player must opt in
-      modifierType: "circumstance",
-    });
-  }
+    return rollModifiers;
+  };
 
   // If this is the second or third attach we add MAP
   if (attackNumber === 2 || attackNumber === 3) {
@@ -9905,6 +9935,11 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber = 1) {
       }
     });
   }
+
+  // Only the strongest damage bonus and penalty of each type apply across the
+  // lookups (dice always stack). This must come before the map below, which
+  // turns type into the damage type.
+  damageModifiers = keepStrongestPerType(damageModifiers);
 
   // Preserve the modifierType before mapping to avoid losing deduplication info
   damageModifiers = damageModifiers.map((mod) => {
@@ -10227,7 +10262,7 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber = 1) {
       api.promptRoll(
         `Attack with ${weapon.name}`,
         diceRoll,
-        modifiers,
+        getRollModifiers(),
         metadata,
         "attack",
       );
@@ -10297,7 +10332,7 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber = 1) {
     api.promptRoll(
       `Attack with ${weapon.name}`,
       "1d20",
-      modifiers,
+      getRollModifiers(),
       metadata,
       "attack",
     );
@@ -10573,6 +10608,11 @@ function performDamageRoll(record, weapon, weaponDataPath, isCritical) {
       }
     });
   }
+
+  // Only the strongest damage bonus and penalty of each type apply across the
+  // lookups (dice always stack). This must come before the map below, which
+  // turns type into the damage type.
+  damageModifiers = keepStrongestPerType(damageModifiers);
 
   damageModifiers = damageModifiers.map((mod) => {
     return {

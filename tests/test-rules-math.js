@@ -1,8 +1,9 @@
 // Tests for rules-math fixes: armor Speed penalties, condition penalties on AC,
-// save DCs and spell DCs, stacking, Weak HP,
-// resilient runes and investiture, shields in inventory row 0, the hazard
-// Stealth DC field, and the level -1 DC. Weaknesses and resistances stay per
-// damage type, as Foundry's PF2e applies them (tests/test-iwr.js).
+// save DCs and spell DCs, stacking, Strike attack and damage stacking, Elite
+// and Weak HP, resilient and potency runes and investiture, shields in
+// inventory row 0, the hazard Stealth DC field, and the level -1 DC. They
+// follow Foundry's PF2e. Weaknesses and resistances stay per damage type, as
+// Foundry's PF2e applies them (tests/test-iwr.js).
 
 const fs = require("fs");
 const vm = require("vm");
@@ -25,6 +26,10 @@ const FATIGUED = condition("fa", "Fatigued", [
   { type: "armorClassPenalty-status", field: "", valueType: "number", value: "1" },
   { type: "savePenalty-status", field: "all", valueType: "number", value: "1" },
 ]);
+const OFF_GUARD = condition("og", "Off-Guard", [{ type: "armorClassPenalty-circumstance", field: "", valueType: "number", value: "2" }]);
+// A rule whose field names AC or saving throws (Imperial Blood Magic's choice)
+const IMPERIAL = condition("ib", "Imperial Blood Magic", [{ type: "allBonus-status", field: "data.effects.defense", valueType: "number", value: "1" }]);
+const resolvePath = (rec, path) => path.split(".").reduce((o, k) => o?.[k], rec);
 
 function npcToken(data, conditions = []) {
   const effects = [];
@@ -36,6 +41,31 @@ function npcToken(data, conditions = []) {
   return { _id: "npc", recordType: "npcs", identified: true, effects, effectIds, data: { level: 3, ...data } };
 }
 
+// A player character with the given conditions
+function pcWith(data, conditions = []) {
+  return { ...npcToken({ level: 1, str: 0, dex: 0, inventory: [], ...data }, conditions), _id: "pc", recordType: "characters", fields: {} };
+}
+
+// The modifiers the next api.promptRoll gets, and its metadata
+function capturePrompt(run) {
+  const saved = ctx.api.promptRoll;
+  let captured = { modifiers: [], metadata: {} };
+  ctx.api.promptRoll = (name, dice, modifiers, metadata) => {
+    captured = { modifiers: modifiers || [], metadata: metadata || {} };
+  };
+  try {
+    run();
+  } finally {
+    ctx.api.promptRoll = saved;
+  }
+  return captured;
+}
+const listMods = (mods) =>
+  mods
+    .map((m) => `${m.name} ${m.value}`)
+    .sort()
+    .join(", ");
+
 section("armor Speed penalties");
 {
   const plate = (extra = {}) => ({
@@ -43,10 +73,11 @@ section("armor Speed penalties");
     name: "Full Plate",
     data: { type: "armor", carried: "equipped", acBonus: 6, speedPenalty: -10, strength: 4, checkPenalty: -3, ...extra },
   });
+  const towerShield = { _id: "ts", name: "Tower Shield", data: { type: "shield", carried: "equipped", acBonus: 2, speedPenalty: -5 } };
   const pc = (str, armor, speed = "25 feet") => ({
     _id: "pc",
     recordType: "characters",
-    data: { level: 1, str, dex: 0, speed, ancestries: [{ data: { speed } }], inventory: [armor] },
+    data: { level: 1, str, dex: 0, speed, ancestries: [{ data: { speed } }], inventory: [].concat(armor) },
     fields: {},
   });
   const speedWith = (record) => {
@@ -60,6 +91,15 @@ section("armor Speed penalties");
   assert("legacy Strength score 18 counts as +4", speedWith(pc(4, plate({ strength: 18 }))), "20 feet");
   assert("penalties stop at 5 feet", speedWith(pc(0, plate(), "10 feet")), "5 feet");
   assert("unarmored is unchanged", speedWith(pc(0, { _id: "x", name: "Rope", data: { type: "equipment" } })), "25 feet");
+
+  // The Strength reduction stops at 0 before the shield's penalty is added
+  assert("-3 armor with the Strength met, and a tower shield: 25 -> 20", speedWith(pc(4, [plate({ speedPenalty: -3 }), towerShield])), "20 feet");
+  // Every Speed penalty stops at 5 feet, not only the armor's
+  const SLOWED = condition("sp", "Speed Penalty", [{ type: "speedPenalty-status", field: "", valueType: "number", value: "10" }]);
+  const slowed = { ...pc(0, [], "10 feet"), effects: [SLOWED], effectIds: ["sp"] };
+  assert("a -10 status Speed penalty on a 10-foot Speed: 5 feet", speedWith(slowed), "5 feet");
+  // Hindering: a separate 5 feet that meeting the Strength doesn't remove
+  assert("hindering armor with the Strength met: 25 -> 20", speedWith(pc(4, plate({ speedPenalty: -5, traits: ["hindering"] }))), "20 feet");
 
   // Without an ancestry Speed the sheet's own Speed is the base: it must not
   // take the penalty again on every recalculation
@@ -77,8 +117,25 @@ section("armor Speed penalties");
   assert("and it stays 15 on the next recalculation", recalc(noAncestry), "15 feet");
   noAncestry.data.speed = "30 feet";
   assert("a Speed typed by hand becomes the base", recalc(noAncestry), "20 feet");
-  assert("legacy score below the requirement keeps the check penalty", ctx.getCheckPenaltyForArmor({ data: { str: 3 } }, { armor: { checkPenalty: -3, strength: 18 } })?.[0]?.value, -3);
-  assert("legacy score met removes it", ctx.getCheckPenaltyForArmor({ data: { str: 4 } }, { armor: { checkPenalty: -3, strength: 18 } }), null);
+}
+
+section("armor check penalty");
+{
+  const character = (str) => ({ recordType: "characters", data: { str } });
+  const fullPlate = { armor: { checkPenalty: -3, strength: 18 } };
+  assert("legacy score below the requirement keeps the check penalty", ctx.getCheckPenaltyForArmor(character(3), fullPlate)?.[0]?.value, -3);
+  assert("legacy score met removes it", ctx.getCheckPenaltyForArmor(character(4), fullPlate), null);
+  assert("NPCs take none: their skills include it", ctx.getCheckPenaltyForArmor({ recordType: "npcs", data: { str: 0 } }, fullPlate), null);
+  assert("armor without a check penalty adds no entry", ctx.getCheckPenaltyForArmor(character(-1), { armor: { checkPenalty: 0, strength: 1 } }), null);
+  const penalty = ctx.getCheckPenaltyForArmor(character(3), fullPlate)?.[0];
+  assert("untyped, with slug armor-check-penalty", `${penalty?.type}|${penalty?.slug}`, "|armor-check-penalty");
+
+  // Untyped, so it stacks with an item penalty to the same skill (shoddy)
+  const SHODDY = condition("sh", "Shoddy", [{ type: "skillPenalty-item", field: "", valueType: "number", value: "2" }]);
+  const leather = { _id: "la", name: "Leather Armor", data: { type: "armor", carried: "equipped", acBonus: 1, checkPenalty: -1, strength: 1 } };
+  const wearer = pcWith({ inventory: [leather] }, [[SHODDY, 1]]);
+  const { modifiers } = capturePrompt(() => ctx.rollSkill(wearer, "athletics"));
+  assert("check penalty -1 and shoddy -2 both apply", listMods(modifiers.filter((m) => parseInt(m.value, 10) < 0)), "Check Penalty -1, Shoddy -2");
 }
 
 section("conditions on AC");
@@ -92,13 +149,26 @@ section("conditions on AC");
   assert("frightened 2 lowers AC", ac([[FRIGHTENED, 2]]), 18);
   assert("frightened 2 and clumsy 1 are both status: only the worse counts", ac([[FRIGHTENED, 2], [CLUMSY, 1]]), 18);
 
-  // A rule whose field names AC itself (Imperial Blood Magic's choice)
-  const IMPERIAL = condition("ib", "Imperial Blood Magic", [{ type: "allBonus-status", field: "data.effects.defense", valueType: "number", value: "1" }]);
   const realGet = ctx.api.getValueOnRecord;
-  ctx.api.getValueOnRecord = (rec, path) => path.split(".").reduce((o, k) => o?.[k], rec);
+  ctx.api.getValueOnRecord = resolvePath;
   assert("Imperial Blood Magic AC choice: +1", ctx.getArmorClassForToken(npcToken({ ac: 20, effects: { defense: "ac" } }, [[IMPERIAL, 1]])), 21);
   assert("Imperial Blood Magic saves choice: AC unchanged", ctx.getArmorClassForToken(npcToken({ ac: 20, effects: { defense: "saving-throw" } }, [[IMPERIAL, 1]])), 20);
   ctx.api.getValueOnRecord = realGet;
+
+  // A character's sheet AC leaves effects out; the token AC adds them once
+  const fatiguedPc = pcWith({ speed: "25 feet", ancestries: [{ data: { speed: "25 feet" } }] }, [[FATIGUED, 1]]);
+  const written = {};
+  ctx.updateAttribute({ record: fatiguedPc, attribute: "dex", value: 0, moreValuesToSet: written });
+  assert("fatigued character: sheet AC 10", written["data.ac"], 10);
+  assert("and token AC 9: fatigued counts once", ctx.getArmorClassForToken({ ...fatiguedPc, data: { ...fatiguedPc.data, ac: written["data.ac"] } }), 9);
+
+  // Flanking makes the target off-guard: -2 circumstance, which doesn't stack
+  // with a circumstance penalty it already has
+  const MINUS_ONE = condition("m1", "Minor Hindrance", [{ type: "armorClassPenalty-circumstance", field: "", valueType: "number", value: "1" }]);
+  const flanked = (conditions) => ctx.getArmorClassForToken(npcToken({ ac: 20 }, conditions), true);
+  assert("flanked: 18", flanked([]), 18);
+  assert("flanked and already off-guard: still 18", flanked([[OFF_GUARD, 1]]), 18);
+  assert("flanked with a -1 circumstance penalty: 18", flanked([[MINUS_ONE, 1]]), 18);
 }
 
 section("only the strongest bonus or penalty of a type counts");
@@ -113,11 +183,35 @@ section("only the strongest bonus or penalty of a type counts");
   const plus1 = condition("p1", "Plus One", [{ type: "allBonus-status", field: "all", valueType: "number", value: "1" }]);
   assert("a \"+2\" status bonus beats +1", mods([[plus2, 1], [plus1, 1]], ["allBonus"], "all").join(), "2");
   assert("in either order", mods([[plus1, 1], [plus2, 1]], ["allBonus"], "all").join(), "2");
+
+  // Dice always stack, and persistent damage stacks apart from the rest
   const d4 = condition("d4", "D4", [{ type: "damageBonus-status", field: "all", valueType: "string", value: "1d4" }]);
   const d8 = condition("d8", "D8", [{ type: "damageBonus-status", field: "all", valueType: "string", value: "1d8" }]);
-  const dice = (conds) => ctx.getEffectsAndModifiersForToken(npcToken({}, conds), ["damageBonus"], "all").map((m) => m.value).join();
-  assert("1d8 beats 1d4", dice([[d4, 1], [d8, 1]]), "1d8");
-  assert("in either order", dice([[d8, 1], [d4, 1]]), "1d8");
+  const two = condition("t2", "Two", [{ type: "damageBonus-status", field: "all", valueType: "string", value: "2" }]);
+  const persistent = condition("pf", "Persistent Fire", [{ type: "damageBonus-status", field: "all", valueType: "string", value: "1 fire-persistent" }]);
+  const damage = (conds) =>
+    ctx
+      .getEffectsAndModifiersForToken(npcToken({}, conds), ["damageBonus"], "all")
+      .map((m) => m.value)
+      .sort()
+      .join();
+  assert("status 1d4 and 1d8 both apply", damage([[d4, 1], [d8, 1]]), "1d4,1d8");
+  assert("in either order", damage([[d8, 1], [d4, 1]]), "1d4,1d8");
+  assert("status 1d4 and +2 both apply", damage([[d4, 1], [two, 1]]), "1d4,2");
+  assert("status +2 and 1 persistent fire both apply", damage([[two, 1], [persistent, 1]]), "1 fire-persistent,2");
+
+  // The value's sign picks the bonus or penalty pool, not the rule's name
+  const raised = { name: "Raised", type: "status", modifierType: "allPenalty", value: 2, active: true };
+  const bonus = { name: "Bonus", type: "status", modifierType: "allBonus", value: 1, active: true };
+  assert("a penalty raised to +2 is a bonus: it beats a +1 status bonus", listMods(ctx.keepStrongestPerType([raised, bonus])), "Raised 2");
+  const untyped = (name, value) => ({ name, type: "untyped", modifierType: "saveBonus", value, active: true });
+  assert("type \"untyped\" stacks", listMods(ctx.keepStrongestPerType([untyped("A", 1), untyped("B", 2)])), "A 1, B 2");
+
+  // A feature's penalty stored as a positive number is still a penalty
+  const feat = (type, value) => ({ name: "Heavy Gear", data: { modifiers: [{ data: { type, modifierType: "item", valueType: "number", value, field: "" } }] } });
+  const featured = (type, value) => ({ recordType: "characters", data: { level: 1, feats: [feat(type, value)] } });
+  assert("a feature's skill penalty of 2 is -2", ctx.getEffectsAndModifiersForToken(featured("skillPenalty", "2"), ["skillPenalty"], "athletics").map((m) => m.value).join(), "-2");
+  assert("ignore range penalty stays positive", ctx.getEffectsAndModifiersForToken(featured("ignoreRangePenalty", "1"), ["ignoreRangePenalty"]).map((m) => m.value).join(), "1");
 }
 
 section("conditions on save DCs");
@@ -132,18 +226,24 @@ section("conditions on save DCs");
   assert("enfeebled 2 changes no save DC", ["fortitude", "reflex", "will"].map((s) => dc(s, [[ENFEEBLED, 2]])).join(","), "20,20,20");
   assert("fatigued and frightened 2 are both status: only -2", dc("fortitude", [[FATIGUED, 1], [FRIGHTENED, 2]]), 18);
   assert("fatigued and frightened 1: only -1", dc("fortitude", [[FATIGUED, 1], [FRIGHTENED, 1]]), 19);
+  assert("an NPC's bonus to all saves raises its save DCs", ctx.getSaveDCForToken(npcToken({ fortitudeMod: 10, saveBonus: 2 }), "fortitude"), 22);
 
   // The save roll prompt gets the same: one status penalty, the worst
-  let rolled = null;
-  ctx.api.promptRoll = (name, dice, modifiers) => {
-    rolled = modifiers;
-  };
   const pcSaver = { ...npcToken({ fortitudeMod: 10, fortitude: "1" }, [[FATIGUED, 1], [FRIGHTENED, 2]]), recordType: "characters" };
   ctx.record = pcSaver;
-  ctx.rollSave(pcSaver, "fortitude");
-  const statusPenalties = (rolled || []).filter((m) => m.type === "status" && parseInt(m.value, 10) < 0).map((m) => `${m.name} ${m.value}`);
+  const rolled = capturePrompt(() => ctx.rollSave(pcSaver, "fortitude")).modifiers;
+  const statusPenalties = rolled.filter((m) => m.type === "status" && parseInt(m.value, 10) < 0).map((m) => `${m.name} ${m.value}`);
   assert("save roll: only frightened 2 among status penalties", statusPenalties.join(), "Frightened -2");
-  ctx.api.promptRoll = () => {};
+
+  // Imperial Blood Magic's saves choice reaches save DCs and save rolls
+  const realGet = ctx.api.getValueOnRecord;
+  ctx.api.getValueOnRecord = resolvePath;
+  const imperial = (defense) => npcToken({ fortitudeMod: 10, effects: { defense } }, [[IMPERIAL, 1]]);
+  assert("Imperial Blood Magic saves choice: Fortitude DC 21", ctx.getSaveDCForToken(imperial("saving-throw"), "fortitude"), 21);
+  assert("Imperial Blood Magic AC choice: Fortitude DC unchanged", ctx.getSaveDCForToken(imperial("ac"), "fortitude"), 20);
+  const imperialRoll = capturePrompt(() => ctx.rollSave(imperial("saving-throw"), "fortitude")).modifiers;
+  assert("and +1 on the save roll", imperialRoll.filter((m) => m.name === "Imperial Blood Magic").map((m) => m.value).join(), "1");
+  ctx.api.getValueOnRecord = realGet;
 }
 
 section("conditions on spell DCs and spell attacks");
@@ -190,6 +290,60 @@ section("conditions on spell DCs and spell attacks");
   assert("a status spell attack bonus and bless: only one status bonus", attackRollMods(caster([[BLESS, 1], [SPELL_STATUS, 1]])).split(", ").length, 1);
 }
 
+section("Strike attack and damage rolls");
+{
+  // A Dex-based finesse Strike with a +1 potency rune
+  const rapier = (traits = ["finesse"]) => ({
+    _id: "w",
+    name: "Rapier",
+    data: { type: "weapon", carried: "equipped", itemCategory: "martial", group: "sword", traits, damage: { dice: 1, die: "d6", damageType: "piercing" }, runes: { potency: 1 } },
+  });
+  const striker = (conditions, weapon = rapier()) => pcWith({ dex: 3, inventory: [weapon] }, conditions);
+  const attack = (record, attackNumber = 1) => capturePrompt(() => ctx.performAttackRoll(record, record.data.inventory[0], "data.inventory.0", attackNumber));
+  const named = (mods, name) => mods.find((m) => m.name === name);
+
+  // The melee and Dex lookups each bring a status penalty: only the worse applies
+  const scared = striker([[FRIGHTENED, 1], [CLUMSY, 2]]);
+  assert("frightened 1 and clumsy 2 on a Dex Strike: only -2", listMods(attack(scared).modifiers.filter((m) => m.type === "status")), "Clumsy -2");
+  const realTargets = ctx.api.getTargets;
+  ctx.api.getTargets = () => [{ token: npcToken({ ac: 20 }), distance: 5 }];
+  assert("with a target too", listMods(attack(scared).modifiers.filter((m) => m.type === "status")), "Clumsy -2");
+  ctx.api.getTargets = realTargets;
+
+  // The potency rune is an item bonus
+  const MUTAGEN = condition("mu", "Mutagen", [{ type: "attackBonus-item", field: "all", valueType: "number", value: "2" }]);
+  const bonuses = (mods) => listMods(mods.filter((m) => m.name === "Mutagen" || m.name === "Weapon Potency +1"));
+  assert("+1 potency rune and a +2 item bonus: only +2", bonuses(attack(striker([[MUTAGEN, 1]])).modifiers), "Mutagen 2");
+  assert("the potency rune alone: +1 item", listMods(attack(striker([])).modifiers.filter((m) => m.type === "item")), "Weapon Potency +1 1");
+  // Automatic Bonus Progression's attack potency stacks with item bonuses
+  const realSetting = ctx.api.getSetting;
+  ctx.api.getSetting = (key) => (key === "automaticBonusProgression" ? "yes" : null);
+  const abpStriker = { ...striker([[MUTAGEN, 1]]), data: { ...striker([]).data, level: 2 } };
+  const abpBonuses = attack(abpStriker).modifiers.filter((m) => m.name === "Mutagen" || m.name === "Attack Potency +1");
+  assert("ABP: attack potency +1 and a +2 item bonus both apply", listMods(abpBonuses), "Attack Potency +1 1, Mutagen 2");
+  ctx.api.getSetting = realSetting;
+
+  // Multiple attack penalty and the lethal option still reach the prompt
+  const second = attack(striker([], rapier(["finesse", "nonlethal"])), 2).modifiers;
+  assert("second attack: MAP -5", named(second, "Mutliple Attack Penalty")?.value, -5);
+  assert("nonlethal: the lethal option, off, at -2", `${named(second, "Make Attack Lethal")?.active} ${named(second, "Make Attack Lethal")?.value}`, "false -2");
+  const HAMPERED = condition("ha", "Hampered", [{ type: "attackPenalty-circumstance", field: "all", valueType: "number", value: "2" }]);
+  const hampered = attack(striker([[HAMPERED, 1]], rapier(["finesse", "nonlethal"]))).modifiers;
+  assert("already -2 circumstance: the lethal option adds 0", named(hampered, "Make Attack Lethal")?.value, 0);
+  const SLIGHT = condition("sl", "Slight Hindrance", [{ type: "attackPenalty-circumstance", field: "all", valueType: "number", value: "1" }]);
+  const slight = attack(striker([[SLIGHT, 1]], rapier(["finesse", "nonlethal"]))).modifiers;
+  assert("already -1 circumstance: the lethal option adds -1", named(slight, "Make Attack Lethal")?.value, -1);
+
+  // Damage: a status bonus to melee damage and one to Strength-based damage
+  const RAGE = condition("ra", "Melee Fury", [{ type: "damageBonus-status", field: "melee", valueType: "number", value: "1" }]);
+  const MIGHT = condition("mi", "Might", [{ type: "damageBonus-status", field: "str", valueType: "number", value: "2" }]);
+  const brute = pcWith({ str: 1, inventory: [rapier([])] }, [[RAGE, 1], [MIGHT, 1]]);
+  const damageBonuses = (mods) => listMods(mods.filter((m) => m.name === "Melee Fury" || m.name === "Might"));
+  assert("attack's damage: two status damage bonuses, only +2", damageBonuses(attack(brute).metadata.damageModifiers || []), "Might 2");
+  const rolled = capturePrompt(() => ctx.performDamageRoll(brute, brute.data.inventory[0], "data.inventory.0", false)).modifiers;
+  assert("damage roll: only +2", damageBonuses(rolled), "Might 2");
+}
+
 section("Weak and Elite HP");
 {
   const sheet = fs.readFileSync(`${__dirname}/../npcs-main.html`, "utf8");
@@ -199,18 +353,30 @@ section("Weak and Elite HP");
   npcCtx.api.setValues = (values) => {
     written = values;
   };
-  const hpAfter = (type, level) => {
+  const adjust = (type, data) => {
     written = {};
-    npcCtx.record = { _id: "n", recordType: "npcs", data: { level, hitpoints: 100, curhp: 100, ac: 20, perceptionMod: 5, fortitudeMod: 5, reflexMod: 5, willMod: 5, attacks: [], spells: [], skills: [] }, fields: {} };
+    npcCtx.record = { _id: "n", recordType: "npcs", data: { hitpoints: 100, curhp: 100, ac: 20, perceptionMod: 5, fortitudeMod: 5, reflexMod: 5, willMod: 5, attacks: [], spells: [], skills: [], ...data }, fields: {} };
     npcCtx.applyAdjustment(type);
-    return written["data.hitpoints"];
+    return written;
   };
+  const hpAfter = (type, level) => adjust(type, { level })["data.hitpoints"];
   assert("weak level 2: -10", hpAfter("weak", 2), 90);
   assert("weak level 5: -15", hpAfter("weak", 5), 85);
   assert("weak level 20: -20", hpAfter("weak", 20), 80);
   assert("weak level 21: -30", hpAfter("weak", 21), 70);
+  assert("weak level 0: no change", hpAfter("weak", 0), 100);
+  assert("weak level -1: no change", hpAfter("weak", -1), 100);
+  assert("a level 0 creature keeps starting level 0", adjust("elite", { level: 0 })["data.baseLevel"], 0);
   assert("elite level 2: +15", hpAfter("elite", 2), 115);
   assert("elite level 20: +30", hpAfter("elite", 20), 130);
+
+  // Switching or removing an adjustment keeps damage already taken: an Elite
+  // level 5 creature (100 HP, now 120) that took 30 damage
+  const damagedElite = { level: 6, baseLevel: 5, hitpoints: 120, baseHP: 100, curhp: 90, baseCurHP: 100, adjustment: "elite" };
+  assert("elite to weak: 90 - 20 - 15 = 55", adjust("weak", damagedElite)["data.curhp"], 55);
+  assert("and max HP 85", written["data.hitpoints"], 85);
+  assert("elite removed: 90 - 20 = 70", adjust("remove", damagedElite)["data.curhp"], 70);
+  assert("weak can take current HP to 0", adjust("weak", { level: 5, curhp: 10 })["data.curhp"], 0);
 
   // Hazard Stealth DC typed into the old field moves to data.stealth.value
   written = {};
@@ -228,16 +394,20 @@ section("Weak and Elite HP");
   assert("nothing to move: no write", Object.keys(written).length, 0);
 }
 
-section("resilient runes need investment");
+section("resilient and potency runes need investment");
 {
   const armored = (recordType, invested) => ({
     recordType,
-    data: { inventory: [{ _id: "a", data: { type: "armor", runes: { resilient: "1" }, invested } }] },
+    data: { inventory: [{ _id: "a", data: { type: "armor", carried: "equipped", acBonus: 4, runes: { potency: "1", resilient: "1" }, invested } }] },
   });
   const best = { armor: { armorId: "a" } };
   assert("invested: +1", ctx.getResilientArmorBonus(armored("characters", "true"), best)?.[0]?.value, 1);
   assert("not invested: nothing", ctx.getResilientArmorBonus(armored("characters", "false"), best), null);
-  assert("NPCs don't invest", ctx.getResilientArmorBonus(armored("npcs", undefined), best)?.[0]?.value, 1);
+  assert("NPCs: nothing, their saves include it", ctx.getResilientArmorBonus(armored("npcs", undefined), best), null);
+  const armorAc = (record) => ctx.getBestEquippedArmor(record).armor.acBonus;
+  assert("potency rune, invested: AC 4 + 1", armorAc(armored("characters", "true")), 5);
+  assert("potency rune, not invested: AC 4", armorAc(armored("characters", "false")), 4);
+  assert("NPCs don't invest: AC 4 + 1", armorAc(armored("npcs", undefined)), 5);
 }
 
 section("shield in inventory row 0");
