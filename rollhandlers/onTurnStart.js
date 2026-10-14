@@ -41,3 +41,18 @@ if (shieldUp && token?.recordId) {
     });
   }
 }
+
+// Condition upkeep: the actions the creature has this turn after stunned,
+// slowed and quickened, and the stunned it used up
+if (token && isConditionUpkeepOn() && !isTokenDead(token)) {
+  const turnActions = getTurnStartActions(token);
+  const actionsMessage = getTurnStartActionsMessage(turnActions);
+  if (actionsMessage) {
+    api.sendMessage(actionsMessage, undefined, [], [], token);
+  }
+  deductEffectStacks(
+    turnActions.stunnedEffectId,
+    token,
+    turnActions.stunnedDeduct,
+  );
+}

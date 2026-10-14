@@ -171,3 +171,17 @@ ${macro}`
     );
   }
 }
+
+// End the effects that last one encounter (stances, Panache, Rage and the
+// like), as Foundry does when an encounter ends. Realm doesn't end them
+// itself: ending an encounter only resets the combat tracker.
+{
+  const removals = getEncounterEndRemovals(data?.tokens);
+  removals.forEach(({ token, effects }) => {
+    removeEffectsInOrder(effects.map((effect) => effect._id), token);
+  });
+  const summary = getEncounterEndSummary(removals);
+  if (summary) {
+    api.sendMessage(summary);
+  }
+}

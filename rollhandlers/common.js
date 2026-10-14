@@ -15461,3 +15461,224 @@ function payReverseEngineering(record, item) {
     (updatedRecord) => rollCraftProject(updatedRecord || record, project),
   );
 }
+
+// Condition Upkeep campaign setting: on unless the GM turns it off
+function isConditionUpkeepOn() {
+  try {
+    return (
+      typeof api?.getSetting !== "function" ||
+      api.getSetting("conditionUpkeep") !== "no"
+    );
+  } catch (e) {
+    return true;
+  }
+}
+
+// The effect on a token with this name (any case) and its value: how many
+// times its _id appears in effectIds, so Frightened 2 is one effect listed
+// twice. With several effects of that name, the one with the highest value.
+function getTokenCondition(token, name) {
+  const wanted = `${name || ""}`.trim().toLowerCase();
+  const effectIds = token?.effectIds || [];
+  let found = null;
+  for (const effect of token?.effects || []) {
+    if (`${effect?.name || ""}`.trim().toLowerCase() !== wanted) continue;
+    const value = effectIds.filter((id) => id === effect._id).length || 1;
+    if (!found || value > found.value) found = { effect, value };
+  }
+  return found;
+}
+
+function isTokenDead(token) {
+  return !!getTokenCondition(token, "dead");
+}
+
+// Whether an effect on a token runs for a duration rather than a value, as in
+// "stunned for 1 minute": a duration given when it was applied, or one on the
+// effect itself
+function hasEffectDuration(token, effect) {
+  const applied = token?.effectDurations?.[effect?._id];
+  const durations = Array.isArray(applied) ? applied : [applied];
+  if (durations.some((duration) => parseFloat(duration) > 0)) return true;
+  const unit =
+    token?.effectDurationUnits?.[effect?._id] ||
+    effect?.durationUnit ||
+    "indefinite";
+  return unit !== "indefinite" && parseFloat(effect?.duration) > 0;
+}
+
+// The actions a creature regains at the start of its turn (Player Core pg.
+// 446): 3, or 4 when quickened. Stunned takes away actions up to its value,
+// then goes down by the actions it took; stunned with a duration instead of a
+// value takes them all. Slowed takes away its value, and the actions lost to
+// stunned count toward it.
+function getTurnStartActions(token) {
+  const quickened = getTokenCondition(token, "quickened");
+  const slowed = getTokenCondition(token, "slowed");
+  const stunned = getTokenCondition(token, "stunned");
+  const regained = quickened ? 4 : 3;
+  const stunnedForDuration =
+    !!stunned && hasEffectDuration(token, stunned.effect);
+  const stunnedValue = stunned && !stunnedForDuration ? stunned.value : 0;
+  const lostToStunned = stunnedForDuration
+    ? regained
+    : Math.min(stunnedValue, regained);
+  const slowedValue = slowed ? slowed.value : 0;
+  const lost = Math.min(regained, Math.max(slowedValue, lostToStunned));
+  return {
+    actions: regained - lost,
+    quickened: !!quickened,
+    slowed: slowedValue,
+    stunned: stunnedValue,
+    stunnedForDuration,
+    lostToStunned,
+    // Stunned stacks to take off: the actions it took (none for a duration)
+    stunnedEffectId: stunned ? stunned.effect._id : null,
+    stunnedDeduct: stunnedForDuration ? 0 : lostToStunned,
+    changed: !!(quickened || slowed || stunned),
+  };
+}
+
+// One chat line with the turn's actions and why, or "" when no condition
+// changed them
+function getTurnStartActionsMessage(result) {
+  if (!result?.changed) return "";
+  const reasons = [];
+  if (result.quickened) reasons.push("quickened");
+  if (result.stunnedForDuration) {
+    reasons.push("stunned for its duration");
+  } else if (result.stunned > 0) {
+    const left = result.stunned - result.lostToStunned;
+    reasons.push(
+      `stunned ${result.stunned} takes ${result.lostToStunned}, ${
+        left > 0 ? `now stunned ${left}` : "stunned ends"
+      }`,
+    );
+  }
+  if (result.slowed > 0) {
+    const counted =
+      result.lostToStunned > 0 && !result.stunnedForDuration
+        ? `, counting the ${result.lostToStunned} lost to stunned`
+        : "";
+    reasons.push(`slowed ${result.slowed}${counted}`);
+  }
+  const label = result.actions === 1 ? "action" : "actions";
+  return `**${result.actions} ${label}** this turn (${reasons.join("; ")}).`;
+}
+
+// Frightened goes down by 1 at the end of each of the creature's turns
+// (Player Core pg. 444). The Frightened effect to take a stack off, or null.
+function getTurnEndFrightened(token) {
+  if (isTokenDead(token)) return null;
+  const frightened = getTokenCondition(token, "frightened");
+  return frightened ? frightened.effect : null;
+}
+
+// Takes stacks off an effect one at a time: each deduct reads the token's
+// current effects, so they can't overlap
+function deductEffectStacks(effectId, token, times, callback) {
+  if (!effectId || !(times > 0)) {
+    if (typeof callback === "function") callback();
+    return;
+  }
+  api.deductEffectById(effectId, token, () =>
+    deductEffectStacks(effectId, token, times - 1, callback),
+  );
+}
+
+// Removes effects from a token one at a time, for the same reason
+function removeEffectsInOrder(effectIds, token, callback) {
+  if (!effectIds?.length) {
+    if (typeof callback === "function") callback();
+    return;
+  }
+  const [effectId, ...rest] = effectIds;
+  api.removeEffectById(effectId, token, () =>
+    removeEffectsInOrder(rest, token, callback),
+  );
+}
+
+// Effects that last until the encounter ends: Foundry's "encounter" duration,
+// which Foundry ends with the encounter. The module converted most of them to
+// duration -1 "rounds", which isEncounterEffect matches (Realm has no
+// encounter duration). Named here: Panache, which came through as indefinite;
+// the other module effects with an encounter duration in Foundry, so they
+// still end if their module duration changes; and Rage, which ends when no
+// enemies remain, while its 1 minute never runs out in combat because Realm
+// counts minutes only when the GM advances the calendar.
+const ENCOUNTER_EFFECT_NAMES = [
+  "Aura of Determination",
+  "Dread Marshal Stance",
+  "Duelist's Challenge",
+  "Energy Shot",
+  "Inspiring Marshal Stance",
+  "Panache",
+  "Rage",
+  "Revitalizing Finisher",
+  "Spell Effect: Acid Grip",
+];
+
+// A stance lasts until the encounter ends (stance trait). The module names
+// every stance effect "Stance: ...", and some came through as indefinite.
+const ENCOUNTER_EFFECT_PREFIXES = ["Stance: "];
+
+function isEncounterEffect(effect, token = null) {
+  const unit =
+    token?.effectDurationUnits?.[effect?._id] || effect?.durationUnit;
+  if (unit === "rounds" && parseFloat(effect?.duration) < 0) return true;
+  const name = `${effect?.name || ""}`.trim().toLowerCase();
+  return (
+    ENCOUNTER_EFFECT_NAMES.some((n) => n.toLowerCase() === name) ||
+    ENCOUNTER_EFFECT_PREFIXES.some((p) => name.startsWith(p.toLowerCase()))
+  );
+}
+
+// The effects on a token that end with the encounter
+function getEncounterEndEffects(token) {
+  const seen = new Set();
+  return (token?.effects || []).filter((effect) => {
+    if (!effect?._id || seen.has(effect._id)) return false;
+    seen.add(effect._id);
+    return isEncounterEffect(effect, token);
+  });
+}
+
+function getTokenDisplayName(token) {
+  const name =
+    token?.identified === false
+      ? token?.unidentifiedName || token?.record?.unidentifiedName
+      : token?.name || token?.record?.name;
+  return name || "Unknown";
+}
+
+// What to remove from the encounter's tokens when it ends: [{ token, name,
+// effects }]. Tokens linked to the same record share its effects, so each
+// record comes up once.
+function getEncounterEndRemovals(tokens) {
+  const seen = new Set();
+  const removals = [];
+  for (const token of tokens || []) {
+    if (!token) continue;
+    const key =
+      token.linked === true && token.recordId
+        ? `record:${token.recordId}`
+        : `token:${token._id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const effects = getEncounterEndEffects(token);
+    if (effects.length > 0) {
+      removals.push({ token, name: getTokenDisplayName(token), effects });
+    }
+  }
+  return removals;
+}
+
+// The chat summary of what ended with the encounter, or "" when nothing did
+function getEncounterEndSummary(removals) {
+  if (!removals?.length) return "";
+  const lines = removals.map(
+    (removal) =>
+      `- ${removal.name}: ${removal.effects.map((e) => e.name).join(", ")}`,
+  );
+  return `**Encounter effects ended**\n${lines.join("\n")}`;
+}
