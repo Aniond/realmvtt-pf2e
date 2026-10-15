@@ -2155,4 +2155,126 @@ section("Re-review: another class's word, font names, cantrips, wrong type, save
   delete ctx.userId;
 }
 
+section("Re-review 2: entries behind on slots, entries other specs take, counts never set");
+{
+  const spellsNamed = (rank, names) => names.map((name) => filled(name, { level: rank }));
+  const cantripRows = (count) =>
+    ["Light", "Shield", "Detect Magic", "Prestidigitation", "Electric Arc"].slice(0, count).map((name) => filled(name, { level: 0 }));
+
+  // Sean's example: the class's cantrips, slots never updated after leveling
+  const behind = playerEntry("Arcane Prepared Spells", { numCantrips: 5, numSpells1: 3, numSpells2: 3 });
+  const wizard9 = synced(character(classRecord("Wizard"), 9, { spells: [behind] }));
+  assert("level 9 wizard with 5 cantrips and 3/3: taken over, no duplicate", sources(wizard9), ["class:wizard"]);
+
+  // No archetype slot before 4th level, so an entry with a slot is the class's
+  const cleric3 = synced(
+    character(classRecord("Cleric"), 3, {
+      flags: { divineFont: "healing" },
+      spells: [playerEntry("Divine Prepared Spells", { tradition: "Divine", attribute: "wis", numSpells1: 2 })],
+    }),
+  );
+  assert("level 3 cleric at the 1st-level table, no cantrips: taken over", entryFor(cleric3, "class:cleric")?.name, "Divine Prepared Spells");
+  assert("and only the Divine Font is added", names(cleric3), ["Divine Prepared Spells", "Divine Font"]);
+
+  // Every caster, at the table or 1-2 levels behind, with or without cantrips
+  const casters = [
+    ["Wizard", true], ["Wizard", false], ["Cleric", true], ["Cleric", false], ["Druid", true], ["Druid", false],
+    ["Witch", true], ["Witch", false], ["Bard", true], ["Bard", false], ["Sorcerer", true], ["Sorcerer", false],
+    ["Oracle", true], ["Oracle", false], ["Psychic", true], ["Animist", true], ["Necromancer", true],
+    ["Magus", true], ["Magus", false], ["Summoner", true], ["Summoner", false],
+  ];
+  const capitalized = (text) => (text ? text[0].toUpperCase() + text.slice(1) : "");
+  const missed = new Set();
+  for (const [name, remaster] of casters) {
+    const specsAt = (level) => ctx.getWantedSpellcastingEntries(character(classRecord(name, remaster), level), level);
+    for (let level = 1; level <= 20; level++) {
+      for (const spec of specsAt(level).filter((s) => !s.fontRank)) {
+        for (const levelsBehind of [0, 1, 2].filter((n) => level - n >= 1)) {
+          const own = specsAt(level - levelsBehind).find((s) => s.source === spec.source);
+          for (const withCantrips of [true, false]) {
+            const entry = playerEntry(`${capitalized(spec.tradition) || "Arcane"} ${capitalized(spec.type)} Spells`, {
+              type: spec.type,
+              tradition: capitalized(spec.tradition),
+              attribute: spec.attribute,
+              ...own.counts,
+              ...(withCantrips ? {} : { numCantrips: 0 }),
+            });
+            const record = synced(character(classRecord(name, remaster), level, { spells: [entry] }));
+            if (record.data.spells[0].data.auto?.source !== spec.source) {
+              missed.add(`${spec.source}${remaster ? "" : " (legacy)"} at ${level}, ${levelsBehind} behind`);
+            }
+          }
+        }
+      }
+    }
+  }
+  // Two levels behind at 4th, 6th and 8th, an apparition entry has the slots
+  // and the 2 cantrips archetype spellcasting gives, so it can't be told apart
+  assert("every caster's entry at the table or 1-2 levels behind is taken over", [...missed], [
+    "class:animist:apparition at 4, 2 behind",
+    "class:animist:apparition at 6, 2 behind",
+    "class:animist:apparition at 8, 2 behind",
+  ]);
+
+  // Counts never set, spells filled in: each rank counts its spells
+  const repertoire = playerEntry("Occult Spontaneous Spells", {
+    type: "spontaneous",
+    tradition: "Occult",
+    attribute: "cha",
+    cantrips: cantripRows(5),
+    spells1: spellsNamed(1, ["Fear", "Sleep", "Grease", "Command"]),
+    spells2: spellsNamed(2, ["Blur", "Mist", "Web", "Calm"]),
+    spells3: spellsNamed(3, ["Haste", "Slow", "Fireball"]),
+  });
+  const sorcerer5 = synced(
+    apply(sorcererWith(bloodline("Aberrant", "occult"), { bloodline: "bloodline-aberrant" }), {
+      "data.level": 5,
+      "data.spells": [repertoire],
+    }),
+  );
+  assert("level 5 sorcerer, filled repertoire, counts at 0: taken over", sources(sorcerer5), ["class:sorcerer"]);
+  const prepared = playerEntry("Divine Prepared Spells", {
+    tradition: "Divine",
+    attribute: "wis",
+    cantrips: cantripRows(5),
+    spells1: spellsNamed(1, ["Bless", "Command", "Fear"]),
+    spells2: spellsNamed(2, ["Silence", "Calm"]),
+  });
+  const counts0 = synced(character(classRecord("Cleric"), 3, { flags: { divineFont: "healing" }, spells: [prepared] }));
+  assert("level 3 cleric, prepared rows, counts at 0: taken over", entryFor(counts0, "class:cleric")?.name, "Divine Prepared Spells");
+  const psychic = playerEntry("Occult Spontaneous Spells", {
+    type: "spontaneous",
+    tradition: "Occult",
+    attribute: "int",
+    numSpells1: 1,
+    cantrips: cantripRows(3),
+    spells1: spellsNamed(1, ["Fear", "Sleep"]),
+    spells2: spellsNamed(2, ["Blur", "Mist"]),
+    spells3: spellsNamed(3, ["Haste", "Slow"]),
+  });
+  assert(
+    "level 6 psychic with 1st-level counts and a filled repertoire: taken over",
+    sources(synced(character(classRecord("Psychic"), 6, { spells: [psychic] }))),
+    ["class:psychic"],
+  );
+
+  // An entry another spec takes over isn't the class's set to the wrong type
+  const level16 = ctx.getWantedSpellcastingEntries(character(classRecord("Animist"), 16), 16);
+  const apparitionCounts = level16.find((spec) => spec.source === "class:animist:apparition").counts;
+  const animistEntries = [
+    playerEntry("Animist Spells", { type: "spontaneous", tradition: "Divine", attribute: "wis", ...apparitionCounts }),
+  ];
+  const animist = synced(character(classRecord("Animist"), 16, { spells: animistEntries }));
+  assert("level 16 animist: its spontaneous entry is the apparitions'", sources(animist), ["class:animist:apparition", "class:animist"]);
+  assert("and the class's entry is added on the first open", entryFor(animist, "class:animist")?.data.type, "prepared");
+  assert("the notice doesn't ask to change its type", (ctx.describeSpellcastingSync(animistEntries, animist) || "").includes("is set to"), false);
+  assert("a second open writes nothing", spellKeys(syncValues(animist)), []);
+  const fontEntries = [
+    playerEntry("Divine Font", { type: "spontaneous", tradition: "Divine", attribute: "wis", numSpells1: 3, numSpells2: 3, numSpells3: 2 }),
+  ];
+  const fontFirst = synced(character(classRecord("Cleric"), 5, { flags: { divineFont: "healing" }, spells: fontEntries }));
+  assert("a spontaneous Divine Font entry is the font's, and the class's entry is added", sources(fontFirst), ["class:cleric:font", "class:cleric"]);
+  assert("a second open writes nothing", spellKeys(syncValues(fontFirst)), []);
+}
+
 process.exitCode = summary();
