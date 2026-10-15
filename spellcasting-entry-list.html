@@ -57,6 +57,15 @@
     );
   }
 
+  // A character's focus entries all show their one focus pool, so a change
+  // to it here changes it on every entry (spell-entries.js)
+  function onFocusPoolChange(value) {
+    if (record.recordType !== "characters") {
+      return;
+    }
+    api.setValues(getFocusPoolValues(record, parseInt(value, 10) || 0));
+  }
+
   function onChangeValue() {
     const spellcastingEntryDataPath = getNearestParentDataPath(dataPath);
     const spellcastingEntry = api.getValue(spellcastingEntryDataPath);
@@ -304,6 +313,7 @@
     size="xs"
     maxvaluefield="focusPoolMax"
     editable="true"
+    onchange="onFocusPoolChange(value);"
   ></counter>
   <div
     style="

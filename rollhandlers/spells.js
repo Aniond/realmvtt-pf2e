@@ -62,7 +62,8 @@ function updateSpellcastingEntry(
     // For focus spells
     [`${spellcastingEntryDataPath}.fields.focusPoolLabel.hidden`]: !isFocus,
     [`${spellcastingEntryDataPath}.fields.focusPool.hidden`]: !isFocus,
-    [`${spellcastingEntryDataPath}.fields.focusPoolMax.hidden`]: !isFocus,
+    // A character's pool size comes from their focus spells
+    [`${spellcastingEntryDataPath}.fields.focusPoolMax.hidden`]: !isFocus || !isNPC,
     // For items we hide the training field / label
     [`${spellcastingEntryDataPath}.fields.tradition.hidden`]: isItem,
     [`${spellcastingEntryDataPath}.fields.training.hidden`]: isItem,
@@ -1417,8 +1418,15 @@ function castSpell(record, spell, dataPathToSpell, isOverlay = false) {
   }
 
   if (spellCastingEntry.data?.type === "focus" && !isCantrip) {
-    const maxFocusPool = spellCastingEntry.data?.focusPoolMax || 1;
-    const usedFocus = spellCastingEntry.data?.focusPool || 0;
+    // A character spends from their one focus pool (spell-entries.js), an NPC
+    // from the entry's own
+    const isCharacter = record.recordType === "characters";
+    const maxFocusPool = isCharacter
+      ? getFocusPoolMax(record)
+      : spellCastingEntry.data?.focusPoolMax || 1;
+    const usedFocus = isCharacter
+      ? getFocusPointsSpent(record)
+      : spellCastingEntry.data?.focusPool || 0;
 
     if (usedFocus >= maxFocusPool) {
       api.showNotification(
@@ -1429,8 +1437,12 @@ function castSpell(record, spell, dataPathToSpell, isOverlay = false) {
       return;
     }
 
-    const newUsedFocus = Math.min(usedFocus + 1, maxFocusPool);
-    valuesToSet[`${dataPathToSpellCastingEntry}.data.focusPool`] = newUsedFocus;
+    if (isCharacter) {
+      Object.assign(valuesToSet, getFocusPoolValues(record, usedFocus + 1));
+    } else {
+      const newUsedFocus = Math.min(usedFocus + 1, maxFocusPool);
+      valuesToSet[`${dataPathToSpellCastingEntry}.data.focusPool`] = newUsedFocus;
+    }
   }
 
   if (isSpontaneous && !isCantrip) {

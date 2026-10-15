@@ -978,25 +978,14 @@ ${getLevelUpSummary(gains)}`,
   }
 
   function shortRest() {
-    // Recover 1 focus point for all focus spellcasting entries
-    const valuesToSet = {};
-    let focusPointsRecovered = 0;
-
-    const spellcastingEntries = record.data?.spells || [];
-    spellcastingEntries.forEach((spellcastingEntry, spellListIndex) => {
-      const isFocus = spellcastingEntry.data?.type === "focus";
-
-      if (isFocus) {
-        const currentFocusPool = spellcastingEntry.data?.focusPool || 0;
-        // Reduce focus pool by 1 (minimum 0)
-        const newFocusPool = Math.max(0, currentFocusPool - 1);
-        if (newFocusPool < currentFocusPool) {
-          valuesToSet[`data.spells.${spellListIndex}.data.focusPool`] =
-            newFocusPool;
-          focusPointsRecovered++;
-        }
-      }
-    });
+    // Refocus: Focus Points back into the character's one focus pool, 1
+    // however many entries give focus spells (spell-entries.js)
+    const spent = getFocusPointsSpent(record);
+    const focusPointsRecovered = Math.min(spent, getRefocusPoints(record));
+    const valuesToSet =
+      focusPointsRecovered > 0
+        ? getFocusPoolValues(record, spent - focusPointsRecovered)
+        : {};
 
     if (Object.keys(valuesToSet).length > 0) {
       api.setValues(valuesToSet, () => {
@@ -1107,6 +1096,8 @@ ${getLevelUpSummary(gains)}`,
         valuesToSet[`data.spells.${spellListIndex}.data.focusPool`] = 0;
       }
     });
+    // The character's one focus pool refills (spell-entries.js)
+    Object.assign(valuesToSet, getFocusPoolValues(record, 0));
 
     // Reset advanced alchemy items (for Alchemist class)
     const advancedAlchemyItems = record.data?.advancedAlchemyItems || [];
