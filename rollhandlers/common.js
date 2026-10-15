@@ -8095,7 +8095,7 @@ function useAction(action) {
 
 ---
 ${actionDescription}
-${effectMacros}
+${effectMacros}${getFirstAidActionMacro(action)}
 `;
 
   // Send the message
@@ -12307,6 +12307,17 @@ function applyDamage(
 
       valuesToSet["data.curhp"] = curhp;
 
+      // Healing from 0 Hit Points ends dying and unconscious (dying.js)
+      let wakes = false;
+      if (damage < 0) {
+        const healed = getHealingChanges(target, oldHp, curhp);
+        for (const [key, value] of Object.entries(healed.values)) {
+          oldValues[key] = parseInt(target.data?.[key.slice(5)] || "0", 10) || 0;
+          valuesToSet[key] = value;
+        }
+        wakes = healed.wake;
+      }
+
       // Apply shield damage updates if shield was damaged
       if (shieldDamaged && shieldData) {
         // Get the best equipped shield again to access original values
@@ -12374,7 +12385,13 @@ function applyDamage(
         message += `\n**Hardness blocked ${hardnessReduction} damage**`;
       }
 
-      // Handle death conditions
+      if (damage < 0 && valuesToSet["data.dying"] === 0) {
+        message += ` No longer dying (wounded ${valuesToSet["data.wounded"]}).`;
+      }
+
+      // Handle death conditions. Buttons (Heroic Recovery, Orc Ferocity) go
+      // after the message, as its Undo button repeats the message's text.
+      let dyingButtons = [];
       if (instantDeath) {
         message += `\n**[center][color=red]INSTANT DEATH (${deathReason})[/color][/center]**`;
         // For characters, set dying to 4+ (dead)
@@ -12397,57 +12414,30 @@ function applyDamage(
         const isCompanion =
           target.recordType === "npcs" && target.data?.type === "familiar";
         if (target.recordType === "characters" || isCompanion) {
-          // Characters and their companions gain Dying condition
-          const currentDying = parseInt(target.data?.dying || "0", 10);
-          let wounded = 0;
-
-          // Only add wounded if we're gaining the dying condition (currentDying === 0)
-          if (currentDying === 0) {
-            wounded = parseInt(target.data?.wounded || "0", 10);
-          }
-
-          // Store old values
-          oldValues["data.dying"] = currentDying;
-
-          // Calculate new dying value
-          let newDying = currentDying + 1 + wounded;
-
-          // Check if this is from a critical hit (if isCritical is available)
-          // If target is immune to critical hits, treat as normal hit
-          if (
-            typeof isCritical !== "undefined" &&
-            isCritical &&
-            !immuneToCritical
-          ) {
-            newDying = currentDying + 2 + wounded;
-            message += `\n${targetName} gains Dying ${newDying} (critical hit increases dying by 2).`;
-          } else {
-            message += `\n${targetName} gains Dying ${newDying}.`;
-          }
-
-          // Cap dying at 4 (death)
-          if (newDying > 4) {
-            newDying = 4;
-          }
-
-          valuesToSet["data.dying"] = newDying;
-
-          // Check if dying >= 4 (death)
-          if (newDying >= 4) {
-            api.addEffect("Dead", target);
-            message += `\n**[center][color=red]DEAD (Dying ${newDying})[/color][/center]**`;
-          } else {
-            if (
-              target.effects.find((effect) => effect.name === "Unconscious") ===
-              undefined
-            ) {
+          // Characters and their companions gain dying, or are knocked out
+          // by nonlethal damage (dying.js). If the target is immune to
+          // critical hits, a critical hit counts as a normal one.
+          const { lines, buttons } = getZeroHitPointsChanges(target, {
+            critical:
+              typeof isCritical !== "undefined" && isCritical && !immuneToCritical,
+            nonlethal: isNonlethalDamage(traits),
+            valuesToSet,
+            oldValues,
+          });
+          message += `\n${lines.join("\n")}`;
+          dyingButtons = buttons;
+        } else if (target.recordType === "npcs") {
+          // Other NPCs die at 0 HP, unless nonlethal damage knocks them out
+          // (Player Core pg. 410); objects are destroyed either way
+          if (isNonlethalDamage(traits) && !isObject) {
+            if (!getTokenCondition(target, "unconscious")) {
               api.addEffects(["Unconscious", "Prone"], target);
             }
+            message += `\n${targetName} is knocked out by nonlethal damage.`;
+          } else {
+            api.addEffect("Dead", target);
+            message += `\n${targetName} is ${isObject ? "destroyed" : "dead"}.`;
           }
-        } else if (target.recordType === "npcs") {
-          // NPCs just die at 0 HP
-          api.addEffect("Dead", target);
-          message += `\n${targetName} is ${isObject ? "destroyed" : "dead"}.`;
         }
       }
 
@@ -12473,6 +12463,9 @@ function applyDamage(
             }
           },
         );
+      }
+      if (wakes) {
+        wakeCreature(target);
       }
 
       // Build undo macro with all old values as a single batch operation
@@ -12508,7 +12501,7 @@ function applyDamage(
       });
 
       api.sendMessage(
-        `${message}${macro}`,
+        `${message}${macro}${dyingButtons.map((button) => `\n${button}`).join("")}`,
         undefined,
         undefined,
         tags.length > 0 ? tags : undefined,

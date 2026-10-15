@@ -31,6 +31,9 @@ const regularHealing = data.roll.types.reduce(
 
 let message = "";
 
+// Treat Wounds' healing also ends the wounded condition (dying.js)
+const treatWounds = data.roll?.metadata?.treatWounds === true;
+
 const tempMacro = tempHealing
   ? `
   \`\`\`Apply_Temporary_HP
@@ -92,26 +95,8 @@ const healingMacro = regularHealing
   }
   
   targets.forEach(target => {
-    // Apply healing
-    if (target && target.data) {
-      var curhp = target.data?.curhp || 0;
-      curhp += healing;
-      if (curhp > target.data?.hitpoints) { curhp = target.data?.hitpoints; }
-      const oldHp = (target.data?.curhp || 0);
-      api.setValueOnToken(target, "data.curhp", curhp);
-      const unIdentified = target.identified === false;
-      let targetName = !unIdentified ? target.name || target.record.name : target.unidentifiedName || target.record.unidentifiedName;
-      targetName = targetName.replace(/'/g, ''); // Just remove the single quotes
-  
-      const macro = \`\\\`\\\`\\\`Undo\\n if (isGM) { api.setValueOnTokenById('\$\{target._id\}', '\$\{target.recordType\}', 'data.curhp', '\$\{oldHp\}'); api.editMessage(null, '~\$\{targetName\} healed for \$\{healing\} HP.~'); } else { api.showNotification('Only the GM can undo healing.', 'yellow', 'Notice'); } \\n\\\`\\\`\\\`\`;
-      
-      api.sendMessage(\`\$\{targetName\} healed for \$\{healing\} HP.\\n\$\{macro\}\`, undefined, undefined, undefined, target);
-  
-      // If healing > 0, float text
-      if (healing > 0) {
-        api.floatText(target, \`+\${healing}\`, "#1bc91b");
-      }
-    }
+    // Hit Points, dying and unconscious, and wounded for Treat Wounds
+    applyHealingToToken(target?.token || target, healing, { treatWounds: ${treatWounds} });
   });
   \`\`\`
   `

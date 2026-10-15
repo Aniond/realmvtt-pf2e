@@ -1,12 +1,17 @@
-// Recovery Check handler for PF2e
-// Recovery checks are flat checks with DC = 10 + current dying value
+// Recovery Check handler for PF2e (Player Core pg. 411)
+// Recovery checks are flat checks with DC = 10 + current dying value (1 lower
+// with Toughness)
 // Critical Success: dying value reduced by 2
 // Success: dying value reduced by 1
 // Failure: dying value increased by 1
 // Critical Failure: dying value increased by 2
+// Losing dying adds 1 wounded. The character dies at the dying value they die
+// at: 4, or 5 with Diehard, less their doomed value (dying.js).
 
-const recordId = record?._id;
-const minRoll = data?.roll?.metadata?.minRoll;
+const metadata = data?.roll?.metadata || {};
+// The character: the one the turn-start button was for, or the sheet's
+const recordId = metadata.recordId || record?.recordId || record?._id;
+const minRoll = metadata.minRoll;
 
 // Find the unddropped d20, and if minroll is set
 // alter the actual roll to be the minroll if it's lower
@@ -34,10 +39,8 @@ if (roll.dice) {
 
 // Requery the record in case of multiple recovery checks
 api.getRecord("characters", recordId, (record) => {
-  const currentDying = parseInt(record?.data?.dying || "0", 10);
-
-  // DC = 10 + current dying value
-  const dc = 10 + currentDying;
+  const currentDying = getDyingValue(record);
+  const dc = getRecoveryCheckDC(record, currentDying);
 
   // Find the natural d20 roll (not dropped)
   let naturalRoll = 0;
@@ -84,65 +87,49 @@ api.getRecord("characters", recordId, (record) => {
     },
   ];
 
-  const valuesToSet = {};
-  let newDying = currentDying;
-  let message = "";
+  if (currentDying === 0) {
+    api.sendMessage(
+      `${record?.name || "The character"} isn't dying, so there's no recovery check to make.`,
+      roll,
+      [],
+      tags,
+    );
+    return;
+  }
 
-  // Apply the effects based on degree of success
-  switch (degreeOfSuccess) {
-    case 2: // Critical Success
-      newDying = Math.max(0, currentDying - 2);
-      valuesToSet["data.dying"] = newDying;
+  const result = getRecoveryCheckResult(record, degreeOfSuccess);
+  const newDying = result.dying;
+  const lostDying = newDying === 0;
+  const wounded = result.values["data.wounded"];
+  const outcomes = {
+    2: ["green", "CRITICAL SUCCESS", "reduced by 2"],
+    1: ["lime", "SUCCESS", "reduced by 1"],
+    0: ["pink", "FAILURE", "increased by 1"],
+    "-1": ["red", "CRITICAL FAILURE", "increased by 2"],
+  };
+  const [color, label, change] = outcomes[degreeOfSuccess];
+  let message = `**[center][color=${color}]${label}[/color] [gm]vs DC ${dc} (${marginText})[/gm][/center]**\n\n[center]Dying ${change}${
+    lostDying ? `. Wounded ${wounded}.` : ` (${currentDying} → ${newDying}).`
+  }[/center]`;
+  if (result.dead) {
+    message += `\n\n**[center][color=red]DEAD (Dying ${newDying})[/color][/center]**`;
+  }
 
-      if (newDying === 0) {
-        // You lose the dying condition if it ever reaches dying 0.
-        // When you losing the dying condition you become wounded 1 or increase it by 1
-        const currentWounded = parseInt(record?.data?.wounded || "0", 10);
-        valuesToSet["data.wounded"] = Math.min(currentWounded + 1, 3); // Wounded value becomes previous dying value
-        message = `**[center][color=green]CRITICAL SUCCESS[/color] [gm]vs DC ${dc} (${marginText})[/gm][/center]**\n\n[center]Dying reduced by 2. Wounded ${valuesToSet["data.wounded"]}.[/center]`;
-      } else {
-        message = `**[center][color=green]CRITICAL SUCCESS[/color] [gm]vs DC ${dc} (${marginText})[/gm][/center]**\n\n[center]Dying reduced by 2 (${currentDying} → ${newDying}).[/center]`;
-      }
-      break;
-
-    case 1: // Success
-      newDying = Math.max(0, currentDying - 1);
-      valuesToSet["data.dying"] = newDying;
-
-      if (newDying === 0) {
-        const currentWounded = parseInt(record?.data?.wounded || "0", 10);
-        valuesToSet["data.wounded"] = Math.min(currentWounded + 1, 3);
-        message = `**[center][color=lime]SUCCESS[/color] [gm]vs DC ${dc} (${marginText})[/gm][/center]**\n\n[center]Dying reduced by 1. Wounded ${valuesToSet["data.wounded"]}.[/center]`;
-      } else {
-        message = `**[center][color=lime]SUCCESS[/color] [gm]vs DC ${dc} (${marginText})[/gm][/center]**\n\n[center]Dying reduced by 1 (${currentDying} → ${newDying}).[/center]`;
-      }
-      break;
-
-    case 0: // Failure
-      newDying = Math.min(4, currentDying + 1);
-      valuesToSet["data.dying"] = newDying;
-      message = `**[center][color=pink]FAILURE[/color] [gm]vs DC ${dc} (${marginText})[/gm][/center]**\n\n[center]Dying increased by 1 (${currentDying} → ${newDying}).[/center]`;
-      break;
-
-    case -1: // Critical Failure
-      newDying = Math.min(4, currentDying + 2);
-      valuesToSet["data.dying"] = newDying;
-      message = `**[center][color=red]CRITICAL FAILURE[/color] [gm]vs DC ${dc} (${marginText})[/gm][/center]**\n\n[center]Dying increased by 2 (${currentDying} → ${newDying}).[/center]`;
-      break;
+  // Heroic Recovery: when the dying value would increase
+  const token = api.getToken();
+  const tokenId = metadata.tokenId || token?._id;
+  if (degreeOfSuccess <= 0 && tokenId && getHeroPoints(record) > 0) {
+    message += `\n${getChatButton("Heroic_Recovery", { _id: tokenId, name: record?.name }, "heroicRecovery(token)")}`;
   }
 
   // Send the message
   api.sendMessage(message, roll, [], tags);
 
   // Apply the changes
-  api.setValues(valuesToSet);
+  api.setValuesOnRecord(record, result.values);
 
-  // If dying reaches 4, the character dies
-  if (newDying >= 4) {
-    const tokenForRecord = api.getToken();
-    if (tokenForRecord) {
-      api.addEffect("Dead", tokenForRecord);
-      api.floatText(tokenForRecord, "DEAD", "#ff0000");
-    }
+  if (result.dead && token) {
+    api.addEffect("Dead", token);
+    api.floatText(token, "DEAD", "#ff0000");
   }
 });

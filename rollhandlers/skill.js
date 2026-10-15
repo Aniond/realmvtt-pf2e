@@ -180,7 +180,7 @@ if (targets.length === 0) {
   api.showNotification("No targets selected for healing", "error");
 } else {
   // Roll healing for the first target
-  api.roll("${healingFormula}", { rollName: "Treat Wounds Healing", targets: targets }, "healing");
+  api.roll("${healingFormula}", { rollName: "Treat Wounds Healing", targets: targets, treatWounds: true }, "healing");
 }
 \`\`\``;
       message += `\n\n${healingMacro}`;
@@ -208,6 +208,16 @@ if (targets.length === 0) {
 }
 \`\`\``;
       message += `\n\n${damageMacro}`;
+    }
+  }
+
+  // Administer First Aid: the result and the button that applies it
+  // (dying.js)
+  const firstAidData = data?.roll?.metadata?.administerFirstAid;
+  if (firstAidData) {
+    const firstAidLines = getFirstAidResultLines(firstAidData, degreeOfSuccess);
+    if (firstAidLines.length > 0) {
+      message += `\n\n${firstAidLines.join("\n")}`;
     }
   }
 

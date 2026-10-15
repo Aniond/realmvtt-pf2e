@@ -70,7 +70,7 @@ function createSandbox() {
   };
   const ctx = vm.createContext(sandbox);
 
-  for (const file of ["common.js", "PF2e.js", "spell-entries.js"]) {
+  for (const file of ["common.js", "PF2e.js", "spell-entries.js", "dying.js"]) {
     const code = fs.readFileSync(rollhandlersDir + "/" + file, "utf8");
     new vm.Script(code, { filename: file }).runInContext(ctx);
   }
