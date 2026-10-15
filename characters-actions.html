@@ -14,7 +14,9 @@
   function onRestoreSpellcastingEntries() {
     api.closeOpenedPopovers();
     const oldSpells = record.data?.spells || [];
-    api.setValues({ "data.spellcastingDismissed": [] }, (updatedRecord) => {
+    api.setValues(
+      { "data.spellcastingDismissed": [], "data.spellcastingNotice": null },
+      (updatedRecord) => {
       onAddEditFeature(
         updatedRecord,
         () => {
@@ -27,7 +29,8 @@
         },
         true
       );
-    });
+      }
+    );
   }
 
   function onAddAction() {

@@ -477,17 +477,25 @@
             if (message) {
               api.showNotification(message, "blue", "Feats");
             }
-            const spellMessage = describeSpellcastingSync(
-              oldSpells,
-              updatedRecord,
-            );
-            if (spellMessage) {
-              api.showNotification(spellMessage, "blue", "Spellcasting");
+            if (updatedRecord.data?.spellcastingNotice) {
+              showSpellcastingNotice(updatedRecord, true);
+            } else {
+              const spellMessage = describeSpellcastingSync(
+                oldSpells,
+                updatedRecord,
+              );
+              if (spellMessage) {
+                api.showNotification(spellMessage, "blue", "Spellcasting");
+              }
             }
           });
         },
         true,
       );
+    } else {
+      // A takeover another action ran first (the GM's client, equipping an
+      // item) kept its notice for the owner
+      showSpellcastingNotice(record);
     }
   }
 

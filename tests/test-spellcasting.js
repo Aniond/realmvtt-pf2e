@@ -1109,9 +1109,11 @@ section("Review: the takeover picks the class's entry, not an archetype's");
       "data.level": 2,
       "data.spells": spells,
     });
-  const notTaken = synced(sorcerer2([bardSpells]));
+  const bardDedication = playerEntry("Bard Spells", { type: "spontaneous", tradition: "Occult", attribute: "cha", numCantrips: 2 });
+  const notTaken = synced(sorcerer2([bardDedication]));
   assert("an entry named for another class isn't taken", sources(notTaken), [null, "class:sorcerer"]);
   assert("so the class's entry is added", names(notTaken), ["Bard Spells", "Sorcerer Spells"]);
+  assert("named for another class but holding the class's slots, it is taken", sources(synced(sorcerer2([bardSpells]))), ["class:sorcerer"]);
   const bardolph = synced(sorcerer2([{ ...bardSpells, name: "Bardolph's Spells" }]));
   assert("a name that only starts like a class is fine", sources(bardolph), ["class:sorcerer"]);
 
@@ -1941,6 +1943,216 @@ section("Review: Flexible Spellcaster, dragon eidolon and Universalist");
   assert("Universalist Wizard: no school slot", spec(wizard("universalist-wizard"), 1).counts.numSpells1, 2);
   assert("Arcane School: Universalist: no school slot", spec(wizard("arcane-school-universalist"), 1).counts.numSpells1, 2);
   assert("Unified Magical Theory by another name: no school slot", spec(wizard("unified-magical-theory"), 1).counts.numSpells1, 2);
+}
+
+section("Re-review: another class's word, font names, cantrips, wrong type, saved notice");
+{
+  const filledNames = (entry, rank) =>
+    (entry.data[rank === 0 ? "cantrips" : `spells${rank}`] || [])
+      .filter((row) => row?.data?.type !== "slot")
+      .map((row) => row.name);
+  const divine = (name, data) => playerEntry(name, { tradition: "Divine", attribute: "wis", ...data });
+  const cleric = (level, spells) =>
+    character(classRecord("Cleric"), level, { flags: { divineFont: "healing" }, spells });
+  const clericSpells = () =>
+    divine("Cleric Spells", { numCantrips: 5, numSpells1: 3, numSpells2: 3, numSpells3: 2 });
+
+  // Another class's word in the name of an entry holding the class's slots
+  for (const name of [
+    "The Witch's Grimoire",
+    "Magus Tome of Ezren",
+    "Ezren's Druid-Bane Spellbook",
+    "Oracle Bones",
+    "Necromancer's Bane Book",
+  ]) {
+    const book = playerEntry(name, {
+      numCantrips: 5,
+      cantrips: ["Shield", "Light", "Detect Magic", "Prestidigitation", "Electric Arc"].map((spell) => filled(spell, { level: 0 })),
+      numSpells1: 3,
+      spells1: preparedRows(1, 3, ["Sleep", "Fear", "Grease"]),
+      numSpells2: 3,
+      spells2: preparedRows(2, 3, ["Blur", "Mist", "Web"]),
+      numSpells3: 2,
+      spells3: preparedRows(3, 2, ["Fireball", "Haste"]),
+    });
+    const record = synced(character(classRecord("Wizard"), 5, { spells: [book] }));
+    assert(`"${name}" with the class's slots is taken over, and no entry is added`, sources(record), ["class:wizard"]);
+  }
+
+  // Setup A: a dedication named for Font of Arcana isn't the Divine Font
+  const fontOfArcana = playerEntry("Sorcerer Dedication (Font of Arcana)", {
+    type: "spontaneous",
+    attribute: "cha",
+    numSpells1: 1,
+    spells1: [filled("Grease", { level: 1 })],
+    numSpells2: 1,
+    spells2: [filled("Blur", { level: 2 })],
+    numSpells3: 1,
+    spells3: [filled("Haste", { level: 3 })],
+  });
+  const setupA = synced(
+    cleric(8, [
+      divine("Cleric Spells", { numCantrips: 5, numSpells1: 3, numSpells2: 3, numSpells3: 3, numSpells4: 3 }),
+      fontOfArcana,
+    ]),
+  );
+  const dedication = setupA.data.spells.find((entry) => entry.name === fontOfArcana.name);
+  assert("Setup A: the dedication's entry is left as it was", [dedication.data.auto, counts(dedication)], [undefined, { 1: 1, 2: 1, 3: 1 }]);
+  assert("Setup A: its spells stay at their ranks", [1, 2, 3].map((rank) => filledNames(dedication, rank)), [["Grease"], ["Blur"], ["Haste"]]);
+  assert("Setup A: a Divine Font entry is added", [entryFor(setupA, "class:cleric:font").name, counts(entryFor(setupA, "class:cleric:font"))], ["Divine Font", { 4: 5 }]);
+
+  // Setup B: cantrips in their own entry, the font folded into the class's
+  const setupBEntries = [
+    divine("Cantrips", {
+      numCantrips: 5,
+      cantrips: ["Light", "Stabilize", "Shield", "Guidance", "Divine Lance"].map((spell) => filled(spell, { level: 0 })),
+    }),
+    divine("Cleric Spells + Font", {
+      numSpells1: 3,
+      spells1: preparedRows(1, 3, ["Bless", "Command", "Fear"]),
+      numSpells2: 3,
+      spells2: preparedRows(2, 3, ["Silence", "Calm", "Sound Burst"]),
+      numSpells3: 7,
+      spells3: preparedRows(3, 7, ["Blindness", "Heroism", "Heal", "Heal", "Heal", "Heal", "Heal"]),
+    }),
+  ];
+  const setupB = synced(cleric(5, setupBEntries));
+  const folded = setupB.data.spells.find((entry) => entry.name === "Cleric Spells + Font");
+  assert("Setup B: the entry with the font folded in is the class's", [folded.data.auto?.source, counts(folded)], ["class:cleric", { 1: 3, 2: 3, 3: 2 }]);
+  assert(
+    "Setup B: its other spells stay at their ranks",
+    [1, 2, 3].map((rank) => filledNames(folded, rank)),
+    [["Bless", "Command", "Fear"], ["Silence", "Calm", "Sound Burst"], ["Blindness", "Heroism"]],
+  );
+  assert("Setup B: the heals move to the Divine Font", filledNames(entryFor(setupB, "class:cleric:font"), 3), ["Heal", "Heal", "Heal", "Heal", "Heal"]);
+  assert("Setup B: no other class entry is added", names(setupB), ["Cantrips", "Cleric Spells + Font", "Divine Font"]);
+  assertIncludes("Setup B: the notice names the cantrips it raised", ctx.describeSpellcastingSync(setupBEntries, setupB), "(cantrips 0 to 5)");
+
+  // Setup C: "font" inside another word
+  const scrolls = divine("Fontaine's Scrolls", {
+    numSpells1: 2,
+    spells1: preparedRows(1, 2, ["Bless", "Command"]),
+    numSpells2: 1,
+    spells2: preparedRows(2, 1, ["Silence"]),
+  });
+  const setupC = synced(cleric(5, [clericSpells(), scrolls]));
+  const scrollsAfter = setupC.data.spells.find((entry) => entry.name === scrolls.name);
+  assert(
+    "Setup C: Fontaine's Scrolls is left as it was",
+    [scrollsAfter.data.auto, counts(scrollsAfter), filledNames(scrollsAfter, 1), filledNames(scrollsAfter, 2)],
+    [undefined, { 1: 2, 2: 1 }, ["Bless", "Command"], ["Silence"]],
+  );
+  assert("Setup C: a Divine Font entry is added", [entryFor(setupC, "class:cleric:font").name, counts(entryFor(setupC, "class:cleric:font"))], ["Divine Font", { 3: 5 }]);
+
+  // Named for the font but holding other spells: left as it was and named
+  const extras = divine("Healing Font Extras", {
+    numSpells3: 5,
+    spells3: preparedRows(3, 5, ["Heal", "Heal", "Heal", "Heal", "Bless"]),
+  });
+  const extrasEntries = [clericSpells(), extras];
+  const withExtras = synced(cleric(5, extrasEntries));
+  const extrasAfter = withExtras.data.spells.find((entry) => entry.name === extras.name);
+  assert(
+    "a font-named entry with other spells is left as it was",
+    [extrasAfter.data.auto, counts(extrasAfter), filledNames(extrasAfter, 3)],
+    [undefined, { 3: 5 }, ["Heal", "Heal", "Heal", "Heal", "Bless"]],
+  );
+  assertIncludes(
+    "and the notice names it",
+    ctx.describeSpellcastingSync(extrasEntries, withExtras),
+    "Healing Font Extras was left as it was, as it holds spells other than heal or harm.",
+  );
+
+  // Only heal and harm move up with the font's rank
+  let level6 = synced(cleric(6, []));
+  const fontIndex = level6.data.spells.findIndex((entry) => entry.data.auto?.source === "class:cleric:font");
+  level6 = apply(level6, {
+    [`data.spells.${fontIndex}.data.spells3`]: [
+      filled("Heal", { level: 3 }),
+      filled("Heal", { level: 3 }),
+      filled("Bless", { level: 3 }),
+      ...level6.data.spells[fontIndex].data.spells3.slice(3),
+    ],
+  });
+  const level7 = entryFor(atLevel(level6, 7), "class:cleric:font");
+  assert("level 7: the heals move up with the font", filledNames(level7, 4), ["Heal", "Heal"]);
+  assert("level 7: Bless stays at its rank", filledNames(level7, 3), ["Bless"]);
+
+  // A main entry with no cantrips, from 2nd level
+  const spellbook = playerEntry("Spellbook", { numSpells1: 3, spells1: preparedRows(1, 3, ["Sleep", "Fear", "Grease"]) });
+  const noCantrips = character(classRecord("Wizard"), 2, { spells: [spellbook] });
+  assert("level 2: a main entry with no cantrips is taken over", sources(synced(noCantrips)), ["class:wizard"]);
+  const healSide = divine("Cleric Heal Slots", { numSpells3: 4, spells3: preparedRows(3, 4, ["Heal", "Heal", "Heal", "Heal"]) });
+  assert(
+    "a lone heal entry is still taken over by the class",
+    entryFor(synced(cleric(5, [healSide])), "class:cleric")?.name,
+    "Cleric Heal Slots",
+  );
+
+  // The class's entry set to the other way of casting
+  const mistypedEntry = playerEntry("Sorcerer Spells", {
+    type: "prepared",
+    tradition: "Occult",
+    attribute: "cha",
+    numCantrips: 5,
+    numSpells1: 4,
+    numSpells2: 3,
+  });
+  const mistypedStart = apply(sorcererWith(bloodline("Aberrant", "occult"), { bloodline: "bloodline-aberrant" }), {
+    "data.level": 3,
+    "data.spells": [mistypedEntry],
+  });
+  const mistyped = synced(mistypedStart);
+  assert("wrong type: no class entry is added", sources(mistyped), [null]);
+  assert("wrong type: Restore Automatic Entries shows", mistyped.fields.restoreSpellcastingBtn.hidden, false);
+  assert(
+    "wrong type: the notice says to set its type",
+    ctx.describeSpellcastingSync([mistypedEntry], mistyped),
+    'Sorcerer Spells looks like your Sorcerer entry but is set to prepared, so "Sorcerer Spells" wasn\'t added (it would double your slots). Set Sorcerer Spells to spontaneous in its settings, then click Restore Automatic Entries (under Add Spellcasting Entry).',
+  );
+  assert(
+    "set to spontaneous, it is taken over",
+    sources(synced(apply(mistyped, { "data.spells.0.data.type": "spontaneous" }))),
+    ["class:sorcerer"],
+  );
+
+  // The first takeover's notice is kept for the owner
+  const firstValues = syncValues(noCantrips);
+  const firstSynced = apply(noCantrips, firstValues);
+  assert(
+    "an existing character's first takeover keeps its notice",
+    firstValues["data.spellcastingNotice"],
+    ctx.describeSpellcastingSync(noCantrips.data.spells, firstSynced),
+  );
+  assert("a second sync keeps no other", "data.spellcastingNotice" in syncValues(firstSynced), false);
+  assert("a new character keeps none", "data.spellcastingNotice" in syncValues(character(classRecord("Wizard"), 2)), false);
+
+  const shown = [];
+  let written = null;
+  const { showNotification, setValues } = ctx.api;
+  ctx.api.showNotification = (message) => shown.push(message);
+  ctx.api.setValues = (values) => {
+    written = values;
+  };
+  const kept = { ...firstSynced, ownerId: "player" };
+  ctx.isGM = true;
+  ctx.userId = "gm";
+  ctx.showSpellcastingNotice(kept);
+  assert("a GM opening the sheet doesn't see the player's notice", [shown.length, written], [0, null]);
+  ctx.showSpellcastingNotice(kept, true);
+  assert("a GM whose open ran the takeover sees it, and it's kept for the player", [shown.length, written], [1, null]);
+  ctx.isGM = false;
+  ctx.userId = "player";
+  ctx.showSpellcastingNotice(kept);
+  assert(
+    "the owner's open shows it and clears it",
+    [shown, written],
+    [[kept.data.spellcastingNotice, kept.data.spellcastingNotice], { "data.spellcastingNotice": null }],
+  );
+  ctx.api.showNotification = showNotification;
+  ctx.api.setValues = setValues;
+  ctx.isGM = true;
+  delete ctx.userId;
 }
 
 process.exitCode = summary();
