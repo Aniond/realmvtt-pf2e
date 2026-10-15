@@ -13,10 +13,12 @@
       return;
     }
 
-    // An entry made from the class is remembered, so it isn't made again
-    const source = isManagedSpellcastingEntry(spellcastingEntry)
-      ? spellcastingEntry.data.auto.source
-      : "";
+    // An entry the class made is remembered, so it isn't made again
+    const source =
+      isManagedSpellcastingEntry(spellcastingEntry) &&
+      record.data?.autoSpellcasting
+        ? spellcastingEntry.data.auto.source
+        : "";
 
     api.showConfirm(
       "Delete Spellcasting Entry",
@@ -68,13 +70,22 @@
     );
   }
 
-  // "Set slots from level": turning it back on brings the counts up to date
+  // "Set slots from level": checked on an entry the player made, it has the
+  // entry follow one of the class's; on an entry the sheet manages, turning
+  // it back on brings the counts up to date
   function onAutoSlotsChange(value) {
     const spellcastingEntryDataPath = getNearestParentDataPath(dataPath);
+    const checked = value === true || value === "true";
+    if (
+      checked &&
+      !isManagedSpellcastingEntry(api.getValue(spellcastingEntryDataPath))
+    ) {
+      optInSpellcastingEntry(record, spellcastingEntryDataPath);
+      return;
+    }
     api.setValues(
       {
-        [`${spellcastingEntryDataPath}.data.autoSlots`]:
-          value === true || value === "true",
+        [`${spellcastingEntryDataPath}.data.autoSlots`]: checked,
       },
       (updatedRecord) => {
         onAddEditFeature(updatedRecord, undefined, true);
@@ -136,12 +147,12 @@
               variant="bold"
               label="Spellcasting Entry Settings"
             ></label>
-            <!-- Only on entries made from the class -->
+            <!-- Off on entries the player made: checking it has one follow
+                 the class -->
             <checkbox
               field="autoSlots"
               label="Set slots from level"
               size="xs"
-              hidden="true"
               onchange="onAutoSlotsChange(value);"
             ></checkbox>
             <dropdown

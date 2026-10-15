@@ -9,26 +9,28 @@
     api.closeOpenedPopovers();
   }
 
-  // Makes the class's spellcasting entries the player deleted again, and
-  // takes over an entry the player has since named for the class
+  // Makes the class's spellcasting entries the player deleted again
   function onRestoreSpellcastingEntries() {
     api.closeOpenedPopovers();
     const oldSpells = record.data?.spells || [];
     api.setValues(
-      { "data.spellcastingDismissed": [], "data.spellcastingNotice": null },
+      { "data.spellcastingDismissed": [], "data.autoSpellcasting": true },
       (updatedRecord) => {
-      onAddEditFeature(
-        updatedRecord,
-        () => {
-          api.getRecord("characters", record._id, (syncedRecord) => {
-            const message = describeSpellcastingSync(oldSpells, syncedRecord);
-            if (message) {
-              api.showNotification(message, "blue", "Spellcasting");
-            }
-          });
-        },
-        true
-      );
+        onAddEditFeature(
+          updatedRecord,
+          () => {
+            api.getRecord("characters", record._id, (syncedRecord) => {
+              const message = describeAddedSpellcastingEntries(
+                oldSpells,
+                syncedRecord
+              );
+              if (message) {
+                api.showNotification(message, "blue", "Spellcasting");
+              }
+            });
+          },
+          true
+        );
       }
     );
   }
@@ -267,7 +269,7 @@
               label="Add"
               onclick="onAddSpellcastingEntry()"
             ></button>
-            <!-- Shown once an entry made from the class was deleted -->
+            <!-- Shown once an entry the class made was deleted -->
             <button
               field="restoreSpellcastingBtn"
               size="xs"
