@@ -4904,59 +4904,46 @@ function showAlchemistFields(record, valuesToSet) {
   }
 }
 
-// Called by onAddEditSpellcastingEntry to update the DC and Mod for all spellcasting entries
-function updateSpellcastingEntries(record, valuesToSet) {
+// Called by onAddEditFeature to update the DC, Mod and training of every
+// spellcasting entry. `entries` is the list syncSpellcastingEntries built;
+// without it the character's own entries are used.
+function updateSpellcastingEntries(record, valuesToSet, entries = null) {
   if (record.recordType !== "characters") {
     return;
   }
 
-  const spellcastingEntries = record.data?.spells || [];
-  spellcastingEntries.forEach((spellcastingEntry, index) => {
-    const spellcastingEntryDataPath = `data.spells.${index}`;
+  const spellcastingEntries =
+    entries || cloneRecordData(record.data?.spells || []);
+  // Check if level is being updated in valuesToSet
+  const level = valuesToSet["data.level"] ?? record.data?.level ?? 1;
 
-    const proficiency = spellcastingEntry.data?.proficiency || "spell";
-    const attribute = spellcastingEntry.data?.attribute || "int";
-    const training = parseInt(spellcastingEntry.data?.training || "0", 10);
-    const isItem = spellcastingEntry.data?.type === "item";
-
+  spellcastingEntries.forEach((spellcastingEntry) => {
     // Don't auto-update item types since they might be manually set
-    if (!isItem) {
-      // Get current spellcasting training level (check valuesToSet first)
-      const currentTraining =
-        proficiency === "spell"
-          ? `${
-              valuesToSet["data.spellcasting"] ??
-              record.data?.spellcasting ??
-              "0"
-            }`
-          : `${
-              valuesToSet["data.classDCProficiency"] ??
-              record.data?.classDCProficiency ??
-              "0"
-            }`;
-      const newTraining = Math.max(parseInt(currentTraining, 10), training);
-
-      // Check if level is being updated in valuesToSet
-      const level = valuesToSet["data.level"] ?? record.data?.level ?? 1;
-
-      const proficiencyBonus = calculateProficiencyBonusForLevel(
-        level,
-        newTraining,
-      );
-
-      // Check if attribute is being updated in valuesToSet
-      const attributeScore =
-        valuesToSet[`data.${attribute}`] ?? record.data?.[`${attribute}`] ?? 0;
-
-      // Set the DC and Modifier based on the proficiency
-      const mod = attributeScore + proficiencyBonus;
-      const dc = 10 + mod;
-
-      valuesToSet[`${spellcastingEntryDataPath}.data.dc`] = dc;
-      valuesToSet[`${spellcastingEntryDataPath}.data.mod`] = mod;
-      valuesToSet[`${spellcastingEntryDataPath}.data.training`] = newTraining;
+    if (spellcastingEntry.data?.type === "item") {
+      return;
     }
+
+    const attribute = spellcastingEntry.data?.attribute || "int";
+    const training = getSpellcastingEntryTraining(
+      record,
+      spellcastingEntry,
+      valuesToSet,
+    );
+    const proficiencyBonus = calculateProficiencyBonusForLevel(level, training);
+
+    // Check if attribute is being updated in valuesToSet
+    const attributeScore =
+      valuesToSet[`data.${attribute}`] ?? record.data?.[`${attribute}`] ?? 0;
+
+    // Set the DC and Modifier based on the proficiency
+    const mod = attributeScore + proficiencyBonus;
+    spellcastingEntry.data = spellcastingEntry.data || {};
+    spellcastingEntry.data.dc = 10 + mod;
+    spellcastingEntry.data.mod = mod;
+    spellcastingEntry.data.training = training;
   });
+
+  setSpellcastingEntryValues(record, spellcastingEntries, valuesToSet);
 }
 
 // Called by onAddEditFeature to set the feat slots for the character based on their feats
@@ -6495,8 +6482,10 @@ function onAddEditFeature(
   setFeatSlots(record, valuesToSet);
   updateVariantRuleFields(record, valuesToSet);
 
-  // Check all spellcasting entries and update DC and Mod
-  updateSpellcastingEntries(record, valuesToSet);
+  // Create and size the class's spellcasting entries for the current level,
+  // then check all spellcasting entries and update DC and Mod
+  const spellcastingEntries = syncSpellcastingEntries(record, valuesToSet);
+  updateSpellcastingEntries(record, valuesToSet, spellcastingEntries);
 
   // Update toggles list with all toggleable items
   updateTogglesList(record, valuesToSet);
@@ -13391,6 +13380,7 @@ function getLevelUpGains(record, newLevel, variants = getVariantRules()) {
     ),
     featTypes,
     classFeatures,
+    spellcasting: getSpellcastingLevelUpChanges(record, newLevel),
     abp: getAbpLevelGains(record, newLevel, variants),
   };
 }
@@ -13404,6 +13394,7 @@ function getLevelUpSummary(gains) {
   if (gains.classFeatures.length > 0) {
     lines.push(`Class features: ${gains.classFeatures.join(", ")}`);
   }
+  lines.push(...(gains.spellcasting || []));
   if (gains.attributeBoosts) {
     const count = gains.boostCount || 4;
     lines.push(`${count} attribute boost${count === 1 ? "" : "s"}`);

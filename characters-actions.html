@@ -9,6 +9,32 @@
     api.closeOpenedPopovers();
   }
 
+  // Makes the class's spellcasting entries the player deleted again
+  function onRestoreSpellcastingEntries() {
+    api.closeOpenedPopovers();
+    const oldSpells = record.data?.spells || [];
+    api.setValues(
+      { "data.spellcastingDismissed": [], "data.autoSpellcasting": true },
+      (updatedRecord) => {
+        onAddEditFeature(
+          updatedRecord,
+          () => {
+            api.getRecord("characters", record._id, (syncedRecord) => {
+              const message = describeAddedSpellcastingEntries(
+                oldSpells,
+                syncedRecord
+              );
+              if (message) {
+                api.showNotification(message, "blue", "Spellcasting");
+              }
+            });
+          },
+          true
+        );
+      }
+    );
+  }
+
   function onAddAction() {
     api.getRecord("characters", record._id, (updatedRecord) => {
       onAddEditFeature(updatedRecord);
@@ -242,6 +268,15 @@
               variant="outline"
               label="Add"
               onclick="onAddSpellcastingEntry()"
+            ></button>
+            <!-- Shown once an entry the class made was deleted -->
+            <button
+              field="restoreSpellcastingBtn"
+              size="xs"
+              variant="subtle"
+              hidden="true"
+              label="Restore Automatic Entries"
+              onclick="onRestoreSpellcastingEntries()"
             ></button>
           </div>
         </popover.dropdown>

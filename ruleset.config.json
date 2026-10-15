@@ -5299,6 +5299,9 @@
         },
         "Spells": {
           "file": "rollhandlers/spells.js"
+        },
+        "SpellEntries": {
+          "file": "rollhandlers/spell-entries.js"
         }
       },
       "defaultDice": "default",

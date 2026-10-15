@@ -1,15 +1,17 @@
+// typeChanged: the Spellcasting Type setting is the one that changed;
+// trainingChanged: the entry's training dropdown is
 function updateSpellcastingEntry(
   record,
   spellcastingEntry,
-  spellcastingEntryDataPath
+  spellcastingEntryDataPath,
+  typeChanged = false,
+  trainingChanged = false
 ) {
   // Reclaculate the DC and Modifier based on the new values
   const tradition = spellcastingEntry.data?.tradition || "Arcane";
   const type = spellcastingEntry.data?.type || "prepared";
 
-  const proficiency = spellcastingEntry.data?.proficiency || "spell";
   const attribute = spellcastingEntry.data?.attribute || "int";
-  const training = parseInt(spellcastingEntry.data?.training || "0", 10);
 
   const name = `${tradition} ${capitalize(type)} Spells`;
   const isFocus = type === "focus";
@@ -17,18 +19,34 @@ function updateSpellcastingEntry(
 
   const isNPC = record.recordType === "npcs" || record.recordType === "tokens";
 
+  // A rank picked for an entry made from the class is kept as its own, so
+  // the sheet doesn't set it back to the character's rank
+  let pickedTraining = null;
+  let entryForTraining = spellcastingEntry;
+  if (
+    trainingChanged &&
+    !isNPC &&
+    !isItem &&
+    isManagedSpellcastingEntry(spellcastingEntry)
+  ) {
+    pickedTraining =
+      parseInt(spellcastingEntry.data?.training || "0", 10) || 0;
+    entryForTraining = {
+      ...spellcastingEntry,
+      data: {
+        ...spellcastingEntry.data,
+        auto: { ...spellcastingEntry.data.auto, ownTraining: pickedTraining },
+      },
+    };
+  }
+
   // Get current spellcasting training level if not NPC and not Item type
   let newTraining = undefined;
   if (!isNPC && !isItem) {
-    const currentTraining =
-      proficiency === "spell"
-        ? `${record.data?.spellcasting || "0"}`
-        : `${record.data?.classDCProficiency || "0"}`;
-    newTraining = Math.max(parseInt(currentTraining, 10), training);
+    newTraining = getSpellcastingEntryTraining(record, entryForTraining);
   }
 
   const valuesToSet = {
-    [`${spellcastingEntryDataPath}.name`]: name,
     // If not in shownSpells, hide them
     [`${spellcastingEntryDataPath}.fields.cantripsBox.hidden`]: true,
     [`${spellcastingEntryDataPath}.fields.spells1Box.hidden`]: true,
@@ -49,6 +67,16 @@ function updateSpellcastingEntry(
     [`${spellcastingEntryDataPath}.fields.tradition.hidden`]: isItem,
     [`${spellcastingEntryDataPath}.fields.training.hidden`]: isItem,
   };
+
+  // Only a name the sheet gave follows the settings
+  if (isDefaultSpellcastingEntryName(spellcastingEntry.name)) {
+    valuesToSet[`${spellcastingEntryDataPath}.name`] = name;
+  }
+
+  if (pickedTraining !== null) {
+    valuesToSet[`${spellcastingEntryDataPath}.data.auto.ownTraining`] =
+      pickedTraining;
+  }
 
   if (newTraining) {
     valuesToSet[`${spellcastingEntryDataPath}.data.training`] = newTraining;
@@ -149,7 +177,11 @@ function updateSpellcastingEntry(
           }
 
           // Reset used state when changing type
-          spell.data.used = false;
+          if (typeChanged) {
+            spell.data.used = false;
+            spell.fields.nameBox = { hidden: false };
+            spell.fields.nameUsedBox = { hidden: true };
+          }
 
           // Update field visibility
           spell.fields.innateBox = { hidden: !isInnate || isCantrip };
@@ -171,29 +203,7 @@ function updateSpellcastingEntry(
       const newSlots = [];
 
       for (let i = 0; i < slotsNeeded; i++) {
-        newSlots.push({
-          _id: generateUuid(),
-          name: isCantrip ? "Cantrip Slot" : `Rank ${rank} Spell Slot`,
-          recordType: "spells",
-          unidentifiedName: isCantrip
-            ? "Cantrip Slot"
-            : `Rank ${rank} Spell Slot`,
-          data: {
-            type: "slot",
-            description: "",
-            level: rank,
-            slotOrder: filledSpells.length + i,
-          },
-          fields: {
-            spellDetails: { hidden: true },
-            innateBox: { hidden: true },
-            spellSlot: { hidden: false },
-            used: { hidden: isCantrip },
-            deleteBtn: {
-              hidden: true, // Always hide delete button for new slots
-            },
-          },
-        });
+        newSlots.push(buildSpellRow("prepared", rank, filledSpells.length + i));
       }
 
       // Combine filled spells with new empty slots
@@ -215,7 +225,11 @@ function updateSpellcastingEntry(
           }
 
           // Reset used state when changing type
-          spell.data.used = false;
+          if (typeChanged) {
+            spell.data.used = false;
+            spell.fields.nameBox = { hidden: false };
+            spell.fields.nameUsedBox = { hidden: true };
+          }
 
           // Update field visibility
           spell.fields.innateBox = { hidden: !isInnate || isCantrip };
@@ -225,8 +239,6 @@ function updateSpellcastingEntry(
           spell.fields.deleteBtn = {
             hidden: !isSpontaneous && !isFocus && !isInnate && !isItem,
           };
-          spell.fields.nameBox = { hidden: false };
-          spell.fields.nameUsedBox = { hidden: true };
         } else {
           spell.fields.deleteBtn = {
             hidden: !isSpontaneous && !isFocus && !isInnate && !isItem,
@@ -310,27 +322,10 @@ function addSpell(spellListDataPath) {
     }
   }
 
-  const newSpell = {
-    _id: generateUuid(),
-    name: isCantrip ? "New Cantrip" : `New Rank ${rank} Spell`,
-    recordType: "spells",
-    unidentifiedName: isCantrip ? "New Cantrip" : `New Rank ${rank} Spell`,
-    data: {
-      type: "slot",
-      description: "",
-      level: rank,
-      slotOrder: spellList.length,
-    },
-    fields: {
-      spellDetails: { hidden: true },
-      innateBox: { hidden: true },
-      spellSlot: { hidden: false },
-      deleteBtn: { hidden: false },
-      used: { hidden: true },
-    },
-  };
-
-  api.addValue(spellListDataPath, newSpell);
+  api.addValue(
+    spellListDataPath,
+    buildSpellRow("spontaneous", rank, spellList.length)
+  );
 }
 
 // Function for Focus and Spontanteous entries to remove a spell "slot"
@@ -359,20 +354,19 @@ function addSpellcastingEntry(record) {
     const attribute = updatedRecord.data?.addAttribute || "int";
     const type = updatedRecord.data?.addType || "prepared";
 
-    const isItem = type === "item";
-
-    const name = `${tradition} ${capitalize(type)} Spells`;
-
     let mod = 0;
     let dc = 0;
     let training = 0;
 
     if (record.recordType === "characters") {
       // Get current spellcasting training level
-      const training =
-        proficiency === "spell"
-          ? `${updatedRecord.data?.spellcasting || "0"}`
-          : `${updatedRecord.data?.classDCProficiency || "0"}`;
+      training =
+        parseInt(
+          proficiency === "spell"
+            ? updatedRecord.data?.spellcasting || "0"
+            : updatedRecord.data?.classDCProficiency || "0",
+          10
+        ) || 0;
 
       const proficiencyBonus = calculateProficiencyBonus(record, training);
       const attributeScore = updatedRecord.data?.[`${attribute}`] || 0;
@@ -381,105 +375,20 @@ function addSpellcastingEntry(record) {
       dc = 10 + mod;
     }
 
-    const isFocus = type === "focus";
-    const isSpontaneous = type === "spontaneous";
-    const isInnate = type === "innate" || type === "item";
-    const isPrepared = !isInnate && !isFocus && !isSpontaneous;
     const index = (updatedRecord.data?.spells || []).length || 0;
 
     api.addValue(
       "data.spells",
-      {
-        name: name,
-        unidentifiedName: "Spellcasting Entry",
-        identified: true,
-        data: {
-          type: type,
-          proficiency: proficiency,
-          tradition: tradition,
-          attribute: attribute,
-          training: training,
-          dc: dc,
-          mod: mod,
-          shownSpells: ["cantrips", "spells1"],
-          focusPoolMax: 1,
-        },
-        // By default, we show these
-        fields: {
-          preparedBox: {
-            hidden: !isPrepared,
-          },
-          training: {
-            // Item type casting will always be manually setting DC/Mod
-            hidden: isItem,
-          },
-          tradition: {
-            // This is the label for the training dropdown
-            hidden: isItem,
-          },
-          cantripsBox: {
-            hidden: false,
-          },
-          spells1Box: {
-            hidden: false,
-          },
-          moveUpBtn: {
-            hidden: index === 0,
-          },
-          // Show/hide buttons and fields for spontaneous / focus spells
-          spontaneousBox: {
-            hidden: !isSpontaneous,
-          },
-          addBtn: {
-            hidden: !isSpontaneous && !isFocus && !isInnate,
-          },
-          focusPoolLabel: {
-            hidden: !isFocus,
-          },
-          focusPool: {
-            hidden: !isFocus,
-          },
-          focusPoolMax: {
-            hidden: !isFocus,
-          },
-          numCantrips: {
-            hidden: isSpontaneous || isFocus || isInnate,
-          },
-          numSpells1: {
-            hidden: isInnate || isFocus,
-          },
-          numSpells2: {
-            hidden: isInnate || isFocus,
-          },
-          numSpells3: {
-            hidden: isInnate || isFocus,
-          },
-          numSpells4: {
-            hidden: isInnate || isFocus,
-          },
-          numSpells5: {
-            hidden: isInnate || isFocus,
-          },
-          numSpells6: {
-            hidden: isInnate || isFocus,
-          },
-          numSpells7: {
-            hidden: isInnate || isFocus,
-          },
-          numSpells8: {
-            hidden: isInnate || isFocus,
-          },
-          numSpells9: {
-            hidden: isInnate || isFocus,
-          },
-          numSpells10: {
-            hidden: isInnate || isFocus,
-          },
-          numCantripSpontaneousLabel: {
-            hidden: !isSpontaneous && !isInnate && !isFocus,
-          },
-        },
-      },
+      buildSpellcastingEntry({
+        type,
+        proficiency,
+        tradition,
+        attribute,
+        training,
+        dc,
+        mod,
+        isFirst: index === 0,
+      }),
       () => {
         // Reset the values
         api.setValues({

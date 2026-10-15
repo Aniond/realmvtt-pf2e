@@ -197,6 +197,8 @@
           classObj.data?.keyAbility?.length > 0
             ? classObj.data?.keyAbility[0]
             : "none",
+        // The class's spellcasting entries are made from now on
+        "data.autoSpellcasting": true,
         // Shown again if the Level 0 creation wizard hid it
         "fields.keyAbility.hidden": false,
       },
@@ -454,8 +456,13 @@
 
     // A GM may turn variant rules on or off after this character was built
     // (Free Archetype or Ancestry Paragon on a character who already leveled
-    // up): recalculate once so the new feat slots, panels and totals show
-    if ((record.data?.variantRulesKey || "") !== getVariantRulesKey()) {
+    // up): recalculate once so the new feat slots, panels and totals show.
+    // Only the GM or the character's owner can save that; for anyone else
+    // viewing the sheet it would fail and be tried again on every open.
+    if (
+      (record.data?.variantRulesKey || "") !== getVariantRulesKey() &&
+      canEditRecord(record)
+    ) {
       const oldFeats = record.data?.feats || [];
       onAddEditFeature(
         record,
@@ -1057,6 +1064,7 @@ ${getLevelUpSummary(gains)}`,
         "spells7",
         "spells8",
         "spells9",
+        "spells10",
       ];
 
       // If it's not a focus spell entry we go through each spell list of the entry

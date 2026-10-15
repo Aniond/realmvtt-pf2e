@@ -13,9 +13,18 @@
       return;
     }
 
+    // An entry the class made is remembered, so it isn't made again
+    const source =
+      isManagedSpellcastingEntry(spellcastingEntry) &&
+      record.data?.autoSpellcasting
+        ? spellcastingEntry.data.auto.source
+        : "";
+
     api.showConfirm(
       "Delete Spellcasting Entry",
-      `Are you sure you want to delete the "${spellcastingEntry.name}" entry?`,
+      source
+        ? `Delete "${spellcastingEntry.name}"? Your class won't add it again unless you use Restore Automatic Entries (under Add Spellcasting Entry).`
+        : `Are you sure you want to delete the "${spellcastingEntry.name}" entry?`,
       "Yes",
       "No",
       () => {
@@ -34,9 +43,16 @@
           allSpellcastingEntries[0].fields.moveUpBtn.hidden = true;
         }
 
-        api.setValues({
+        const valuesToSet = {
           "data.spells": allSpellcastingEntries,
-        });
+        };
+        if (source) {
+          valuesToSet["data.spellcastingDismissed"] = [
+            ...new Set([...(record.data?.spellcastingDismissed || []), source]),
+          ];
+          valuesToSet["fields.restoreSpellcastingBtn.hidden"] = false;
+        }
+        api.setValues(valuesToSet);
       }
     );
   }
@@ -48,7 +64,32 @@
     updateSpellcastingEntry(
       record,
       spellcastingEntry,
-      spellcastingEntryDataPath
+      spellcastingEntryDataPath,
+      dataPath.endsWith(".data.type"),
+      dataPath.endsWith(".data.training")
+    );
+  }
+
+  // "Set slots from level": checked on an entry the player made, it has the
+  // entry follow one of the class's; on an entry the sheet manages, turning
+  // it back on brings the counts up to date
+  function onAutoSlotsChange(value) {
+    const spellcastingEntryDataPath = getNearestParentDataPath(dataPath);
+    const checked = value === true || value === "true";
+    if (
+      checked &&
+      !isManagedSpellcastingEntry(api.getValue(spellcastingEntryDataPath))
+    ) {
+      optInSpellcastingEntry(record, spellcastingEntryDataPath);
+      return;
+    }
+    api.setValues(
+      {
+        [`${spellcastingEntryDataPath}.data.autoSlots`]: checked,
+      },
+      (updatedRecord) => {
+        onAddEditFeature(updatedRecord, undefined, true);
+      }
     );
   }
 </script>
@@ -106,6 +147,14 @@
               variant="bold"
               label="Spellcasting Entry Settings"
             ></label>
+            <!-- Off on entries the player made: checking it has one follow
+                 the class -->
+            <checkbox
+              field="autoSlots"
+              label="Set slots from level"
+              size="xs"
+              onchange="onAutoSlotsChange(value);"
+            ></checkbox>
             <dropdown
               size="xs"
               field="shownSpells"
