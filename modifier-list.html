@@ -97,6 +97,9 @@
       typeValue === "recoveryDC" ||
       typeValue === "weaponRange" ||
       typeValue === "weaponRune" ||
+      typeValue === "weaponDamageType" ||
+      typeValue === "weaponMaterial" ||
+      typeValue === "spellDamageType" ||
       typeValue === "rangeIncrementPenalty" ||
       typeValue === "offGuardTarget"
     ) {
@@ -287,6 +290,8 @@
       {"label": "Recovery Check DC", "value": "recoveryDC"},
       {"label": "Weapon Range Increment", "value": "weaponRange"},
       {"label": "Add Weapon Property Rune", "value": "weaponRune"},
+      {"label": "Weapon Damage Type", "value": "weaponDamageType"},
+      {"label": "Weapon Counts As Material", "value": "weaponMaterial"},
       {"label": "Range Increment Penalty", "value": "rangeIncrementPenalty"},
       {"label": "Target Is Off-Guard To You", "value": "offGuardTarget"},
       {"label": "Roll Twice (Fortune / Misfortune)", "value": "rollTwice"},
@@ -297,6 +302,7 @@
       {"label": "Bulk Limit", "value": "bulkLimit"},
       {"label": "Condition Gained Value", "value": "conditionGain"},
       {"label": "Spell Die Size", "value": "spellDieSize"},
+      {"label": "Spell Damage Type", "value": "spellDamageType"},
       {"label": "Add Resistance", "value": "resistance"},
       {"label": "Add Weakness", "value": "weakness"},
       {"label": "Add Immunity", "value": "immunity"},
@@ -601,6 +607,14 @@
       {"label": "Override (replace value)", "value": "override"},
       {"label": "Multiply (multiply values)", "value": "multiply"}]'
   ></dropdown>
+
+  <stringfield
+    width="100%"
+    size="xs"
+    field="damageType"
+    label="Change Damage Type To"
+    placeholder="Optional: the damage type the adjusted modifier deals instead (spirit)"
+  ></stringfield>
 </box>
 
 <box field="activeEffectBox" hidden="true">

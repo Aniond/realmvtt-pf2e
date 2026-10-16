@@ -1309,6 +1309,8 @@ api.getRecord('${record.recordType}', '${record._id}', (record) => {
 }
 
 function castSpell(record, spell, dataPathToSpell, isOverlay = false) {
+  // spellDamageType modifiers can change the damage type for this casting
+  spell = getAlteredSpell(record, spell);
   const isCantrip = (spell?.data?.traits || []).some(
     (trait) => trait?.toLowerCase() === "cantrip"
   );

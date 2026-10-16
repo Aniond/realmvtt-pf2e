@@ -350,6 +350,62 @@ function applySpellDieSize(record, spell, formula, kind) {
   });
 }
 
+/**
+ * The spell as spellDamageType modifiers change it for this casting: value
+ * is the damage type its damage deals instead (Elemental bloodline: Elemental
+ * Toss deals slashing for air), predicated against the spell ({spell}
+ * context, e.g. ["item:slug:elemental-toss"]). The last one wins. Base and
+ * heightened damage change; persistent and precision damage keep their type.
+ * Returns the spell unchanged when no modifier applies.
+ */
+function getAlteredSpell(record, spell) {
+  if (!record || !spell?.data || !Array.isArray(spell.data.damage)) return spell;
+  const mods = getEffectsAndModifiersForToken(
+    record,
+    ["spellDamageType"],
+    "",
+    undefined,
+    undefined,
+    { spell },
+  ).filter((mod) => mod.active !== false);
+  const type = mods.length
+    ? String(mods[mods.length - 1].value || "").trim().toLowerCase()
+    : "";
+  if (!type) return spell;
+  const retype = (entries) =>
+    Array.isArray(entries)
+      ? entries.map((entry) => {
+          const category = entry?.data?.category || "";
+          if (category === "persistent" || category === "precision") return entry;
+          return { ...entry, data: { ...(entry?.data || {}), type } };
+        })
+      : entries;
+  const heightening = Array.isArray(spell.data.heightening)
+    ? spell.data.heightening.map((entry) => {
+        const data = entry?.data;
+        if (!data) return entry;
+        return {
+          ...entry,
+          data: {
+            ...data,
+            damage: retype(data.damage),
+            levels: Array.isArray(data.levels)
+              ? data.levels.map((level) =>
+                  level?.data
+                    ? { ...level, data: { ...level.data, damage: retype(level.data.damage) } }
+                    : level,
+                )
+              : data.levels,
+          },
+        };
+      })
+    : spell.data.heightening;
+  return {
+    ...spell,
+    data: { ...spell.data, damage: retype(spell.data.damage), heightening },
+  };
+}
+
 function getSpellDieSize(spell) {
   if (!spell || !spell.data || !spell.data.damage) {
     return "";
@@ -1155,7 +1211,16 @@ function collectTraitsAndProperties(
   const contextItem = context.weapon || context.item || context.spell;
   if (contextItem && typeof contextItem === "object") {
     getFoundryItemAtoms(contextItem).forEach((atom) => traits.add(atom));
+    // Foundry's item:deity-favored: the character's deity's favored weapon
+    if (isDeityFavoredWeapon(token, contextItem)) {
+      traits.add("item:deity-favored");
+    }
   }
+  // The deity's favored weapons on the creature itself, for predicates with
+  // no weapon in hand (providesItems: ["deity:favored-weapon:fist"])
+  getDeityFavoredWeapons(token).forEach((weapon) =>
+    traits.add(`deity:favored-weapon:${weapon}`),
+  );
 
   // The source of the effect being rolled against (a spell's or ability's
   // traits passed by save/skill macros): Foundry's origin:trait:* and
@@ -1218,8 +1283,9 @@ function collectTraitsAndProperties(
       ["simple", "martial", "advanced", "unarmed"].includes(itemCategory);
 
     if (item.recordType === "items" && isWeapon && itemCategory) {
-      // Use getProfiencyForWeapon helper which handles group-specific proficiencies
-      const rank = getProfiencyForWeapon(token, itemCategory, itemGroup);
+      // Use getProfiencyForWeapon helper which handles group-specific
+      // proficiencies and weaponProficiency modifiers for this weapon
+      const rank = getProfiencyForWeapon(token, itemCategory, itemGroup, item);
       if (rank !== undefined && rank !== null) {
         traits.add(`item:proficiency:rank:${rank}`);
       }
@@ -1427,7 +1493,96 @@ function getFoundryItemAtoms(item) {
   ) {
     atoms.push("item:magical");
   }
+  // Weapon damage die (Foundry item:damage:die:faces:<n>; also compared as
+  // {"lte":["item:damage:die:faces",6]}), a thrown melee weapon's ranged
+  // Strike, and the weapon's precious materials
+  const faces = getWeaponDieFaces(item);
+  if (faces) atoms.push(`item:damage:die:faces:${faces}`);
+  if (isThrownMeleeStrike(item)) atoms.push("item:thrown-melee");
+  getWeaponMaterials(item).forEach((material) =>
+    atoms.push(`item:material:${material}`),
+  );
   return atoms;
+}
+
+/**
+ * The number of faces of a weapon's damage die for this Strike (0 when it
+ * has none). A two-hand weapon held in two hands uses its two-hand die.
+ */
+function getWeaponDieFaces(item) {
+  const damage = item?.data?.damage;
+  if (item?.recordType === "spells" || !damage || Array.isArray(damage)) {
+    return 0;
+  }
+  let die = String(damage.die || "");
+  if (item.data.handBtn === "two") {
+    const twoHand = getTraitNameList(item.data.traits)
+      .map((trait) => trait.match(/two[\s-]*hand[\s-]*(d\d+)/i))
+      .find(Boolean);
+    if (twoHand) die = twoHand[1];
+  }
+  return parseInt(die.replace(/^d/i, ""), 10) || 0;
+}
+
+/**
+ * A melee weapon with the thrown trait used for a ranged Strike (Foundry's
+ * item:thrown-melee). Such a Strike keeps item:melee; item:thrown is set too.
+ */
+function isThrownMeleeStrike(item) {
+  if (item?.recordType !== "items" || !item.data) return false;
+  if ((parseInt(item.data.range, 10) || 0) > 0) return false;
+  if (item.data.rangeToggleBtn !== "ranged") return false;
+  return getTraitNameList(item.data.traits).some((t) => t.startsWith("thrown"));
+}
+
+/**
+ * A weapon's precious materials as slugs: its own (data.material.type) plus
+ * any a weaponMaterial modifier adds for this Strike (data.materials).
+ */
+function getWeaponMaterials(item) {
+  const materials = [];
+  const add = (name) => {
+    const slug = toSlug(String(name || ""));
+    if (slug && !materials.includes(slug)) materials.push(slug);
+  };
+  add(item?.data?.material?.type);
+  (Array.isArray(item?.data?.materials) ? item.data.materials : []).forEach(add);
+  return materials;
+}
+
+/**
+ * The character's deity's favored weapons as slugs: data.favoredWeapon
+ * (comma-separated names) when set, otherwise the deity named in data.deity
+ * looked up in DEITY_FAVORED_WEAPONS ("Iomedae" or "Iomedae (Inheritor)").
+ */
+function getDeityFavoredWeapons(record) {
+  const data = record?.data || record?.record?.data || {};
+  const toList = (value) =>
+    String(value || "")
+      .split(",")
+      .map((name) => toSlug(name))
+      .filter(Boolean);
+  if (String(data.favoredWeapon || "").trim()) return toList(data.favoredWeapon);
+  const deity = toSlug(String(data.deity || ""));
+  if (!deity || typeof DEITY_FAVORED_WEAPONS === "undefined") return [];
+  if (DEITY_FAVORED_WEAPONS[deity]) return toList(DEITY_FAVORED_WEAPONS[deity]);
+  const key = Object.keys(DEITY_FAVORED_WEAPONS).find((name) =>
+    deity.startsWith(`${name}-`),
+  );
+  return key ? toList(DEITY_FAVORED_WEAPONS[key]) : [];
+}
+
+/**
+ * True when the weapon is the character's deity's favored weapon (Foundry's
+ * item:deity-favored): its base weapon or name matches.
+ */
+function isDeityFavoredWeapon(record, item) {
+  if (!item || item.recordType !== "items") return false;
+  const favored = getDeityFavoredWeapons(record);
+  if (favored.length === 0) return false;
+  const base = getBaseItemSlug(item);
+  const slug = toSlug(String(item.name || ""));
+  return favored.some((weapon) => weapon === base || weapon === slug);
 }
 
 /**
@@ -1625,7 +1780,14 @@ function getAlteredWeapon(record, weapon) {
   const targets = (typeof api.getTargets === "function" && api.getTargets()) || [];
   const mods = getEffectsAndModifiersForToken(
     record,
-    ["weaponDieSize", "weaponTrait", "weaponRange", "weaponRune"],
+    [
+      "weaponDieSize",
+      "weaponTrait",
+      "weaponRange",
+      "weaponRune",
+      "weaponDamageType",
+      "weaponMaterial",
+    ],
     "",
     undefined,
     undefined,
@@ -1715,6 +1877,44 @@ function getAlteredWeapon(record, weapon) {
     });
     runes.property = property;
     altered.data.runes = runes;
+  }
+
+  // weaponDamageType: the weapon deals this damage type instead (Bomber's
+  // versatile vial: cold, electricity or fire). The last one wins. Its
+  // splash follows, as splash uses the weapon's damage type.
+  const typeMods = mods.filter((mod) => mod.modifierType === "weaponDamageType");
+  const newType = typeMods.length
+    ? String(typeMods[typeMods.length - 1].value || "").trim().toLowerCase()
+    : "";
+  if (
+    newType &&
+    altered.recordType === "items" &&
+    altered.data.damage &&
+    !Array.isArray(weapon.data.damage)
+  ) {
+    altered.data.damage.damageType = newType;
+    delete altered.data.damage.type;
+    // A versatile weapon's chosen type would otherwise replace it
+    delete altered.data.versatilePiercing;
+    delete altered.data.versatileBludgeoning;
+    delete altered.data.versatileSlashing;
+  }
+
+  // weaponMaterial: the Strike counts as these precious materials too
+  // (comma-separated: Metal Strikes "cold-iron,silver")
+  const materialMods = mods.filter((mod) => mod.modifierType === "weaponMaterial");
+  if (materialMods.length > 0) {
+    const materials = [
+      ...(Array.isArray(altered.data.materials) ? altered.data.materials : []),
+    ];
+    materialMods.forEach((mod) => {
+      String(mod.value || "")
+        .split(",")
+        .map((name) => toSlug(name))
+        .filter((name) => name && !materials.includes(name))
+        .forEach((name) => materials.push(name));
+    });
+    altered.data.materials = materials;
   }
 
   return altered;
@@ -1993,8 +2193,9 @@ function resolvePredicateValue(value, target, context, traits) {
     if (item.recordType === "items" && isWeapon && itemCategory) {
       const proficiencies = target.data?.attackProficiencies || {};
 
-      // Use getProfiencyForWeapon helper which handles group-specific proficiencies
-      const rank = getProfiencyForWeapon(target, itemCategory, itemGroup);
+      // Use getProfiencyForWeapon helper which handles group-specific
+      // proficiencies and weaponProficiency modifiers for this weapon
+      const rank = getProfiencyForWeapon(target, itemCategory, itemGroup, item);
       return rank;
     }
 
@@ -2994,6 +3195,13 @@ function getEffectsAndModifiersForToken(
         if (modifier.data?.definition) {
           resultObj.definition = modifier.data.definition;
         }
+        // adjustModifier: the damage type the adjusted modifier deals
+        // instead (Spirit Instinct: rage damage becomes spirit)
+        if (ruleType === "adjustModifier" && modifier.data?.damageType) {
+          resultObj.damageType = String(modifier.data.damageType)
+            .trim()
+            .toLowerCase();
+        }
         // A rollNote's outcomes (criticalSuccess, success, failure,
         // criticalFailure; none = every outcome)
         if (ruleType === "rollNote" && modifier.data?.outcome) {
@@ -3115,6 +3323,10 @@ function getEffectsAndModifiersForToken(
         result !== adjMod &&
         result.modifierType !== "adjustModifier"
       ) {
+        // A damage type change applies whatever the mode does to the value
+        if (adjMod.damageType) {
+          result.damageType = adjMod.damageType;
+        }
         // Helper to check if a value is a pure number (not a dice expression like "1d6")
         const isPureNumber = (val) => {
           if (typeof val === "number") return true;
@@ -10198,6 +10410,11 @@ function getProfiencyForArmor(record, armorCategory, armorGroup) {
   return armorProf;
 }
 
+// Set while weaponProficiency modifiers are being gathered: the predicate
+// atoms they are read against (item:proficiency:rank) then use the rank
+// without those modifiers instead of looking them up again
+let resolvingWeaponProficiencyModifiers = false;
+
 function getProfiencyForWeapon(
   record,
   weaponCategory,
@@ -10228,8 +10445,15 @@ function getProfiencyForWeapon(
     let otherMatches = false;
 
     for (const otherName of otherNames) {
+      // "Deity's favored weapon" (Cleric) matches the deity's favored weapon
+      if (otherName.includes("favored weapon")) {
+        if (isDeityFavoredWeapon(record, weapon)) {
+          otherMatches = true;
+          break;
+        }
+      }
       // Special case: "Alchemical Bombs" matches weapons with group "Bomb"
-      if (otherName === "alchemical bombs") {
+      else if (otherName === "alchemical bombs") {
         if (weaponGroupLower === "bomb") {
           otherMatches = true;
           break;
@@ -10291,15 +10515,21 @@ function getProfiencyForWeapon(
 
   // Check for weaponProficiency modifiers from effects/features
   // These use predicates to match specific weapons (e.g., martial firearms, crossbows)
-  if (weapon) {
-    const weaponProfMods = getEffectsAndModifiersForToken(
-      record,
-      ["weaponProficiency"],
-      "",
-      undefined,
-      undefined,
-      { item: weapon },
-    );
+  if (weapon && !resolvingWeaponProficiencyModifiers) {
+    resolvingWeaponProficiencyModifiers = true;
+    let weaponProfMods = [];
+    try {
+      weaponProfMods = getEffectsAndModifiersForToken(
+        record,
+        ["weaponProficiency"],
+        "",
+        undefined,
+        undefined,
+        { item: weapon },
+      );
+    } finally {
+      resolvingWeaponProficiencyModifiers = false;
+    }
 
     for (const mod of weaponProfMods) {
       // Skip inactive modifiers (predicate failed)
@@ -10842,6 +11072,12 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber = 1) {
       damageCategories.push(materialType);
     }
   }
+  // Materials a weaponMaterial modifier adds for this Strike
+  (Array.isArray(weapon.data?.materials) ? weapon.data.materials : []).forEach(
+    (material) => {
+      if (!damageCategories.includes(material)) damageCategories.push(material);
+    },
+  );
 
   let reach = getTokenReach(record, weapon);
 
@@ -11510,7 +11746,9 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber = 1) {
   )
     .map((mod) => {
       const value = String(mod.value ?? "").trim();
-      return getDamageType(value) !== "untyped" ? value : `${value} ${damageType}`;
+      return getDamageType(value) !== "untyped"
+        ? value
+        : `${value} ${mod.damageType || damageType}`;
     })
     .filter(Boolean)
     .join(" + ");
@@ -11528,7 +11766,7 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber = 1) {
       type:
         getDamageType(mod?.value?.toString() || "") !== "untyped"
           ? ""
-          : damageType,
+          : mod.damageType || damageType,
       modifierType: mod.modifierType, // Preserve for potential future deduplication
     };
   });
@@ -12096,6 +12334,12 @@ function performDamageRoll(record, weapon, weaponDataPath, isCritical) {
       damageCategories.push(materialType);
     }
   }
+  // Materials a weaponMaterial modifier adds for this Strike
+  (Array.isArray(weapon.data?.materials) ? weapon.data.materials : []).forEach(
+    (material) => {
+      if (!damageCategories.includes(material)) damageCategories.push(material);
+    },
+  );
 
   // Determine damage stat (for stat-based damage modifiers)
   let damageScore = "";
@@ -12279,7 +12523,7 @@ function performDamageRoll(record, weapon, weaponDataPath, isCritical) {
       type:
         getDamageType(mod?.value?.toString() || "") !== "untyped"
           ? ""
-          : damageType,
+          : mod.damageType || damageType,
     };
   });
 
@@ -12389,7 +12633,7 @@ function performDamageRoll(record, weapon, weaponDataPath, isCritical) {
         type:
           getDamageType(mod?.value?.toString() || "") !== "untyped"
             ? ""
-            : damageType,
+            : mod.damageType || damageType,
       };
       damageModifiers.push(rider);
       criticalOnlyDice.push(
@@ -12686,6 +12930,9 @@ function getDamageSource(creature, item = null, tradition = "") {
       ) {
         source.magical = true;
       }
+      // Precious materials, its own and any a weaponMaterial modifier adds
+      const materials = getWeaponMaterials(item);
+      if (materials.length > 0) source.materials = materials;
     } else if (item.recordType) {
       // actions -> action, feats -> feat
       source.type = String(item.recordType).replace(/s$/, "");
@@ -12731,6 +12978,9 @@ function getDamageSourceAtoms(roll) {
     atoms.add("item:magical");
     atoms.add("magical");
   }
+  (Array.isArray(source.materials) ? source.materials : []).forEach((material) =>
+    atoms.add(`item:material:${material}`),
+  );
   const damageTypes = (Array.isArray(roll?.types) ? roll.types : []).map((t) => t?.type);
   [...damageTypes, meta.damageType].forEach((t) => {
     const damageType = String(t || "").toLowerCase().trim();

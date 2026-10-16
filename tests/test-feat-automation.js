@@ -8,6 +8,9 @@
 // Engine group G2: flat persistent damage, damage source atoms, persistent
 // recovery DC, Nine Lives recovery DC, rest healing, magical item healing,
 // maximized healing dice, roll notes and Devastator's partial ignore.
+// Engine group G3: weapon die-size, thrown-melee, material and deity
+// favored-weapon atoms, weapon proficiency in item:proficiency:rank, and
+// damage type and material changes for Strikes and spells.
 // Run: node tests/test-feat-automation.js   (or via tests/run-all.js)
 
 const fs = require("fs");
@@ -996,6 +999,213 @@ section("roll notes (Third Path to Perfection)");
   const sword = weapon("Longsword");
   const attackPrompt = capturePrompt(() => ctx.performAttackRoll(monk([note("attack-roll", "success")], { inventory: [sword] }), sword, "data.inventory.0"));
   assert("performAttackRoll collects attack-roll notes", attackPrompt.metadata.notes?.length, 1);
+}
+
+// --- engine group G3: weapons and Strikes --------------------------------------
+
+section("damage die size atom (Ruffian, Deific Weapon)");
+{
+  const sword = weapon("Longsword");
+  assertIncludes("d8 longsword: item:damage:die:faces:8", traitsFor(pc(), { weapon: sword }), "item:damage:die:faces:8");
+  assertNotIncludes("... not :6", traitsFor(pc(), { weapon: sword }), "item:damage:die:faces:6");
+  const bastard = weapon("Bastard Sword", { traits: ["Two-Hand d12"], handBtn: "two" });
+  assertIncludes("two-hand weapon held in two hands: its two-hand die", traitsFor(pc(), { weapon: bastard }), "item:damage:die:faces:12");
+  assertIncludes("held in one hand: its own die", traitsFor(pc(), { weapon: { ...bastard, data: { ...bastard.data, handBtn: "one" } } }), "item:damage:die:faces:8");
+  assert("a spell has no die-faces atom", traitsFor(pc(), { spell: { name: "Fireball", recordType: "spells", data: { damage: [{ data: { formula: "6d6", type: "fire" } }] } } }).some((t) => t.startsWith("item:damage:die:faces")), false);
+  // Ruffian: martial/advanced weapons with a d6 or smaller die (after die changes)
+  const ruffianPredicate = '[{"or":[{"and":["item:category:simple",{"lte":["item:damage:die:faces",8]}]},{"and":[{"or":["item:category:martial","item:category:advanced"]},{"lte":["item:damage:die:faces",6]}]}]}]';
+  const ruffian = (w, extra = []) => pc({ feats: [feat("Ruffian Test", [{ type: "damageBonus", modifierType: "none", field: "strike-damage", valueType: "string", value: "1d6 precision", predicate: ruffianPredicate }]), ...extra], inventory: [w] });
+  const active = (record, w) => lookup(record, ["damageBonus"], "strike-damage", { weapon: w })[0]?.active;
+  const shortsword = weapon("Shortsword", { damage: { dice: 1, die: "d6", damageType: "piercing" } });
+  assert("martial d6 passes", active(ruffian(shortsword), shortsword), true);
+  assert("martial d8 fails", active(ruffian(sword), sword), false);
+  const club = weapon("Club", { itemCategory: "simple", group: "club", damage: { dice: 1, die: "d6", damageType: "bludgeoning" } });
+  assert("simple d6 passes", active(ruffian(club), club), true);
+  const ogre = feat("Bigger Die", [{ type: "weaponDieSize", value: "d10", predicate: '["item:slug:shortsword"]' }]);
+  const altered = ctx.getAlteredWeapon(ruffian(shortsword, [ogre]), shortsword);
+  assert("a die changed to d10 first: martial fails", active(ruffian(shortsword, [ogre]), altered), false);
+}
+
+section("deity favored weapon (item:deity-favored)");
+{
+  const sword = weapon("Longsword");
+  const dagger = weapon("Dagger", { itemCategory: "simple", group: "knife", traits: ["agile", "finesse"], damage: { dice: 1, die: "d4", damageType: "piercing" } });
+  const iomedae = (extra = {}) => pc({ deity: "Iomedae", ...extra });
+  assertIncludes("Iomedae: longsword is favored", traitsFor(iomedae(), { weapon: sword }), "item:deity-favored");
+  assertNotIncludes("... dagger is not", traitsFor(iomedae(), { weapon: dagger }), "item:deity-favored");
+  assertIncludes("runes don't hide the base weapon", traitsFor(iomedae(), { weapon: weapon("+1 Striking Longsword", { runes: { potency: 1, striking: 1, property: [] } }) }), "item:deity-favored");
+  assertIncludes("deity with an epithet", traitsFor(pc({ deity: "Iomedae (The Inheritor)" }), { weapon: sword }), "item:deity-favored");
+  assertIncludes("case and spacing don't matter", traitsFor(pc({ deity: "  iomedae " }), { weapon: sword }), "item:deity-favored");
+  assertIncludes("data.favoredWeapon overrides the deity", traitsFor(iomedae({ favoredWeapon: "Dagger" }), { weapon: dagger }), "item:deity-favored");
+  assertNotIncludes("... and replaces it", traitsFor(iomedae({ favoredWeapon: "Dagger" }), { weapon: sword }), "item:deity-favored");
+  assertNotIncludes("an unknown deity: none", traitsFor(pc({ deity: "My Homebrew God" }), { weapon: sword }), "item:deity-favored");
+  assertNotIncludes("no deity: none", traitsFor(pc(), { weapon: sword }), "item:deity-favored");
+  assertIncludes("the creature carries deity:favored-weapon:<slug>", traitsFor(iomedae()), "deity:favored-weapon:longsword");
+  assertIncludes("Irori: fist", traitsFor(pc({ deity: "Irori" })), "deity:favored-weapon:fist");
+  assert("no deity: no deity atoms", traitsFor(pc()).some((t) => t.startsWith("deity:")), false);
+
+  // Cleric: attacks.other "Deity's favored weapon" (trained)
+  const cleric = (deity) => pc({ deity, attackProficiencies: { simple: "1", martial: "0", other: { name: "Deity's favored weapon", rank: "1" } } });
+  assert("Cleric of Iomedae: trained in the longsword", ctx.getProfiencyForWeapon(cleric("Iomedae"), "martial", "sword", sword), 1);
+  assert("... untrained in other martial weapons", ctx.getProfiencyForWeapon(cleric("Iomedae"), "martial", "axe", weapon("Battle Axe", { group: "axe" })), 0);
+  assert("no deity: untrained", ctx.getProfiencyForWeapon(cleric(""), "martial", "sword", sword), 0);
+  // Warpriest Third Doctrine: expert + critical specialization with the favored weapon
+  const doctrine = feat("Third Doctrine (Warpriest)", [
+    { type: "weaponProficiency", valueType: "number", value: "2", predicate: '["item:deity-favored"]' },
+    { type: "criticalSpecialization", predicate: '["item:deity-favored"]' },
+  ]);
+  const warpriest = pc({ deity: "Iomedae", feats: [doctrine], attackProficiencies: { simple: "2", martial: "1" } });
+  assert("Third Doctrine: expert with the longsword", ctx.getProfiencyForWeapon(warpriest, "martial", "sword", sword), 2);
+  assert("... martial rank elsewhere", ctx.getProfiencyForWeapon(warpriest, "martial", "axe", weapon("Battle Axe", { group: "axe" })), 1);
+  assert("... critical specialization with the longsword", ctx.hasCriticalSpecializationEffect(warpriest, sword), true);
+  assert("... not with a dagger", ctx.hasCriticalSpecializationEffect(warpriest, dagger), false);
+  // Deific Weapon: advanced favored weapon as martial; d4 unarmed or simple: die up one step
+  const deific = feat("Deific Weapon", [
+    { type: "weaponProficiency", valueType: "string", value: "data.attackProficiencies.martial", predicate: '["item:category:advanced","item:deity-favored"]' },
+    { type: "weaponDieSize", modifierType: "none", valueType: "string", value: "upgrade", predicate: '["item:deity-favored",{"or":["item:category:simple",{"and":["item:category:unarmed","item:damage:die:faces:4"]}]}]' },
+  ]);
+  const champion = (deity) => pc({ deity, feats: [deific], attackProficiencies: { simple: "1", martial: "1", advanced: "0", unarmed: "1" } });
+  const saber = weapon("Sawtooth Saber", { itemCategory: "advanced", group: "sword", damage: { dice: 1, die: "d6", damageType: "slashing" } });
+  // The sandbox api reads no record paths; read them as Realm does
+  const realGetValueOnRecord = ctx.api.getValueOnRecord;
+  ctx.api.getValueOnRecord = (rec, path) => path.split(".").reduce((o, k) => o?.[k], rec);
+  assert("Achaekek: the advanced sawtooth saber uses the martial rank", ctx.getProfiencyForWeapon(champion("Achaekek"), "advanced", "sword", saber), 1);
+  assert("... not for another deity", ctx.getProfiencyForWeapon(champion("Iomedae"), "advanced", "sword", saber), 0);
+  ctx.api.getValueOnRecord = realGetValueOnRecord;
+  assert("Pharasma: the simple dagger d4 -> d6", ctx.getAlteredWeapon(champion("Pharasma"), dagger).data.damage.die, "d6");
+  const fist = weapon("Fist", { itemCategory: "unarmed", group: "brawling", traits: ["agile", "finesse", "unarmed"], damage: { dice: 1, die: "d4", damageType: "bludgeoning" } });
+  assert("Irori: the d4 fist -> d6", ctx.getAlteredWeapon(champion("Irori"), fist).data.damage.die, "d6");
+  assert("Iomedae: the martial longsword stays d8", ctx.getAlteredWeapon(champion("Iomedae"), sword).data.damage.die, "d8");
+  assert("Pharasma: a fist isn't favored, stays d4", ctx.getAlteredWeapon(champion("Pharasma"), fist).data.damage.die, "d4");
+}
+
+section("item:proficiency:rank counts weaponProficiency modifiers (alchemical bombs)");
+{
+  const bomb = weapon("Alchemist's Fire", { itemCategory: "martial", group: "bomb", range: 20, traits: ["bomb", "alchemical", "fire", "splash"], damage: { dice: 1, die: "d8", damageType: "fire" } });
+  const specialization = feat("Weapon Specialization", [{ type: "damageBonus", modifierType: "", field: "", valueType: "number", value: "2", slug: "weapon-specialization", predicate: '[{"gte":["item:proficiency:rank",2]}]' }]);
+  const expertise = feat("Alchemical Weapon Expertise", [{ type: "weaponProficiency", valueType: "number", value: "2", slug: "alchemical-bombs", predicate: '["item:group:bomb"]' }]);
+  const alchemist = (feats) => pc({ feats, attackProficiencies: { simple: "2", martial: "0", unarmed: "2", other: { name: "Alchemical Bombs", rank: "1" } } });
+  assertIncludes("with Alchemical Weapon Expertise: bomb rank 2", traitsFor(alchemist([expertise, specialization]), { weapon: bomb }), "item:proficiency:rank:2");
+  const specActive = (record) => lookup(record, ["damageBonus"], "damage", { weapon: bomb }).find((m) => m.slug === "weapon-specialization")?.active;
+  assert("... so weapon specialization applies to the bomb", specActive(alchemist([expertise, specialization])), true);
+  assert("without it: rank 1, no specialization", [traitsFor(alchemist([specialization]), { weapon: bomb }).includes("item:proficiency:rank:1"), specActive(alchemist([specialization]))], [true, false]);
+  assert("comparison resolves the same rank", ctx.resolvePredicateValue("item:proficiency:rank", alchemist([expertise]), { weapon: bomb }, new Set()), 2);
+  const sword = weapon("Longsword");
+  assertIncludes("unchanged: a longsword reads the martial rank", traitsFor(pc({ attackProficiencies: { martial: "3" } }), { weapon: sword }), "item:proficiency:rank:3");
+  // A weaponProficiency predicate that itself reads the rank doesn't loop
+  const circular = feat("Circular", [{ type: "weaponProficiency", valueType: "number", value: "3", predicate: '[{"gte":["item:proficiency:rank",2]}]' }]);
+  assert("a rank-gated weaponProficiency reads the base rank", ctx.getProfiencyForWeapon(pc({ feats: [circular], attackProficiencies: { martial: "2" } }), "martial", "sword", sword), 3);
+}
+
+section("thrown melee Strike atom (Sneak Attack)");
+{
+  const dagger = (toggle) => weapon("Dagger", { itemCategory: "simple", group: "knife", traits: ["agile", "finesse", "thrown-10"], rangeToggleBtn: toggle, damage: { dice: 1, die: "d4", damageType: "piercing" } });
+  const thrown = traitsFor(pc(), { weapon: dagger("ranged") });
+  assert("thrown dagger: item:thrown-melee, item:melee kept", ["item:thrown-melee", "item:melee"].every((a) => thrown.includes(a)), true);
+  assertNotIncludes("... and not item:ranged (unchanged)", thrown, "item:ranged");
+  assertNotIncludes("dagger used in melee: no thrown-melee", traitsFor(pc(), { weapon: dagger("melee") }), "item:thrown-melee");
+  const javelin = weapon("Javelin", { itemCategory: "simple", range: 30, traits: ["thrown"], rangeToggleBtn: "ranged" });
+  assertNotIncludes("a javelin (ranged weapon) is not a thrown melee weapon", traitsFor(pc(), { weapon: javelin }), "item:thrown-melee");
+  const foundry = feat("Sneak Test", [{ type: "damageBonus", modifierType: "none", field: "strike-damage", valueType: "string", value: "1d6 precision", predicate: '[{"or":["item:trait:agile","item:trait:finesse",{"and":["item:ranged",{"not":"item:thrown-melee"}]}]}]' }]);
+  const spear = weapon("Spear", { itemCategory: "simple", group: "spear", traits: ["thrown-20"], rangeToggleBtn: "ranged", damage: { dice: 1, die: "d6", damageType: "piercing" } });
+  assert("Foundry's predicate: a thrown spear (no agile/finesse) gets no sneak attack", lookup(pc({ feats: [foundry] }), ["damageBonus"], "strike-damage", { weapon: spear })[0]?.active, false);
+  assert("... a javelin does", lookup(pc({ feats: [foundry] }), ["damageBonus"], "strike-damage", { weapon: javelin })[0]?.active, true);
+}
+
+section("damage type changes: rage, versatile vials, spells");
+{
+  const rage = { _id: "rage", name: "Rage", rules: [] };
+  const rageFeature = feat("Rage", [{ type: "damageBonus", field: "all", modifierType: "", valueType: "number", value: "2", slug: "rage", predicate: '["self:effect:rage"]' }]);
+  const spirit = feat("Spirit Instinct", [
+    { type: "adjustModifier", targetSlug: "rage", value: "3", valueType: "number", adjustMode: "upgrade", field: "", damageType: "spirit", predicate: '["spirit-rage"]' },
+    { type: "weaponRune", modifierType: "none", valueType: "string", value: "Ghost Touch", predicate: '["spirit-rage","self:effect:rage"]' },
+  ], { toggleable: true, predicateValue: "spirit-rage" });
+  const sword = weapon("Longsword");
+  // Effects sit on the record, not its data
+  const raging = (record, on = true) => Object.assign(record, on ? { effects: [rage], effectIds: ["rage"] } : {});
+  const barbarian = (on, isRaging = true) => raging(pc({ feats: [rageFeature, spirit], inventory: [sword], toggles: on ? [{ name: "Spirit Instinct", data: { predicateValue: "spirit-rage", toggled: true } }] : [] }), isRaging);
+  const rageMod = (record) => capturePrompt(() => ctx.performDamageRoll(record, sword, "data.inventory.0", false)).modifiers.find((m) => m.name === "Rage");
+  const spiritRage = rageMod(barbarian(true));
+  assert("spirit rage: 3 spirit damage", [spiritRage?.value, spiritRage?.type, spiritRage?.active], [3, "spirit", true]);
+  const plainRage = rageMod(barbarian(false));
+  assert("rage without spirit rage: 2 of the weapon's type", [plainRage?.value, plainRage?.type, plainRage?.active], [2, "slashing", true]);
+  const attackRage = (capturePrompt(() => ctx.performAttackRoll(barbarian(true), sword, "data.inventory.0", 1)).metadata.damageModifiers || []).find((m) => m.name === "Rage");
+  assert("the attack card's damage carries it too", attackRage?.type, "spirit");
+  const dragon = feat("Dragon Option", [{ type: "adjustModifier", targetSlug: "rage", value: "4", valueType: "number", adjustMode: "upgrade", field: "", damageType: "Fire", predicate: '["draconic-rage"]' }]);
+  const levelSeven = feat("Dragon Instinct", [{ type: "adjustModifier", targetSlug: "rage", value: "8", valueType: "number", adjustMode: "upgrade", field: "", predicate: '["draconic-rage"]' }]);
+  const draconic = raging(pc({ feats: [rageFeature, dragon, levelSeven], inventory: [sword], toggles: [{ name: "Dragon Instinct", data: { predicateValue: "draconic-rage", toggled: true } }] }));
+  const dragonRage = rageMod(draconic);
+  assert("draconic rage: a higher upgrade without a type keeps the chosen type (8 fire)", [dragonRage?.value, dragonRage?.type], [8, "fire"]);
+  const noType = raging(pc({ feats: [rageFeature, levelSeven], inventory: [sword], toggles: [{ name: "Dragon Instinct", data: { predicateValue: "draconic-rage", toggled: true } }] }));
+  assert("unchanged: an adjustModifier without damageType keeps the weapon's type", rageMod(noType)?.type, "slashing");
+
+  // Spirit rage: ghost touch (existing weaponRune)
+  const categories = (record) => capturePrompt(() => ctx.performDamageRoll(record, sword, "data.inventory.0", false)).metadata.damageCategories;
+  assertIncludes("spirit rage: the Strike has ghost touch", categories(barbarian(true)), "ghost-touch");
+  assertNotIncludes("not without spirit rage", categories(barbarian(false)), "ghost-touch");
+  assertNotIncludes("not while not raging", categories(barbarian(true, false)), "ghost-touch");
+
+  // Bomber's field vials: the versatile vial deals cold, electricity or fire
+  const vial = weapon("Versatile Vial", { itemCategory: "simple", group: "bomb", range: 30, traits: ["acid", "alchemical", "bomb", "splash"], splashDamage: 1, damage: { dice: 1, die: "d6", damageType: "acid" } });
+  const bomber = feat("Bomber", [
+    { type: "weaponDamageType", modifierType: "none", valueType: "string", value: "cold", predicate: '["bomber-field-vials:cold","item:slug:versatile-vial"]' },
+    { type: "weaponDamageType", modifierType: "none", valueType: "string", value: "fire", predicate: '["bomber-field-vials:fire","item:slug:versatile-vial"]' },
+  ]);
+  const alchemist = (option, w = vial) => pc({ feats: [bomber], inventory: [w], toggles: option ? [{ name: `Bomber: ${option}`, data: { predicateValue: `bomber-field-vials:${option}`, toggled: true } }] : [] });
+  const fireVial = capturePrompt(() => ctx.performDamageRoll(alchemist("fire"), vial, "data.inventory.0", false));
+  assert("Bomber, fire chosen: the vial and its splash deal fire", [fireVial.dice.startsWith("1d6 fire"), fireVial.metadata.damageType, fireVial.metadata.splashDamage], [true, "fire", "1 fire"]);
+  assert("nothing chosen: acid", capturePrompt(() => ctx.performDamageRoll(alchemist(""), vial, "data.inventory.0", false)).metadata.damageType, "acid");
+  const otherBomb = weapon("Alchemist's Fire", { group: "bomb", range: 20, traits: ["bomb", "fire", "splash"], damage: { dice: 1, die: "d8", damageType: "fire" } });
+  assert("another bomb keeps its type", ctx.getAlteredWeapon(alchemist("cold", otherBomb), otherBomb).data.damage.damageType, "fire");
+  // Toxicologist: poison damage and trait instead of acid
+  const toxicologist = pc({ feats: [feat("Toxicologist", [
+    { type: "weaponDamageType", modifierType: "none", valueType: "string", value: "poison", predicate: '["item:slug:versatile-vial"]' },
+    { type: "weaponTrait", modifierType: "none", valueType: "string", value: "poison", predicate: '["item:slug:versatile-vial"]' },
+    { type: "weaponTrait", modifierType: "none", valueType: "string", value: "-acid", predicate: '["item:slug:versatile-vial"]' },
+  ])] });
+  const toxic = ctx.getAlteredWeapon(toxicologist, vial);
+  assert("Toxicologist: poison damage, poison trait, no acid trait", [toxic.data.damage.damageType, toxic.data.traits.includes("poison"), toxic.data.traits.includes("acid")], ["poison", true, false]);
+  assert("the vial record itself is untouched", vial.data.damage.damageType, "acid");
+
+  // Elemental bloodline: Elemental Toss deals the element's damage type
+  const toss = { _id: "toss", name: "Elemental Toss", recordType: "spells", data: { level: 1, traits: ["attack", "focus"], damage: [{ data: { formula: "1d8", type: "bludgeoning" } }, { data: { formula: "1", type: "bleed", category: "persistent" } }], heightening: [{ data: { type: "interval", interval: 1, damage: [{ data: { formula: "1d8", type: "bludgeoning" } }] } }] } };
+  const air = pc({ feats: [feat("Air", [{ type: "spellDamageType", modifierType: "none", valueType: "string", value: "slashing", predicate: '[{"or":["item:slug:elemental-toss","item:slug:elemental-blast"]}]' }])] });
+  const airToss = ctx.getAlteredSpell(air, toss);
+  assert("air: Elemental Toss deals slashing (base and heightened)", [airToss.data.damage[0].data.type, airToss.data.heightening[0].data.damage[0].data.type], ["slashing", "slashing"]);
+  assert("persistent damage keeps its type", airToss.data.damage[1].data.type, "bleed");
+  assert("the spell record itself is untouched", toss.data.damage[0].data.type, "bludgeoning");
+  const fireball = { _id: "fb", name: "Fireball", recordType: "spells", data: { level: 3, damage: [{ data: { formula: "6d6", type: "fire" } }] } };
+  assert("another spell is returned unchanged", ctx.getAlteredSpell(air, fireball), fireball);
+  assert("no modifier: unchanged", ctx.getAlteredSpell(pc(), toss), toss);
+  assert("calculateSpellDamage reads the new type", ctx.calculateSpellDamage(air, airToss, "data.spells.0.data.focus.0").damageString, "1d8 slashing");
+}
+
+section("Strike materials (Metal Strikes, Adamantine Strikes, Advanced Vials)");
+{
+  const fist = weapon("Fist", { itemCategory: "unarmed", group: "brawling", traits: ["agile", "finesse", "unarmed"], damage: { dice: 1, die: "d4", damageType: "bludgeoning" } });
+  const sword = weapon("Longsword");
+  const metal = feat("Metal Strikes", [{ type: "weaponMaterial", modifierType: "none", valueType: "string", value: "cold-iron,silver", predicate: '["item:category:unarmed"]' }]);
+  const adamantine = feat("Adamantine Strikes", [{ type: "weaponMaterial", modifierType: "none", valueType: "string", value: "Adamantine", predicate: '["item:category:unarmed"]' }]);
+  const monk = pc({ feats: [metal, adamantine], inventory: [fist, sword] });
+  const punch = capturePrompt(() => ctx.performDamageRoll(monk, fist, "data.inventory.0", false)).metadata;
+  assert("unarmed Strike: cold iron, silver and adamantine damage categories", ["cold-iron", "silver", "adamantine"].every((m) => punch.damageCategories.includes(m)), true);
+  assert("... and in damageSource", punch.damageSource.materials, ["cold-iron", "silver", "adamantine"]);
+  assertIncludes("... as item:material:* damage atoms", [...ctx.getDamageSourceAtoms({ metadata: punch })], "item:material:silver");
+  const swing = capturePrompt(() => ctx.performDamageRoll(monk, sword, "data.inventory.1", false)).metadata;
+  assert("a longsword gets none", [swing.damageCategories.includes("silver"), swing.damageSource.materials], [false, undefined]);
+  const silverSword = weapon("Silver Longsword", { material: { type: "Silver" } });
+  const own = capturePrompt(() => ctx.performDamageRoll(pc({ inventory: [silverSword] }), silverSword, "data.inventory.0", false)).metadata;
+  assert("unchanged: a weapon's own material still counts, once", [own.damageCategories.filter((c) => c === "silver").length, own.damageSource.materials], [1, ["silver"]]);
+  assertIncludes("its own material is an item atom too", traitsFor(pc(), { weapon: silverSword }), "item:material:silver");
+  // The attack card carries the categories to its damage button
+  const attack = capturePrompt(() => ctx.performAttackRoll(monk, fist, "data.inventory.0", 1)).metadata;
+  assertIncludes("attack card: silver", attack.damageCategories, "silver");
+  // Advanced Vials (Bomber): one chosen material
+  const vial = weapon("Versatile Vial", { itemCategory: "simple", group: "bomb", range: 30, traits: ["acid", "bomb"], damage: { dice: 1, die: "d6", damageType: "acid" } });
+  const vials = feat("Advanced Vials (Bomber)", [{ type: "weaponMaterial", modifierType: "none", valueType: "string", value: "cold-iron", predicate: '["bomber-advanced-vials:cold-iron","item:slug:versatile-vial"]' }]);
+  const chosen = pc({ feats: [vials], toggles: [{ name: "Advanced Vials (Bomber): Cold Iron", data: { predicateValue: "bomber-advanced-vials:cold-iron", toggled: true } }] });
+  assert("Advanced Vials, cold iron chosen", ctx.getAlteredWeapon(chosen, vial).data.materials, ["cold-iron"]);
+  assert("not chosen: no material", ctx.getAlteredWeapon(pc({ feats: [vials] }), vial).data.materials, undefined);
 }
 
 process.exitCode = summary();

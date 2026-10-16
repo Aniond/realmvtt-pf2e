@@ -494,4 +494,29 @@ section("suppressIWR (Curse of the Living Death, Inclement Headwinds)");
   assert("field weakness: cold resistance kept", damageDealt(weakOnly, roll("cold", 10)), 5);
 }
 
+section("Strike materials from a modifier (Metal Strikes, engine group G3)");
+{
+  // The monk's fist Strike as performDamageRoll builds it
+  const fist = { _id: "fist", name: "Fist", recordType: "items", data: { type: "weapon", carried: "equipped", itemCategory: "unarmed", group: "brawling", traits: ["agile", "finesse", "unarmed"], range: 0, damage: { dice: 1, die: "d4", damageType: "bludgeoning" }, runes: { potency: 0, striking: 0, property: [] } } };
+  const monk = (mods) => ({ _id: "monk", recordType: "characters", effects: [], fields: {}, data: { level: 9, str: 3, inventory: [fist], feats: [{ _id: "ms", name: "Metal Strikes", recordType: "feats", data: { modifiers: mods.map((data) => ({ data })) } }], bonusFeats: [] } });
+  const metal = [{ type: "weaponMaterial", modifierType: "none", valueType: "string", value: "cold-iron,silver", predicate: '["item:category:unarmed"]' }];
+  const strike = (record) => {
+    let metadata = {};
+    const saved = ctx.api.promptRoll;
+    ctx.api.promptRoll = (name, dice, mods, meta) => { metadata = meta; };
+    ctx.performDamageRoll(record, fist, "data.inventory.0", false);
+    ctx.api.promptRoll = saved;
+    return { types: [{ die: 4, value: 10, type: "bludgeoning" }], dice: [{ type: 4, value: 10 }], total: 10, metadata };
+  };
+  const fiend = makeTarget({ weaknesses: [weak("cold-iron", 5)] });
+  assert("Metal Strikes: cold iron weakness 5 applies (10 -> 15)", damageDealt(fiend, strike(monk(metal))), 15);
+  assert("without it: 10", damageDealt(fiend, strike(monk([]))), 10);
+  const were = makeTarget({ resistances: [res("physical", 5, { exceptions: ["silver"] })] });
+  assert("physical 5 except silver: bypassed (10)", damageDealt(were, strike(monk(metal))), 10);
+  assert("without it: resisted (5)", damageDealt(were, strike(monk([]))), 5);
+  const byDefinition = withMods([{ type: "resistance", field: "", valueType: "number", value: "4", definition: '["item:material:silver"]' }]);
+  assert("a definition reads item:material:silver (10 -> 6)", damageDealt(byDefinition, strike(monk(metal))), 6);
+  assert("... and doesn't match an ordinary fist (10)", damageDealt(byDefinition, strike(monk([]))), 10);
+}
+
 process.exit(summary());
