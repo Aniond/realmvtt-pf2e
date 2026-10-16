@@ -747,4 +747,26 @@ section("bulk limit, check penalty, spell dice, damage on a miss");
   assert("a check:outcome:failure predicate works too", capturePrompt(() => ctx.performAttackRoll(outcomePredicate, sword, "data.inventory.0", 1)).metadata.failureDamage, "2 slashing");
 }
 
+section("raised shield: atom and the raised-shield slug");
+{
+  const buckler = { _id: "b", name: "Buckler", data: { type: "shield", carried: "equipped", acBonus: 1, hardness: 3, hp: { value: 6, max: 6 } } };
+  const elegant = { ...feat("Elegant Buckler", [{ type: "adjustModifier", targetSlug: "raised-shield", adjustMode: "upgrade", value: "2", valueType: "number", active: true, field: "", predicate: '["elegant-buckler"]' }]), data: { type: "class", level: 1, toggleable: true, predicateValue: "elegant-buckler", modifiers: [{ data: { type: "adjustModifier", targetSlug: "raised-shield", adjustMode: "upgrade", value: "2", valueType: "number", active: true, field: "", predicate: '["elegant-buckler"]' } }] } };
+  const acFor = (extra) => {
+    const record = pc({ inventory: [buckler], feats: [elegant], ...extra });
+    const written = {};
+    ctx.updateAttribute({ record, attribute: "dex", value: 3, moreValuesToSet: written });
+    return written["data.ac"];
+  };
+  const lowered = acFor({ shieldRaised: "false", toggles: [{ name: "Elegant Buckler", data: { predicateValue: "elegant-buckler", toggled: false } }] });
+  // On a sheet the feat's toggle is always listed (untoggled here), which
+  // keeps its bare name from satisfying its own predicate
+  const untoggled = [{ name: "Elegant Buckler", data: { predicateValue: "elegant-buckler", toggled: false } }];
+  assert("raised buckler: +1", acFor({ shieldRaised: "true", toggles: untoggled }) - lowered, 1);
+  assert("raised buckler with Elegant Buckler on: +2", acFor({ shieldRaised: "true", toggles: [{ name: "Elegant Buckler", data: { predicateValue: "elegant-buckler", toggled: true } }] }) - lowered, 2);
+  const traits = traitsFor(pc({ inventory: [buckler], shieldRaised: "true" }));
+  assertIncludes("self:shield:raised", traits, "self:shield:raised");
+  assertIncludes("self:shield:base:buckler", traits, "self:shield:base:buckler");
+  assertNotIncludes("not raised: no atom", traitsFor(pc({ inventory: [buckler], shieldRaised: "false" })), "self:shield:raised");
+}
+
 process.exitCode = summary();

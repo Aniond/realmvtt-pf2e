@@ -1139,8 +1139,11 @@ function collectTraitsAndProperties(
     traits.add(atom),
   );
 
-  // Armor worn: self:armored (any armor), self:armor:category:<category>
+  // Armor worn: self:armored (any armor), self:armor:category:<category>;
+  // shield: self:shield:equipped, self:shield:raised (the sheet's Raise
+  // Shield button), self:shield:base:<shield>, self:shield:trait:<trait>
   getArmorAtoms(token).forEach((atom) => traits.add(atom));
+  getShieldAtoms(token).forEach((atom) => traits.add(atom));
 
   // Targets (attack and damage lookups): target:trait:*, target:condition:*,
   // target:effect:*, target:level:<n>, target:type:*, target:range-increment
@@ -1434,6 +1437,36 @@ function getArmorAtoms(token) {
   ).toLowerCase();
   if (category && category !== "unarmored") atoms.push("self:armored");
   atoms.push(`self:armor:category:${category || "unarmored"}`);
+  return atoms;
+}
+
+/**
+ * Shield atoms for a creature: self:shield:raised when the sheet's Raise
+ * Shield is on, and for the equipped shield self:shield:equipped,
+ * self:shield:base:<base item slug> and self:shield:trait:<trait>.
+ */
+function getShieldAtoms(token) {
+  const atoms = [];
+  const data = token?.data;
+  if (!data) return atoms;
+  if (data.shieldRaised === "true" || data.shieldRaised === true) {
+    atoms.push("self:shield:raised");
+  }
+  const inventory = Array.isArray(data.inventory) ? data.inventory : [];
+  const shield = inventory.find(
+    (item) => item?.data?.type === "shield" && item?.data?.carried === "equipped",
+  );
+  if (shield) {
+    atoms.push("self:shield:equipped");
+    const base = getBaseItemSlug(shield);
+    if (base) atoms.push(`self:shield:base:${base}`);
+    (Array.isArray(shield.data?.traits) ? shield.data.traits : []).forEach((trait) => {
+      const name = String(typeof trait === "string" ? trait : trait?.name || "")
+        .toLowerCase()
+        .trim();
+      if (name) atoms.push(`self:shield:trait:${name}`);
+    });
+  }
   return atoms;
 }
 
@@ -4515,7 +4548,12 @@ function updateAttribute({
     record.data?.shieldRaised === "true" &&
     !shieldBroken
   ) {
-    ac += bestArmor.shield.acBonus;
+    // Foundry's "raised-shield" slug: adjustModifier can change the raised
+    // shield's bonus (Elegant Buckler upgrades a buckler's +1 to +2)
+    ac +=
+      parseFloat(
+        applyAdjustModifiers(record, bestArmor.shield.acBonus, "raised-shield"),
+      ) || 0;
   }
   // Get proficiency bonus for this armor type
   const armorProf = getProfiencyForArmor(

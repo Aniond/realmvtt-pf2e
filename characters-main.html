@@ -2310,13 +2310,23 @@ ${getLevelUpSummary(gains)}`,
           label="Max"
           onchange="onChangeShieldMaxHp(value)"
         ></numberfield>
-        <iconbutton
-          size="md"
-          variant="default"
-          options='[{"icon": "IconShield", "label": "Raise Shield", "value": "false"}, {"icon": "IconShieldFilled", "label": "Lower Shield", "value": "true"}]'
-          field="shieldRaised"
-          onchange="raiseShield(value)"
-        ></iconbutton>
+        <div
+          style="
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 2px;
+          "
+        >
+          <label label="Raise" size="xs" textalign="center"></label>
+          <iconbutton
+            size="md"
+            variant="default"
+            options='[{"icon": "IconShield", "label": "Raise Shield", "value": "false"}, {"icon": "IconShieldFilled", "label": "Lower Shield", "value": "true"}]'
+            field="shieldRaised"
+            onchange="raiseShield(value)"
+          ></iconbutton>
+        </div>
         <numberfield
           placeholder="0"
           width="36px"
