@@ -57,6 +57,24 @@
     );
   }
 
+  // A character's focus entries all show their one focus pool, so a change
+  // to it here changes it on every entry (spell-entries.js)
+  function onFocusPoolChange(value) {
+    if (record.recordType !== "characters") {
+      return;
+    }
+    api.setValues(getFocusPoolValues(record, parseInt(value, 10) || 0));
+  }
+
+  // A Focus Pool Max typed on a character's focus entry raises their one
+  // pool, for focus spells the entries don't list (spell-entries.js)
+  function onFocusPoolMaxChange(value) {
+    if (record.recordType !== "characters") {
+      return;
+    }
+    api.setValues(getFocusPoolManualMaxValues(record, value));
+  }
+
   function onChangeValue() {
     const spellcastingEntryDataPath = getNearestParentDataPath(dataPath);
     const spellcastingEntry = api.getValue(spellcastingEntryDataPath);
@@ -190,6 +208,7 @@
               maxvalue="3"
               width="100%"
               label="Focus Pool Max"
+              onchange="onFocusPoolMaxChange(value);"
             ></numberfield>
             <divider></divider>
             <dropdown
@@ -304,6 +323,7 @@
     size="xs"
     maxvaluefield="focusPoolMax"
     editable="true"
+    onchange="onFocusPoolChange(value);"
   ></counter>
   <div
     style="
