@@ -124,7 +124,10 @@ function setChangedValues(before, after, path, valuesToSet) {
 // data.autoSlots (the "Set slots from level" checkbox) turns the counts and
 // rows off for one entry, or opts in an entry the player made.
 // data.autoSpellcasting is set when the class is added: the class's entries
-// are made only on those characters. A spellcasting archetype's entry is made
+// are made only on those characters. data.autoFocusSpellcasting, set with it,
+// does the same for the class's focus entry (source "class:cleric:focus"),
+// which came in later, so characters from before don't get one. A
+// spellcasting archetype's entry is made
 // when its dedication is taken: data.spellcastingSources keeps the sources
 // the character had at the last sync. Deleting an entry the sheet made adds
 // its source to data.spellcastingDismissed so it isn't made again until the
@@ -761,6 +764,7 @@ function getWantedSpellcastingEntries(record, level, valuesToSet = {}) {
   const casting = getClassSpellcasting(record.data?.classes?.[0]);
   const specs = casting ? getClassSpellcastingSpecs(record, casting, level, valuesToSet) : [];
   specs.push(...getArchetypeSpellcastingSpecs(record, level, valuesToSet, casting?.slug));
+  specs.push(...getFocusSpellcastingSpecs(record));
   return specs.map((spec) => ({ ...spec, level }));
 }
 
@@ -944,6 +948,80 @@ function getArchetypeSpellcastingSpecs(record, level, valuesToSet = {}, classSlu
     });
   }
   return specs;
+}
+
+// Focus spells from the class (Player Core pg. 300): an empty focus entry for
+// the spells the class gives, which the player drops in (the module's
+// features name them only in their descriptions). Most classes give them at
+// 1st level; `feats` lists the feats that give them otherwise. Tradition and
+// attribute come from the class's spellcasting unless given here; a monk
+// picks divine or occult, so theirs is left for the player.
+// Left out: the psychic, whose psi cantrips are in its class entry's
+// repertoire, and focus spells from archetype feats.
+const FOCUS_SPELLCASTING = {
+  animist: { name: "Vessel Spells" },
+  bard: { name: "Composition Spells" },
+  champion: { name: "Devotion Spells", tradition: "Divine", attribute: "cha" },
+  cleric: { name: "Domain Spells", feats: ["Domain Initiate"] },
+  druid: { name: "Order Spells" },
+  magus: { name: "Conflux Spells" },
+  monk: {
+    name: "Qi Spells",
+    legacyName: "Ki Spells",
+    tradition: null,
+    attribute: "wis",
+    feats: ["Qi Spells", "Ki Rush", "Ki Strike"],
+  },
+  oracle: { name: "Revelation Spells" },
+  ranger: { name: "Warden Spells", tradition: "Primal", attribute: "wis", feats: ["Initiate Warden"] },
+  sorcerer: { name: "Bloodline Spells" },
+  summoner: { name: "Link Spells" },
+  witch: { name: "Hex Spells" },
+  // Once a school with school spells is chosen
+  wizard: { name: "School Spells", school: true },
+};
+
+// The focus entry a character's class gives, as a spec with the source
+// "class:cleric:focus" (see getWantedSpellcastingEntries)
+function getFocusSpellcastingSpecs(record) {
+  const classObj = record.data?.classes?.[0];
+  const slug = toSlug(`${classObj?.name || ""}`.replace(/\s*\([^)]*\)\s*$/, "").trim());
+  if (!Object.prototype.hasOwnProperty.call(FOCUS_SPELLCASTING, slug)) {
+    return [];
+  }
+  const focus = FOCUS_SPELLCASTING[slug];
+  if (focus.feats && !focus.feats.some((feat) => hasFeatNamed(record, feat))) {
+    return [];
+  }
+  const casting = getClassSpellcasting(classObj);
+  if (focus.school) {
+    const school = record.data?.flags?.[casting.schoolSlot.flag];
+    if (!school || casting.schoolSlot.none.test(school)) {
+      return [];
+    }
+  }
+  const edition = getSpellcastingEdition(classObj);
+  let tradition = focus.tradition;
+  if (tradition === undefined) {
+    tradition =
+      typeof casting.tradition === "string"
+        ? casting.tradition
+        : getSubclassTradition(record, casting.tradition.flag, casting.tradition.nested, edition);
+  }
+  return [
+    {
+      source: `class:${slug}:focus`,
+      name: (edition === "legacy" && focus.legacyName) || focus.name,
+      type: "focus",
+      tradition: tradition || null,
+      attribute: focus.attribute || casting.attribute,
+      counts: {},
+      repertoire: null,
+      training: 0,
+      bonus: null,
+      focus: true,
+    },
+  ];
 }
 
 function isManagedSpellcastingEntry(spellcastingEntry) {
@@ -1342,13 +1420,24 @@ function syncSpellcastingEntries(record, valuesToSet) {
   const seenBefore = Array.isArray(record.data?.spellcastingSources)
     ? record.data.spellcastingSources
     : null;
+  // The class's focus entry is made only on a character whose class was added
+  // since it's made automatically (data.autoFocusSpellcasting), and not next
+  // to a focus entry the player made
+  const makeFocusEntries = !!(
+    valuesToSet["data.autoFocusSpellcasting"] ?? record.data?.autoFocusSpellcasting
+  );
+  const ownFocusEntry = entries.some(
+    (e) => isFocusEntry(e) && !isManagedSpellcastingEntry(e),
+  );
   for (const spec of specs) {
     if (dismissed.includes(spec.source)) continue;
     let entry = entries.find((e) => e.data?.auto?.source === spec.source);
     if (!entry) {
-      const make = spec.archetype
-        ? !!seenBefore && !seenBefore.includes(spec.source)
-        : makeEntries;
+      const make = spec.focus
+        ? makeFocusEntries && !ownFocusEntry
+        : spec.archetype
+          ? !!seenBefore && !seenBefore.includes(spec.source)
+          : makeEntries;
       if (!make) continue;
       entry = buildSpellcastingEntry({
         name: spec.name,
@@ -1356,8 +1445,8 @@ function syncSpellcastingEntries(record, valuesToSet) {
         tradition: spec.tradition || "",
         attribute: spec.attribute,
         training: spec.training,
-        shownSpells: [],
-        isFirst: entries.length === 0,
+        shownSpells: spec.focus ? ["cantrips", "spells1"] : [],
+        isFirst: spec.focus || entries.length === 0,
       });
       // The class's other entries (Divine Font, apparitions) cast with its
       // spell DC, so they start at the rank its entry keeps as its own
@@ -1367,7 +1456,15 @@ function syncSpellcastingEntries(record, valuesToSet) {
       if (ownTraining > 0) {
         entry.data.auto = { ownTraining };
       }
-      entries.push(entry);
+      if (spec.focus) {
+        // The focus entry goes first, above the class's spells
+        if (entries.length > 0) {
+          entries[0].fields = { ...entries[0].fields, moveUpBtn: { hidden: false } };
+        }
+        entries.unshift(entry);
+      } else {
+        entries.push(entry);
+      }
     }
     applySpellcastingSpec(entry, spec);
   }
@@ -1464,7 +1561,8 @@ function optInSpellcastingEntry(record, entryPath) {
     return;
   }
   const level = parseInt(record.data?.level || 0, 10) || 0;
-  const specs = getWantedSpellcastingEntries(record, level);
+  // A focus entry has no slots to follow
+  const specs = getWantedSpellcastingEntries(record, level).filter((spec) => !spec.focus);
   const followed = entries
     .filter(isManagedSpellcastingEntry)
     .map((other) => other.data.auto.source);
@@ -1588,7 +1686,7 @@ function getSpellcastingLevelUpChanges(record, newLevel) {
 
   for (const spec of getWantedSpellcastingEntries(record, newLevel)) {
     const entry = entries.find((e) => e.data?.auto?.source === spec.source);
-    if (dismissed.includes(spec.source) || entry?.data?.autoSlots === false) continue;
+    if (spec.focus || dismissed.includes(spec.source) || entry?.data?.autoSlots === false) continue;
     const old = before.find((s) => s.source === spec.source);
     const name = entry?.name || spec.name;
 
