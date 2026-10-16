@@ -62,8 +62,7 @@ function updateSpellcastingEntry(
     // For focus spells
     [`${spellcastingEntryDataPath}.fields.focusPoolLabel.hidden`]: !isFocus,
     [`${spellcastingEntryDataPath}.fields.focusPool.hidden`]: !isFocus,
-    // A character's pool size comes from their focus spells
-    [`${spellcastingEntryDataPath}.fields.focusPoolMax.hidden`]: !isFocus || !isNPC,
+    [`${spellcastingEntryDataPath}.fields.focusPoolMax.hidden`]: !isFocus,
     // For items we hide the training field / label
     [`${spellcastingEntryDataPath}.fields.tradition.hidden`]: isItem,
     [`${spellcastingEntryDataPath}.fields.training.hidden`]: isItem,

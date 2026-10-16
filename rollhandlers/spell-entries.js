@@ -1496,10 +1496,11 @@ function getSpellcastingLevelUpChanges(record, newLevel) {
 // A character has one focus pool, whatever gives them focus spells. It holds
 // 1 Focus Point for each focus spell that isn't a cantrip, up to 3, as
 // Foundry PF2e counts it; a psychic's Psi Cantrips and Amps adds 2, and
-// Clarity of Focus and Psi Development 1 each. data.focusPool keeps the
-// points spent and data.focusPoolMax the pool's size, and every focus entry
-// shows them. NPCs keep a pool on each focus entry, as their stat blocks give
-// it.
+// Clarity of Focus and Psi Development 1 each. A Focus Pool Max typed on a
+// focus entry (data.focusPoolMaxManual) raises it, for focus spells the
+// entries don't list. data.focusPool keeps the points spent and
+// data.focusPoolMax the pool's size, and every focus entry shows them. NPCs
+// keep a pool on each focus entry, as their stat blocks give it.
 // ---------------------------------------------------------------------------
 
 const FOCUS_POOL_CAP = 3;
@@ -1529,26 +1530,49 @@ function getFocusSpellCount(entries) {
   return count;
 }
 
-// The size of a character's focus pool
+// Whether a character is from before the pool was shared: nothing kept on
+// the character yet
+function isLegacyFocusPool(record) {
+  const stored = record?.data?.focusPool;
+  return stored === undefined || stored === null || stored === "";
+}
+
+// The Focus Pool Max set by hand: data.focusPoolMaxManual, or, for a
+// character from before the pool was shared, what their focus entries'
+// own maximums added up to, so no one loses Focus Points they had
+function getFocusPoolManualMax(record, entries = record?.data?.spells || []) {
+  const stored = record?.data?.focusPoolMaxManual;
+  if (stored !== undefined && stored !== null && stored !== "") {
+    return parseInt(stored, 10) || 0;
+  }
+  if (!isLegacyFocusPool(record)) {
+    return 0;
+  }
+  return entries
+    .filter(isFocusEntry)
+    .reduce((sum, entry) => sum + (parseInt(entry.data?.focusPoolMax || "1", 10) || 1), 0);
+}
+
+// The size of a character's focus pool: from their focus spells, or the
+// Focus Pool Max set by hand when that's higher
 function getFocusPoolMax(record, entries = record?.data?.spells || []) {
   const extra = Object.entries(FOCUS_POOL_FEATURES).reduce(
     (sum, [name, points]) => sum + (hasFeatNamed(record, name) ? points : 0),
     0,
   );
-  return Math.min(FOCUS_POOL_CAP, getFocusSpellCount(entries) + extra);
+  const fromSpells = getFocusSpellCount(entries) + extra;
+  return Math.min(FOCUS_POOL_CAP, Math.max(fromSpells, getFocusPoolManualMax(record, entries)));
 }
 
 // The Focus Points a character has spent: data.focusPool, or, for a
 // character from before the pool was shared, what their focus entries had
 // spent between them
 function getFocusPointsSpent(record, entries = record?.data?.spells || []) {
-  const stored = record?.data?.focusPool;
-  const spent =
-    stored === undefined || stored === null || stored === ""
-      ? entries
-          .filter(isFocusEntry)
-          .reduce((sum, entry) => sum + (parseInt(entry.data?.focusPool || "0", 10) || 0), 0)
-      : parseInt(stored, 10) || 0;
+  const spent = isLegacyFocusPool(record)
+    ? entries
+        .filter(isFocusEntry)
+        .reduce((sum, entry) => sum + (parseInt(entry.data?.focusPool || "0", 10) || 0), 0)
+    : parseInt(record.data.focusPool, 10) || 0;
   return Math.max(0, Math.min(spent, getFocusPoolMax(record, entries)));
 }
 
@@ -1558,6 +1582,10 @@ function getFocusPoolValues(record, spent, entries = record?.data?.spells || [])
   const max = getFocusPoolMax(record, entries);
   const value = Math.max(0, Math.min(spent, max));
   const values = { "data.focusPool": value, "data.focusPoolMax": max };
+  // A character from before the pool was shared keeps their entries' maximums
+  if (isLegacyFocusPool(record) && record?.data?.focusPoolMaxManual === undefined) {
+    values["data.focusPoolMaxManual"] = getFocusPoolManualMax(record, entries);
+  }
   entries.forEach((entry, index) => {
     if (isFocusEntry(entry)) {
       values[`data.spells.${index}.data.focusPool`] = value;
@@ -1574,19 +1602,32 @@ function getRefocusPoints(record) {
   return 1;
 }
 
+// The values for a Focus Pool Max typed on one of a character's focus
+// entries: it's kept on the character and every focus entry shows the pool
+// it gives
+function getFocusPoolManualMaxValues(record, manualMax) {
+  const manual = Math.max(0, Math.min(parseInt(manualMax, 10) || 0, FOCUS_POOL_CAP));
+  const updated = { ...record, data: { ...record.data, focusPoolMaxManual: manual } };
+  return {
+    ...getFocusPoolValues(updated, getFocusPointsSpent(updated)),
+    "data.focusPoolMaxManual": manual,
+  };
+}
+
 // Keeps a character's focus entries showing their one pool when the sheet
-// writes its entries (setSpellcastingEntryValues). The pool's size comes
-// from the focus spells, so the entry's own Focus Pool Max setting is hidden.
+// writes its entries (setSpellcastingEntryValues)
 function syncFocusPool(record, entries, valuesToSet) {
   if (record?.recordType !== "characters") {
     return;
   }
   const max = getFocusPoolMax(record, entries);
   const spent = getFocusPointsSpent(record, entries);
+  if (isLegacyFocusPool(record) && record.data?.focusPoolMaxManual === undefined) {
+    valuesToSet["data.focusPoolMaxManual"] = getFocusPoolManualMax(record, entries);
+  }
   for (const entry of entries.filter(isFocusEntry)) {
     entry.data.focusPool = spent;
     entry.data.focusPoolMax = max;
-    entry.fields = { ...entry.fields, focusPoolMax: { hidden: true } };
   }
   const stored = (key) => record.data?.[key];
   if (stored("focusPool") === undefined || (parseInt(stored("focusPool"), 10) || 0) !== spent) {

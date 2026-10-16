@@ -56,15 +56,35 @@ section("The pool's size");
   const compositions = focusEntry("Compositions", [spell("Courageous Anthem", ["Cantrip", "Composition", "Focus"])], {
     cantrips: [spell("Song of Strength", ["Cantrip", "Focus"])],
   });
-  assert("focus cantrips don't count", ctx.getFocusPoolMax(character([compositions])), 0);
+  assert("focus cantrips don't count", ctx.getFocusPoolMax(character([compositions], { focusPool: 0 })), 0);
   const prepared = { ...focusEntry("Arcane Prepared Spells", [spell("Fireball", [])]), data: { type: "prepared", spells1: [spell("Fireball", [])] } };
   assert("spells in other entries don't count", ctx.getFocusPoolMax(character([prepared, domain])), 1);
   const slots = focusEntry("Domain Spells", [ctx.buildSpellRow("prepared", 1, 0)]);
-  assert("empty rows don't count", ctx.getFocusPoolMax(character([slots])), 0);
+  assert("empty rows don't count", ctx.getFocusPoolMax(character([slots], { focusPool: 0 })), 0);
   const psi = focusEntry("Psi Cantrips", [], { cantrips: [spell("Daze", ["Cantrip", "Psyche"])] });
   assert("Psi Cantrips and Amps: 2 points", ctx.getFocusPoolMax(character([psi], {}, ["Psi Cantrips and Amps"])), 2);
   assert("and Clarity of Focus 1 more", ctx.getFocusPoolMax(character([psi], {}, ["Psi Cantrips and Amps", "Clarity of Focus"])), 3);
   assert("up to 3", ctx.getFocusPoolMax(character([psi], {}, ["Psi Cantrips and Amps", "Clarity of Focus", "Psi Development"])), 3);
+}
+
+section("Focus Pool Max set by hand");
+{
+  const unlisted = focusEntry("Domain Spells", []);
+  assert("raises a pool the entries list no spells for", ctx.getFocusPoolMax(character([unlisted], { focusPool: 0, focusPoolMaxManual: 2 })), 2);
+  const domain = focusEntry("Domain Spells", [spell("Fire Ray"), spell("Healer's Blessing")]);
+  assert("never lowers the pool the focus spells give", ctx.getFocusPoolMax(character([domain], { focusPool: 0, focusPoolMaxManual: 1 })), 2);
+  assert("up to 3", ctx.getFocusPoolMax(character([unlisted], { focusPool: 0, focusPoolMaxManual: 5 })), 3);
+  const legacy = focusEntry("Domain Spells", [], { focusPoolMax: 2 });
+  assert("a character from before keeps their entry's maximum", ctx.getFocusPoolMax(character([legacy])), 2);
+  assert("and it's written with the pool", ctx.getFocusPoolValues(character([legacy]), 0)["data.focusPoolMaxManual"], 2);
+  assert("but not once the pool is kept on the character", ctx.getFocusPoolMax(character([legacy], { focusPool: 0 })), 0);
+  const two = [focusEntry("Domain Spells", []), focusEntry("School Spells", [])];
+  const values = ctx.getFocusPoolManualMaxValues(character(two, { focusPool: 1, focusPoolMax: 0 }), "2");
+  assert(
+    "typed on an entry, it's kept on the character and every entry shows the pool",
+    [values["data.focusPoolMaxManual"], values["data.focusPoolMax"], values["data.spells.0.data.focusPoolMax"], values["data.spells.1.data.focusPoolMax"], values["data.spells.1.data.focusPool"]],
+    [2, 2, 2, 2, 1],
+  );
 }
 
 section("Points spent");
@@ -79,6 +99,7 @@ section("Points spent");
   assert("setting it writes the character and every focus entry", values, {
     "data.focusPool": 1,
     "data.focusPoolMax": 2,
+    "data.focusPoolMaxManual": 2,
     "data.spells.0.data.focusPool": 1,
     "data.spells.0.data.focusPoolMax": 2,
     "data.spells.2.data.focusPool": 1,
@@ -131,7 +152,8 @@ section("The sheet keeps every focus entry showing the pool");
   ctx.updateSpellcastingEntries(record, values);
   assert("the character's pool is written: 1 of 2 spent", [values["data.focusPool"], values["data.focusPoolMax"]], [1, 2]);
   assert("both entries show it", [values["data.spells.0.data.focusPoolMax"], values["data.spells.1.data.focusPool"], values["data.spells.1.data.focusPoolMax"]], [2, 1, 2]);
-  assert("and hide their own Focus Pool Max setting", values["data.spells.1.fields.focusPoolMax"], { hidden: true });
+  assert("keep their own Focus Pool Max setting shown", values["data.spells.1.fields.focusPoolMax"], undefined);
+  assert("the entries' old maximums are kept as the one set by hand", values["data.focusPoolMaxManual"], 2);
   const synced = JSON.parse(JSON.stringify(record));
   for (const [path, value] of Object.entries(values)) {
     const keys = path.split(".");
