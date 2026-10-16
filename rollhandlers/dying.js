@@ -405,7 +405,9 @@ function getRestWoundedChanges(creature, hpAfterRest) {
 }
 
 // The Medicine check's modifiers for a healer, as Treat Wounds builds them
-function getMedicineCheckModifiers(healer) {
+function getMedicineCheckModifiers(healer, action = "Administer First Aid") {
+  // The action (action:administer-first-aid) and statistic for predicates
+  const context = getRollSourceContext({ action }, "medicine");
   const medicineMod = parseInt(healer.data?.medicineMod || "0", 10) || 0;
   const training = parseInt(healer.data?.medicine || "0", 10) || 0;
   const rank = ["Untrained", "Trained", "Expert", "Master", "Legendary"][training] || "Untrained";
@@ -416,8 +418,8 @@ function getMedicineCheckModifiers(healer) {
   const seen = new Set();
   const attribute = healer.data?.medicineAbility || "wis";
   for (const mod of [
-    ...getEffectsAndModifiersForToken(healer, ["skillBonus", "skillPenalty"], "medicine"),
-    ...getEffectsAndModifiersForToken(healer, ["allBonus", "allPenalty"], attribute),
+    ...getEffectsAndModifiersForToken(healer, ["skillBonus", "skillPenalty"], ["medicine", "skill-check"], undefined, undefined, context),
+    ...getEffectsAndModifiersForToken(healer, ["allBonus", "allPenalty"], attribute, undefined, undefined, context),
   ]) {
     const key = modToString(mod);
     if (!seen.has(key)) {
@@ -465,7 +467,13 @@ function administerFirstAid() {
         tooltip: "Administer First Aid (Medicine Check)",
         skillName: "medicine",
         dc,
-        degreeOfSuccessAdjustments: getDegreeOfSuccessAdjustments(healer, ["medicine", attribute]),
+        degreeOfSuccessAdjustments: getDegreeOfSuccessAdjustments(
+          healer,
+          ["medicine", "skill-check", attribute],
+          undefined,
+          undefined,
+          getRollSourceContext({ action: "Administer First Aid" }, "medicine"),
+        ),
         action: "Administer First Aid",
         administerFirstAid: { variant, target: getCreatureName(target), targetId: target._id },
       },

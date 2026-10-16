@@ -13817,10 +13817,18 @@ function treatWounds() {
 
       // Get Medicine skill-specific modifiers
       const additionalModsSet = new Set();
+      // The action (action:treat-wounds) and statistic for predicates
+      const treatWoundsContext = getRollSourceContext(
+        { action: "Treat Wounds" },
+        "medicine",
+      );
       const skillMods = getEffectsAndModifiersForToken(
         healer,
         ["skillBonus", "skillPenalty"],
-        "medicine",
+        ["medicine", "skill-check"],
+        undefined,
+        undefined,
+        treatWoundsContext,
       );
 
       skillMods.forEach((mod) => {
@@ -13837,6 +13845,9 @@ function treatWounds() {
         healer,
         ["allBonus", "allPenalty"],
         wisdomAbility,
+        undefined,
+        undefined,
+        treatWoundsContext,
       );
 
       allMods.forEach((mod) => {
@@ -13848,10 +13859,13 @@ function treatWounds() {
       });
 
       // Get degree of success adjustments
-      const degreeOfSuccessAdjustments = getDegreeOfSuccessAdjustments(healer, [
-        "medicine",
-        wisdomAbility,
-      ]);
+      const degreeOfSuccessAdjustments = getDegreeOfSuccessAdjustments(
+        healer,
+        ["medicine", "skill-check", wisdomAbility],
+        undefined,
+        undefined,
+        treatWoundsContext,
+      );
 
       // Prepare metadata for the roll
       const metadata = {

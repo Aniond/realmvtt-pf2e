@@ -514,4 +514,20 @@ section("off-guard targets: backstabber and off-guard predicates");
   ctx.api.getOtherTokens = realOther;
 }
 
+section("Treat Wounds and First Aid pass their action");
+{
+  const surgeon = pc({
+    medicine: "2",
+    feats: [
+      feat("Risky Surgery", [{ type: "adjustDegreeOfSuccess", field: "medicine", adjustment: { success: "one-degree-better" }, predicate: '["action:treat-wounds"]' }]),
+      feat("Steady Hands", [{ type: "skillBonus", modifierType: "circumstance", field: "medicine", valueType: "number", value: "1", predicate: '["action:administer-first-aid"]' }]),
+    ],
+  });
+  const firstAid = ctx.getMedicineCheckModifiers(surgeon).modifiers.find((m) => m.name.startsWith("Steady Hands"));
+  assert("a First Aid bonus applies on First Aid", firstAid?.active, true);
+  const context = ctx.getRollSourceContext({ action: "Treat Wounds" }, "medicine");
+  const adjustments = ctx.getDegreeOfSuccessAdjustments(surgeon, ["medicine", "skill-check", "wis"], undefined, undefined, context);
+  assert("a Treat Wounds degree adjustment applies with the action", adjustments.success.value, "one-degree-better");
+}
+
 summary();
