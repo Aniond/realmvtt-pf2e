@@ -3023,15 +3023,7 @@ function isDiceModifierValue(value) {
 // the rest of the damage.
 function keepStrongestPerType(mods) {
   const filteredResults = [];
-  // Foundry's "ability" and "proficiency" modifier types stack like typed
-  // bonuses (only the strongest of each applies)
-  const stackingTypes = [
-    "circumstance",
-    "item",
-    "status",
-    "ability",
-    "proficiency",
-  ];
+  const stackingTypes = ["circumstance", "item", "status"];
   // Pools keyed by type, plus ":persistent" for persistent damage
   const bonusGroups = {};
   const penaltyGroups = {};

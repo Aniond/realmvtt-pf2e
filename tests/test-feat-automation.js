@@ -465,13 +465,14 @@ section("save macros carry the source's traits");
 
 section("smaller engine fixes");
 {
-  // Foundry's ability/proficiency modifier types stack instead of vanishing
+  // Foundry's ability/proficiency types stay dropped: imported values of
+  // those types (e.g. "@actor.level + clamp(...)") would break rolls
   const kept = ctx.keepStrongestPerType([
     { name: "A", type: "proficiency", value: 3 },
-    { name: "B", type: "proficiency", value: 5 },
     { name: "C", type: "ability", value: 2 },
+    { name: "D", type: "", value: 1 },
   ]);
-  assert("proficiency and ability types keep the strongest", kept.map((m) => m.name).sort().join(","), "B,C");
+  assert("proficiency and ability types are left out", kept.map((m) => m.name).join(","), "D");
 
   // A critical specialization predicate written as an object now evaluates
   const sword = weapon("Longsword");
