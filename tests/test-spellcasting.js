@@ -291,7 +291,11 @@ section("Every caster class and edition against the tables");
   const fighter = character(classRecord("Fighter"), 5);
   assert("fighter has no entries", ctx.getWantedSpellcastingEntries(fighter, 5).length, 0);
   const champion = character(classRecord("Champion"), 5);
-  assert("champion (focus spells only) has no entries", ctx.getWantedSpellcastingEntries(champion, 5).length, 0);
+  assert(
+    "champion (focus spells only) has only its focus entry",
+    ctx.getWantedSpellcastingEntries(champion, 5).map((spec) => spec.source),
+    ["class:champion:focus"],
+  );
   const homebrew = character(classRecord("Wizard (Homebrew)"), 1);
   assert("a tag after the class name is ignored", ctx.getWantedSpellcastingEntries(homebrew, 1)[0]?.source, "class:wizard");
 }

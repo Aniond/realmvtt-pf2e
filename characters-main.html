@@ -197,8 +197,10 @@
           classObj.data?.keyAbility?.length > 0
             ? classObj.data?.keyAbility[0]
             : "none",
-        // The class's spellcasting entries are made from now on
+        // The class's spellcasting entries are made from now on, its focus
+        // entry too
         "data.autoSpellcasting": true,
+        "data.autoFocusSpellcasting": true,
         // Shown again if the Level 0 creation wizard hid it
         "fields.keyAbility.hidden": false,
       },

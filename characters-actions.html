@@ -23,6 +23,9 @@
         "data.autoSpellcasting":
           !!record.data?.autoSpellcasting ||
           dismissed.some((source) => source.startsWith("class:")),
+        "data.autoFocusSpellcasting":
+          !!record.data?.autoFocusSpellcasting ||
+          dismissed.some((source) => /^class:[^:]+:focus$/.test(source)),
         ...(Array.isArray(sources)
           ? {
               "data.spellcastingSources": sources.filter(
