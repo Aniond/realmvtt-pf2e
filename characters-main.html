@@ -2315,9 +2315,11 @@ ${getLevelUpSummary(gains)}`,
             display: flex;
             flex-direction: column;
             align-items: flex-start;
+            padding-top: 2px;
           "
         >
-          <!-- Styled like the sheet's input field labels (HP, Max, AC) -->
+          <!-- Styled like the sheet's input field labels (HP, Max, AC), with
+               the same offsets so the button lines up with the inputs -->
           <div
             style="
               font-family: var(--sheet-label-font, var(--mantine-font-family));
@@ -2326,6 +2328,7 @@ ${getLevelUpSummary(gains)}`,
               letter-spacing: 0.14em;
               text-transform: uppercase;
               line-height: 1.55;
+              margin-bottom: 2px;
               color: color-mix(
                 in srgb,
                 var(--fg-dim, var(--mantine-color-dimmed)) 55%,
