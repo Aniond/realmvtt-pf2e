@@ -1054,6 +1054,7 @@
         const hpMods = getEffectsAndModifiersForToken(record, ["hitpoints"]);
 
         hpMods.forEach((mod) => {
+          if (mod.active === false) return;
           const modValue = parseInt(mod.value || "0", 10);
           if (!isNaN(modValue)) {
             baseHP += modValue;

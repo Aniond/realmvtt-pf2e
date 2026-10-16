@@ -1015,7 +1015,12 @@ function getSpellSaveMacro(record, spell, spellCastingEntry, dataPathToSpell) {
     if (mod.active === false) return;
     saveDC += parseInt(mod.value || 0, 10) || 0;
   });
-  return getSaveMacro(saveType, saveDC, true, true);
+  // Pass the spell's traits and casting tradition so save modifiers against
+  // emotion/fear/mental/arcane/... effects apply automatically
+  const sourceTraits = [...(spell?.data?.traits || [])];
+  const tradition = spellCastingEntry?.data?.tradition;
+  if (tradition) sourceTraits.push(tradition);
+  return getSaveMacro(saveType, saveDC, true, true, sourceTraits);
 }
 
 function getSpellAttackMacro(

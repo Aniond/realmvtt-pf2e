@@ -24,6 +24,9 @@ const targetName = data?.roll?.metadata?.targetName;
 const tooltip = data?.roll?.metadata?.tooltip;
 const dcName = data?.roll?.metadata?.dcName || "AC";
 const persistentDamage = data?.roll?.metadata?.persistentDamage || "";
+// Persistent damage that only a critical hit adds (not doubled)
+const criticalPersistentDamage =
+  data?.roll?.metadata?.criticalPersistentDamage || "";
 let damageModifiers = data?.roll?.metadata?.damageModifiers || [];
 let splashDamage = data?.roll?.metadata?.splashDamage || 0;
 let splashDamageType = data?.roll?.metadata?.splashDamageType;
@@ -279,6 +282,19 @@ const fatalDie = data?.roll?.metadata?.fatalDie;
 // - Major Striking (3): 3 deadly dice
 let criticalOnlyDice = [];
 
+// Critical-hit-only riders (data.critical / check:outcome:critical-success)
+// apply only on a critical hit, after the doubling, so they are tracked as
+// critical-only dice and moved to the end where the damage handler looks for
+// them. On any other hit they are dropped.
+const criticalRiders = damageModifiers.filter((mod) => mod.criticalOnly);
+damageModifiers = damageModifiers.filter((mod) => !mod.criticalOnly);
+if (isCritical) {
+  criticalRiders.forEach((mod) => {
+    damageModifiers.push({ ...mod, active: true });
+    criticalOnlyDice.push(...getCriticalOnlyDiceForValue(mod.value, mod.type || damageType));
+  });
+}
+
 // Track splash damage so it doesn't get doubled on critical hits
 // Splash damage is now formatted as "1d4 fire + 1d6 acid" with types included
 if (
@@ -425,6 +441,7 @@ const damageMetadata = {
   damageIgnoresImmunities: damageIgnoresImmunities,
   damageIgnoresWeaknesses: damageIgnoresWeaknesses,
   persistentDamage: persistentDamage,
+  criticalPersistentDamage: isCritical ? criticalPersistentDamage : "",
   hasDeathTrait: hasDeathTrait,
   criticalOnlyDice: criticalOnlyDice,
   precisionModifierIndices: precisionModifierIndices, // Track which modifiers are precision damage

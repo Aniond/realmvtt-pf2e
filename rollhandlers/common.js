@@ -96,8 +96,9 @@ function evaluateMath(stringValue) {
     sanitizedString = sanitizedString.replace(/abs\(/g, "Math.abs(");
 
     // Validate string only contains valid math characters and functions
-    // Allow: digits, operators, parentheses, and Math.floor/Math.ceil/Math.min/Math.max/Math.abs
-    if (!/^[0-9+\-*/().Mathflorceuimnxbs]+$/.test(sanitizedString)) {
+    // Allow: digits, operators, parentheses, commas (for min/max arguments),
+    // and Math.floor/Math.ceil/Math.min/Math.max/Math.abs
+    if (!/^[0-9+\-*/().,Mathflorceuimnxbs]+$/.test(sanitizedString)) {
       return 0;
     }
 
@@ -381,6 +382,7 @@ function checkForReplacements(
       dieSize = context.weapon.data?.damage?.die || "";
     }
     if (dieSize) {
+      value = value.replace(/(\d|\))@dieSize/g, "$1d@dieSize");
       // Strip leading 'd' if present to avoid duplication (e.g., 1d@dieSize -> 1d6 not 1dd6)
       dieSize = dieSize.replace(/^d/i, "");
       // Replace d@dieSize pattern first to avoid dd duplication
@@ -390,10 +392,28 @@ function checkForReplacements(
     }
   }
 
+  // Weapon damage tokens (Foundry's @weapon.system.damage.*): the number of
+  // damage dice including striking runes, the die ("d8") and the weapon level
+  if (context?.weapon && value.includes("@weapon")) {
+    const weaponData = context.weapon.data || {};
+    const diceCount = getWeaponDiceCount(context.weapon);
+    const die = String(weaponData.damage?.die || "");
+    value = value.replaceAll("@weaponDiceCount", String(diceCount));
+    value = value.replaceAll("@weapon.system.damage.dice", String(diceCount));
+    value = value.replaceAll("@weapon.system.damage.die", die);
+    value = value.replaceAll(
+      "@weapon.level",
+      String(parseInt(weaponData.level || "0", 10) || 0),
+    );
+  }
+
   // Replace @weaponDie with the weapon's damage die
   if (value.includes("@weaponDie") && context?.weapon) {
     let weaponDie = context.weapon.data?.damage?.die;
     if (weaponDie) {
+      // "2@weaponDie" / "ternary(...)@weaponDie" (imported without the d)
+      // mean that many dice, not a number glued to the die size
+      value = value.replace(/(\d|\))@weaponDie/g, "$1d@weaponDie");
       // Strip leading 'd' if present to avoid duplication (e.g., 1d@weaponDie -> 1d6 not 1dd6)
       weaponDie = weaponDie.replace(/^d/i, "");
       // Replace d@weaponDie pattern first to avoid dd duplication
@@ -882,6 +902,13 @@ function collectTraitsAndProperties(
     });
   }
 
+  // The outcome of the check this lookup is for (Foundry's
+  // check:outcome:critical-success). Attack-time damage lookups pass
+  // outcome: "critical-success" to find critical-hit-only riders.
+  if (typeof context.outcome === "string" && context.outcome) {
+    traits.add(`check:outcome:${context.outcome}`);
+  }
+
   // Collect action name if provided (e.g., "Subsist" becomes "action:subsist")
   if (context.action && context.action.name) {
     const actionName = context.action.name.toLowerCase().replace(/\s+/g, "-");
@@ -1013,8 +1040,51 @@ function collectTraitsAndProperties(
   Object.values(context).forEach((obj) => {
     if (typeof obj === "object" && obj !== null && obj._id) {
       traits.add(`id:${obj._id}`);
+      traits.add(`item:id:${obj._id}`);
     }
   });
+
+  // Foundry item atoms for the weapon/item/spell in context: item:slug,
+  // item:base (the base weapon, derived from the name without runes),
+  // item:type, item:usage and item:hands-held
+  const contextItem = context.weapon || context.item || context.spell;
+  if (contextItem && typeof contextItem === "object") {
+    getFoundryItemAtoms(contextItem).forEach((atom) => traits.add(atom));
+  }
+
+  // The source of the effect being rolled against (a spell's or ability's
+  // traits passed by save/skill macros): Foundry's origin:trait:* and
+  // origin:item:trait:*; item:trait:* and the bare trait come from the
+  // context loop above
+  if (context.origin?.data?.traits) {
+    const originTraits = Array.isArray(context.origin.data.traits)
+      ? context.origin.data.traits
+      : [];
+    originTraits.forEach((trait) => {
+      const name = (typeof trait === "string" ? trait : trait?.name || "")
+        .toLowerCase()
+        .trim();
+      if (name) {
+        traits.add(`origin:trait:${name}`);
+        traits.add(`origin:item:trait:${name}`);
+      }
+    });
+  }
+
+  // Skill and proficiency ranks: skill:<name>:rank:<n> for every skill (so
+  // {"gte":["skill:athletics:rank",2]} resolves) and, for the statistic being
+  // rolled, check:statistic:<name>, proficiency:rank:<n> and
+  // proficiency:<untrained|trained|expert|master|legendary>
+  getSkillRankAtoms(token, context.statistic).forEach((atom) =>
+    traits.add(atom),
+  );
+
+  // Armor worn: self:armored (any armor), self:armor:category:<category>
+  getArmorAtoms(token).forEach((atom) => traits.add(atom));
+
+  // Targets (attack and damage lookups): target:trait:*, target:condition:*,
+  // target:effect:*, target:level:<n>, target:type:*, target:range-increment
+  getTargetAtoms(token, context).forEach((atom) => traits.add(atom));
 
   // Add item:proficiency:rank:{value} for items in context
   const item = context.item || context.weapon || context.spell;
@@ -1173,6 +1243,364 @@ function collectTraitsAndProperties(
 }
 
 /**
+ * The base item name of a weapon/armor: its name with fundamental and
+ * property rune prefixes removed ("+1 Striking Flaming Longbow" -> "longbow").
+ */
+function getBaseItemSlug(item) {
+  const explicit = item?.data?.baseItem || item?.data?.base || "";
+  if (explicit) return toSlug(String(explicit));
+  let name = String(item?.name || "").toLowerCase();
+  name = name.replace(/^\s*\+\d+\s*/, "");
+  name = name.replace(
+    /\b(greater|major|minor|true|lesser|moderate)?\s*(striking|resilient)\b/g,
+    "",
+  );
+  const propertyRunes = Array.isArray(item?.data?.runes?.property)
+    ? item.data.runes.property
+    : [];
+  propertyRunes.forEach((rune) => {
+    const runeName = String(
+      typeof rune === "string" ? rune : rune?.name || "",
+    ).toLowerCase();
+    if (runeName) name = name.split(runeName).join("");
+  });
+  return toSlug(name);
+}
+
+/**
+ * Foundry-style item atoms for one item (weapon, armor, spell or other).
+ */
+function getFoundryItemAtoms(item) {
+  const atoms = [];
+  if (!item || typeof item !== "object") return atoms;
+  const slug = toSlug(String(item.name || ""));
+  if (slug) atoms.push(`item:slug:${slug}`);
+  const base = getBaseItemSlug(item);
+  if (base) atoms.push(`item:base:${base}`);
+  const type = String(item.data?.type || "").toLowerCase();
+  if (type) atoms.push(`item:type:${type}`);
+  if (item.recordType === "spells") {
+    atoms.push("item:type:spell");
+    const rank = parseInt(item.data?.level ?? item.data?.rank, 10);
+    if (!isNaN(rank)) atoms.push(`item:rank:${rank}`);
+    const traditions = item.data?.traditions || item.data?.spellLists || [];
+    (Array.isArray(traditions) ? traditions : [traditions]).forEach((t) => {
+      const tradition = String(t || "").toLowerCase().trim();
+      if (tradition) atoms.push(`item:trait:${tradition}`, tradition);
+    });
+  }
+  const level = parseInt(item.data?.level, 10);
+  if (!isNaN(level)) atoms.push(`item:level:${level}`);
+  // Weapon usage: "held-in-one-hand", "held-in-two-hands",
+  // "held-in-one-plus-hands"
+  const usage = String(item.data?.usage || "").toLowerCase();
+  if (usage) {
+    atoms.push(`item:usage:${usage}`);
+    const hands = usage.includes("two-hands")
+      ? 2
+      : usage.includes("one-plus") || usage.includes("one-hand")
+        ? 1
+        : 0;
+    if (hands) {
+      atoms.push(`item:usage:hands:${hands}`);
+      atoms.push(`item:hands-held:${hands}`);
+    }
+  }
+  const category = String(item.data?.itemCategory || "").toLowerCase();
+  if (category === "unarmed") atoms.push("item:unarmed");
+  // Foundry: item:magical for any potency/property rune or the magical trait
+  const runes = item.data?.runes || {};
+  const traitNames = (Array.isArray(item.data?.traits) ? item.data.traits : [])
+    .map((t) => String(typeof t === "string" ? t : t?.name || "").toLowerCase());
+  if (
+    (runes.potency || 0) > 0 ||
+    (Array.isArray(runes.property) && runes.property.length > 0) ||
+    traitNames.includes("magical")
+  ) {
+    atoms.push("item:magical");
+  }
+  return atoms;
+}
+
+/**
+ * skill:<name>:rank:<n> for each skill of a character, plus atoms for the
+ * statistic being rolled (check:statistic:<name>, proficiency:rank:<n>,
+ * proficiency:<rank name>).
+ */
+function getSkillRankAtoms(token, statistic) {
+  const atoms = [];
+  const data = token?.data;
+  if (!data || typeof data !== "object") return atoms;
+  const skills = Object.keys(getPathfinderSkills());
+  skills.forEach((skill) => {
+    const rank = parseInt(data[skill] || "0", 10) || 0;
+    atoms.push(`skill:${skill}:rank:${rank}`);
+  });
+  ["perception", "fortitude", "reflex", "will"].forEach((stat) => {
+    const rank = parseInt(data[stat] || "0", 10) || 0;
+    atoms.push(`${stat}:rank:${rank}`);
+  });
+  (Array.isArray(data.loreSkills) ? data.loreSkills : []).forEach((lore) => {
+    const loreSlug = toSlug(String(lore?.name || ""));
+    const rank = parseInt(lore?.data?.rank || "0", 10) || 0;
+    if (loreSlug) atoms.push(`skill:${loreSlug}:rank:${rank}`);
+  });
+  if (statistic) {
+    const stat = toSlug(String(statistic));
+    atoms.push(`check:statistic:${stat}`);
+    const rank = parseInt(data[stat] || "0", 10) || 0;
+    atoms.push(`proficiency:rank:${rank}`);
+    atoms.push(
+      `proficiency:${(PROFICIENCY_RANK_NAMES[rank] || "Untrained").toLowerCase()}`,
+    );
+  }
+  return atoms;
+}
+
+/**
+ * self:armored when wearing armor (not unarmored), and
+ * self:armor:category:<category>.
+ */
+function getArmorAtoms(token) {
+  const atoms = [];
+  if (!token?.data || token.recordType !== "characters") return atoms;
+  const category = String(
+    getBestEquippedArmor(token)?.armor?.armorCategory || "unarmored",
+  ).toLowerCase();
+  if (category && category !== "unarmored") atoms.push("self:armored");
+  atoms.push(`self:armor:category:${category || "unarmored"}`);
+  return atoms;
+}
+
+/**
+ * Atoms describing the target of an attack/damage lookup. Uses
+ * context.target, or context.targets when there is exactly one target (with
+ * several targets a per-target trait can't be known up front).
+ */
+function getTargetAtoms(token, context) {
+  const atoms = [];
+  const targets = Array.isArray(context.targets) ? context.targets : [];
+  const target =
+    context.target || (targets.length === 1 ? targets[0] : undefined);
+  if (!target) return atoms;
+  const targetToken = target.token || target;
+  const targetData = targetToken?.data || targetToken?.record?.data || {};
+  const traitList = Array.isArray(targetData.traits) ? targetData.traits : [];
+  traitList.forEach((trait) => {
+    const name = String(typeof trait === "string" ? trait : trait?.name || "")
+      .toLowerCase()
+      .trim();
+    if (name) atoms.push(`target:trait:${name}`);
+  });
+  const effects = Array.isArray(targetToken?.effects) ? targetToken.effects : [];
+  effects.forEach((effect) => {
+    const slug = toSlug(String(effect?.name || ""));
+    if (slug) {
+      atoms.push(`target:condition:${slug}`);
+      atoms.push(`target:effect:${slug}`);
+    }
+  });
+  const level = parseInt(targetData.level, 10);
+  if (!isNaN(level)) atoms.push(`target:level:${level}`);
+  const recordType = targetToken?.recordType || targetToken?.record?.recordType;
+  if (recordType) {
+    atoms.push(
+      `target:type:${recordType === "characters" ? "character" : "npc"}`,
+    );
+  }
+  // Range increment for ranged weapons (and increment 1 inside melee reach)
+  const weapon = context.weapon || context.item;
+  const distance = context.targetDistance || target.distance || 0;
+  if (weapon && distance > 0 && !context.target) {
+    const range = parseInt(weapon.data?.range, 10) || 0;
+    if (range > 0) {
+      atoms.push(`target:range-increment:${Math.ceil(distance / range)}`);
+    } else if (distance <= (token?.data?.reach || 5)) {
+      atoms.push("target:range-increment:1");
+    }
+  }
+  return atoms;
+}
+
+/**
+ * Predicate context for a save or skill roll: the statistic rolled
+ * (check:statistic, proficiency:*), the action (action:*) and the source being
+ * resisted (options.traits -> item:trait:*, origin:trait:*, bare trait).
+ */
+function getRollSourceContext(options = {}, statistic = "", isSpell = false) {
+  const context = {};
+  if (statistic) context.statistic = statistic;
+  if (options.action) context.action = { name: options.action };
+  const traits = Array.isArray(options.traits) ? [...options.traits] : [];
+  // Spells are magical, but only mark it when the macro passed the spell's
+  // traits: an older save button (no traits) stays "source unknown", so its
+  // source-dependent modifiers are offered as opt-ins
+  if (
+    isSpell &&
+    traits.length > 0 &&
+    !traits.some((t) => String(t).toLowerCase() === "magical")
+  ) {
+    traits.push("magical");
+  }
+  if (traits.length > 0) {
+    context.origin = {
+      name: options.sourceName || "",
+      recordType: isSpell ? "spells" : "effects",
+      data: { traits },
+    };
+  }
+  return context;
+}
+
+/**
+ * A weapon's number of damage dice including striking runes (Foundry's
+ * @weapon.system.damage.dice).
+ */
+function getWeaponDiceCount(weapon) {
+  const base = parseInt(weapon?.data?.damage?.dice || "1", 10) || 1;
+  const striking = parseInt(weapon?.data?.runes?.striking || "0", 10) || 0;
+  return base + striking;
+}
+
+const WEAPON_DIE_STEPS = [4, 6, 8, 10, 12];
+
+/**
+ * The weapon as feats and effects alter it for this Strike:
+ *   weaponDieSize - value "d6"/"6" sets the damage die (the largest wins),
+ *                   "upgrade"/"downgrade" step it (d4 > d6 > d8 > d10 > d12)
+ *   weaponTrait   - value is a trait to add ("deadly-d10"), or "-trait" /
+ *                   "remove trait" to take one away
+ * Both are predicated against the weapon ({weapon} context), e.g. Vicious
+ * Incisors: weaponDieSize "d6" with predicate ["item:slug:jaws"].
+ */
+function getAlteredWeapon(record, weapon) {
+  if (!record || !weapon?.data) return weapon;
+  const mods = getEffectsAndModifiersForToken(
+    record,
+    ["weaponDieSize", "weaponTrait"],
+    "",
+    undefined,
+    undefined,
+    { weapon },
+  ).filter((mod) => mod.active);
+  if (mods.length === 0) return weapon;
+
+  const altered = {
+    ...weapon,
+    data: {
+      ...weapon.data,
+      damage: weapon.data.damage ? { ...weapon.data.damage } : weapon.data.damage,
+      traits: [...(Array.isArray(weapon.data.traits) ? weapon.data.traits : [])],
+    },
+  };
+
+  const dieMods = mods.filter((mod) => mod.modifierType === "weaponDieSize");
+  const currentDie =
+    parseInt(String(altered.data.damage?.die || "").replace(/^d/i, ""), 10) ||
+    0;
+  if (dieMods.length > 0 && currentDie > 0) {
+    let die = currentDie;
+    // Overrides first (largest wins), then steps
+    dieMods.forEach((mod) => {
+      const size = parseInt(String(mod.value).trim().replace(/^d/i, ""), 10);
+      if (size > 0 && size > die) die = size;
+    });
+    dieMods.forEach((mod) => {
+      const step = String(mod.value).trim().toLowerCase();
+      const index = WEAPON_DIE_STEPS.indexOf(die);
+      if (index < 0) return;
+      if (step === "upgrade" || step === "+1" || step === "step") {
+        die = WEAPON_DIE_STEPS[Math.min(index + 1, WEAPON_DIE_STEPS.length - 1)];
+      } else if (step === "downgrade" || step === "-1") {
+        die = WEAPON_DIE_STEPS[Math.max(index - 1, 0)];
+      }
+    });
+    altered.data.damage.die = `d${die}`;
+  }
+
+  mods
+    .filter((mod) => mod.modifierType === "weaponTrait")
+    .forEach((mod) => {
+      const raw = String(mod.value || mod.field || "").trim();
+      if (!raw) return;
+      const removal = raw.match(/^(?:-|remove\s+)(.+)$/i);
+      const lower = (t) =>
+        String(typeof t === "string" ? t : t?.name || "").toLowerCase();
+      if (removal) {
+        const name = removal[1].trim().toLowerCase();
+        altered.data.traits = altered.data.traits.filter((t) => lower(t) !== name);
+      } else if (!altered.data.traits.some((t) => lower(t) === raw.toLowerCase())) {
+        altered.data.traits.push(raw);
+      }
+    });
+
+  return altered;
+}
+
+/**
+ * Non-land Speeds from "speed" modifiers (field = fly/swim/climb/burrow,
+ * value = feet, or "land"/"@actor.attributes.speed.value" for equal to the
+ * land Speed; the highest grant wins) plus speedBonus modifiers with that
+ * field. Returns e.g. { climb: 25, fly: 20 }.
+ */
+function getOtherSpeeds(record, speedMods, landSpeed, isLandSpeedField) {
+  const speeds = {};
+  const typeOf = (field) => {
+    const match = String(field || "")
+      .toLowerCase()
+      .match(/^(fly|swim|climb|burrow)(?:-speed)?$/);
+    return match ? match[1] : "";
+  };
+  getEffectsAndModifiersForToken(record, ["speed"]).forEach((mod) => {
+    if (mod.active === false) return;
+    const type = typeOf(mod.field);
+    if (!type) return;
+    const raw = String(mod.value ?? "").trim().toLowerCase();
+    const feet =
+      raw === "land" || raw.includes("speed.value") || raw === ""
+        ? landSpeed
+        : parseInt(raw, 10) || 0;
+    if (feet > (speeds[type] || 0)) speeds[type] = feet;
+  });
+  speedMods.forEach((mod) => {
+    if (!mod.active || isLandSpeedField(mod.field)) return;
+    const type = typeOf(mod.field);
+    if (type && speeds[type] !== undefined) {
+      speeds[type] += parseInt(mod.value || 0, 10) || 0;
+    }
+  });
+  return speeds;
+}
+
+/**
+ * Senses text with feature senses applied: lowLightDarkvision adds Low-Light
+ * vision or upgrades it to Darkvision; each sense modifier's value (or field)
+ * is appended unless already present, and Darkvision replaces Low-Light.
+ */
+function applySenseModifiers(baseSenses, senseModifiers, hasLowLightDarkvision) {
+  let senses = String(baseSenses || "").trim();
+  if (hasLowLightDarkvision) {
+    const hasLowLight = /low.?light|lowlight/i.test(senses);
+    const hasDarkvision = /darkvision/i.test(senses);
+    if (hasLowLight && !hasDarkvision) {
+      senses = senses.replace(/low.?light( vision)?|lowlight/gi, "Darkvision");
+    } else if (!hasDarkvision) {
+      senses = senses ? `${senses}, Low-Light` : "Low-Light";
+    }
+  }
+  senseModifiers.forEach((modifier) => {
+    const sense = String(modifier.value || modifier.field || "").trim();
+    if (!sense || senses.toLowerCase().includes(sense.toLowerCase())) return;
+    if (sense.toLowerCase() === "darkvision" && /low.?light/i.test(senses)) {
+      senses = senses.replace(/low.?light( vision)?/gi, "Darkvision");
+      return;
+    }
+    senses = senses ? `${senses}, ${sense}` : sense;
+  });
+  return senses;
+}
+
+/**
  * Recalculates and stores the active rollOptions for a character.
  * Call this in onAddEditFeature to keep record.data.rollOptions up to date.
  *
@@ -1275,6 +1703,16 @@ function updateRollOptions(record, valuesToSet) {
  * @param {string|Array|Object} predicateInput - The predicate from modifier data (JSON string or already parsed)
  * @returns {Array|Object|String} Parsed predicate in effect format
  */
+// A parsed predicate that has something to evaluate: a non-empty array, or
+// an operator object such as {"or": [...]} (objects have no length)
+function isNonEmptyPredicate(predicate) {
+  if (Array.isArray(predicate)) return predicate.length > 0;
+  if (predicate && typeof predicate === "object") {
+    return Object.keys(predicate).length > 0;
+  }
+  return typeof predicate === "string" && predicate.trim() !== "";
+}
+
 function parseModifierPredicate(predicateInput) {
   // If already an object or array (already parsed), return as-is
   if (typeof predicateInput === "object") {
@@ -1406,6 +1844,101 @@ function resolvePredicateValue(value, target, context, traits) {
   return 0;
 }
 
+// Modifier types that appear in a roll prompt, where an opt-in can be ticked
+const SITUATIONAL_MODIFIER_TYPES = new Set([
+  "allBonus", "allPenalty", "skillBonus", "skillPenalty", "perceptionBonus",
+  "perceptionPenalty", "initiativeBonus", "initiativePenalty", "saveBonus",
+  "savePenalty", "attackBonus", "attackPenalty", "damageBonus",
+  "damagePenalty", "spellAttackBonus", "spellAttackPenalty",
+  "spellDamageBonus", "spellDamagePenalty", "cantripDamageBonus",
+  "cantripDamagePenalty", "healingBonus", "healingPenalty",
+]);
+
+// Traits of the effect being resisted that a save/skill roll only knows when
+// the macro passes the source's traits (options.traits)
+const SITUATIONAL_EFFECT_TRAITS = new Set([
+  "emotion", "fear", "mental", "poison", "disease", "magical", "arcane",
+  "divine", "occult", "primal", "illusion", "auditory", "visual", "olfactory",
+  "linguistic", "death", "curse", "sleep", "incapacitation", "possession",
+  "polymorph", "misfortune", "fortune", "inhaled", "ingested", "contact",
+  "injury", "trap", "hazard", "spell", "cantrip", "focus", "fire", "cold",
+  "electricity", "acid", "sonic", "void", "vitality", "spirit", "force",
+  "darkness", "light", "charm", "controlled", "mechanical", "environmental",
+  "paralyze", "nonlethal", "attack", "manipulate", "concentrate", "move",
+  "unholy", "holy", "aura", "inhaled",
+]);
+
+/**
+ * True when an atom describes something the current roll can't know: the
+ * action being performed (no context.action), the target (no single target),
+ * the source of the effect (no context.origin), or the terrain. A modifier
+ * that only fails on such atoms is offered in the roll prompt as an opt-in.
+ */
+function isSituationalAtom(atom, context = {}) {
+  if (typeof atom !== "string") return false;
+  const hasTarget =
+    !!context.target ||
+    (Array.isArray(context.targets) && context.targets.length === 1);
+  const hasItem = !!(context.weapon || context.item || context.spell);
+  if (atom.startsWith("action:")) return !context.action;
+  if (atom.startsWith("target:")) return !hasTarget;
+  if (atom.startsWith("terrain:") || atom.startsWith("environment:")) return true;
+  if (
+    atom.startsWith("origin:") ||
+    atom.startsWith("inflicts:") ||
+    atom.startsWith("check:type:")
+  ) {
+    return !context.origin;
+  }
+  if (atom.startsWith("item:trait:")) {
+    return !hasItem && !context.origin;
+  }
+  if (!atom.includes(":") && SITUATIONAL_EFFECT_TRAITS.has(atom)) {
+    return !hasItem && !context.origin;
+  }
+  return false;
+}
+
+/**
+ * Human-readable reason a situational modifier applies, e.g. "Demoralize",
+ * "vs undead", "vs fear", "aquatic terrain".
+ */
+function getSituationalLabel(predicate, traits, context = {}) {
+  const atoms = [];
+  const walk = (node, negated) => {
+    if (typeof node === "string") {
+      if (!negated && !traits.has(node) && isSituationalAtom(node, context)) {
+        atoms.push(node);
+      }
+    } else if (Array.isArray(node)) {
+      node.forEach((child) => walk(child, negated));
+    } else if (node && typeof node === "object") {
+      Object.entries(node).forEach(([key, child]) => {
+        if (["gte", "gt", "lte", "lt", "eq", "ne"].includes(key)) return;
+        walk(child, negated || ["not", "nor", "nand"].includes(key));
+      });
+    }
+  };
+  walk(predicate, false);
+  const words = (slug) =>
+    slug
+      .split("-")
+      .map((w) => (w ? w.charAt(0).toUpperCase() + w.slice(1) : w))
+      .join(" ");
+  const labels = atoms.map((atom) => {
+    const last = atom.split(":").pop();
+    if (atom.startsWith("action:")) return words(last);
+    if (atom.startsWith("target:condition:") || atom.startsWith("target:effect:"))
+      return `target ${last.replace(/-/g, " ")}`;
+    if (atom.startsWith("target:")) return `vs ${last.replace(/-/g, " ")}`;
+    if (atom.startsWith("terrain:") || atom.startsWith("environment:"))
+      return `${last.replace(/-/g, " ")} terrain`;
+    if (atom.startsWith("inflicts:")) return `vs ${last.replace(/-/g, " ")}`;
+    return `vs ${last.replace(/-/g, " ")}`;
+  });
+  return [...new Set(labels)].join(", ");
+}
+
 /**
  * Evaluates an effect predicate condition (JSON format) against a set of traits.
  * This is different from the existing evaluatePredicate which handles string-based predicates.
@@ -1419,6 +1952,15 @@ function resolvePredicateValue(value, target, context, traits) {
 function evaluateEffectPredicate(predicate, traits, target, context = {}) {
   // Base case: string predicate - check if trait exists
   if (typeof predicate === "string") {
+    // When probing whether a failed modifier is situational, atoms the roll
+    // can't know count as satisfied
+    if (
+      context.__assumeSituational &&
+      !traits.has(predicate) &&
+      isSituationalAtom(predicate, context)
+    ) {
+      return true;
+    }
     // Unsupported predicate types - assume true
     if (predicate.startsWith("item:tag:")) {
       return true;
@@ -1675,8 +2217,13 @@ function processDamageModifierCategories(
     splashDamageParts.push(`${existingSplash} ${existingSplashType}`);
   }
 
+  const criticalPersistentParts = [];
   damageModifiers.forEach((mod) => {
     const value = mod.value?.toString() || "";
+    // Persistent and splash damage leave the toggleable modifier list, so a
+    // modifier whose predicate failed (or that the player has to opt into)
+    // must not be applied automatically
+    const isInactive = mod.active === false;
 
     // Check if this modifier has dice and a damage type with a category suffix
     // Pattern: "{dice} {damageType}-{category}" e.g., "1d6 poison-persistent"
@@ -1690,11 +2237,18 @@ function processDamageModifierCategories(
       const category = match[3].toLowerCase();
 
       if (category === "persistent") {
-        // Add to persistent damage with its type, don't include in modifiers
-        persistentDamageParts.push(`${diceFormula} ${damageType}`);
+        if (mod.criticalOnly) {
+          // Only added (undoubled) by the attack handler on a critical hit
+          criticalPersistentParts.push(`${diceFormula} ${damageType}`);
+        } else if (!isInactive) {
+          // Add to persistent damage with its type, don't include in modifiers
+          persistentDamageParts.push(`${diceFormula} ${damageType}`);
+        }
       } else if (category === "splash") {
         // Add to splash damage with its type, don't include in modifiers
-        splashDamageParts.push(`${diceFormula} ${damageType}`);
+        if (!isInactive) {
+          splashDamageParts.push(`${diceFormula} ${damageType}`);
+        }
       } else if (category === "precision") {
         // Keep in modifiers but strip the "-precision" suffix and track category
         filteredModifiers.push({
@@ -1717,6 +2271,7 @@ function processDamageModifierCategories(
   return {
     modifiers: filteredModifiers,
     persistentDamage: persistentDamageParts.join(", "),
+    criticalPersistentDamage: criticalPersistentParts.join(", "),
     splashDamage: combinedSplash,
     splashDamageType: "", // Not needed anymore since type is in the combined string
     precisionCategories: Array.from(precisionCategories),
@@ -2079,6 +2634,23 @@ function getEffectsAndModifiersForToken(
         active = predicate ? active : true;
       }
 
+      // Critical-hit-only modifiers (data.critical, Foundry's DamageDice
+      // critical: true, or a check:outcome:critical-success predicate) only
+      // apply to a lookup made for a critical success
+      const criticalOnly =
+        modifier.data?.critical === true ||
+        (typeof predicate === "string"
+          ? predicate.includes("check:outcome:critical-success")
+          : JSON.stringify(predicate || "").includes(
+              "check:outcome:critical-success",
+            ));
+      if (
+        modifier.data?.critical === true &&
+        context.outcome !== "critical-success"
+      ) {
+        active = false;
+      }
+
       // Override valueType to string if the value contains non-numerical content that needs replacements
       let valueType = modifier.data?.valueType;
       if (valueType === "number" && typeof value === "string") {
@@ -2165,6 +2737,35 @@ function getEffectsAndModifiersForToken(
           adjustMode: modifier.data?.adjustMode || "",
           predicate: predicate, // Include predicate so it can be evaluated in adjustModifier processing
         };
+        if (criticalOnly) {
+          resultObj.criticalOnly = true;
+        }
+
+        // A roll-prompt modifier whose predicate fails only on atoms this
+        // roll can't know (the action, target, effect source or terrain)
+        // is offered as an opt-in instead of being hidden
+        if (
+          !active &&
+          predicate &&
+          !criticalOnly &&
+          SITUATIONAL_MODIFIER_TYPES.has(ruleType)
+        ) {
+          const parsedPredicate = parseModifierPredicate(predicate);
+          if (
+            evaluateEffectPredicate(parsedPredicate, traitsSet, target, {
+              ...context,
+              __assumeSituational: true,
+            })
+          ) {
+            const label = getSituationalLabel(
+              parsedPredicate,
+              traitsSet,
+              context,
+            );
+            resultObj.situational = label || true;
+            if (label) resultObj.name = `${resultObj.name} (${label})`;
+          }
+        }
 
         // Add activeEffect-specific fields
         if (ruleType === "activeEffect") {
@@ -2225,7 +2826,7 @@ function getEffectsAndModifiersForToken(
     // If it does and it fails, skip this adjustModifier
     if (adjMod.predicate) {
       const parsedPredicate = parseModifierPredicate(adjMod.predicate);
-      if (parsedPredicate && parsedPredicate.length > 0) {
+      if (isNonEmptyPredicate(parsedPredicate)) {
         const predicatePassed = evaluateEffectPredicate(
           parsedPredicate,
           traitsSet,
@@ -2422,7 +3023,15 @@ function isDiceModifierValue(value) {
 // the rest of the damage.
 function keepStrongestPerType(mods) {
   const filteredResults = [];
-  const stackingTypes = ["circumstance", "item", "status"];
+  // Foundry's "ability" and "proficiency" modifier types stack like typed
+  // bonuses (only the strongest of each applies)
+  const stackingTypes = [
+    "circumstance",
+    "item",
+    "status",
+    "ability",
+    "proficiency",
+  ];
   // Pools keyed by type, plus ":persistent" for persistent damage
   const bonusGroups = {};
   const penaltyGroups = {};
@@ -2531,60 +3140,60 @@ function mergeModifierLists(...lists) {
 function applyDegreeOfSuccessAdjustment(degreeOfSuccess, adjustments) {
   if (!adjustments) return { degree: degreeOfSuccess, modifierName: null };
 
-  let appliedAdjustment = null;
-  let appliedModifierName = null;
-
   // Map degree number to name: -1=criticalFailure, 0=failure, 1=success, 2=criticalSuccess
   let currentDegreeName = "";
   if (degreeOfSuccess === -1) currentDegreeName = "criticalFailure";
   else if (degreeOfSuccess === 0) currentDegreeName = "failure";
   else if (degreeOfSuccess === 1) currentDegreeName = "success";
 
-  // Check for specific degree adjustment first
-  if (currentDegreeName && adjustments[currentDegreeName]?.value !== "none") {
-    appliedAdjustment = adjustments[currentDegreeName].value;
-    appliedModifierName = adjustments[currentDegreeName].modifierName;
-  }
-  // Then check for "all" adjustment
-  else if (adjustments.all?.value !== "none") {
-    appliedAdjustment = adjustments.all.value;
-    appliedModifierName = adjustments.all.modifierName;
-  }
+  // An improvement and a worsening can both apply (e.g. a feat that improves a
+  // save and a curse that worsens it); the degree-specific entry wins over
+  // "all" for each direction independently. Older metadata only carries the
+  // improvement in `value`.
+  const pick = (key) => {
+    const specific = currentDegreeName ? adjustments[currentDegreeName] : null;
+    const all = adjustments.all;
+    if (specific?.[key] && specific[key] !== "none")
+      return { value: specific[key], name: specific[key === "value" ? "modifierName" : "worseModifierName"] };
+    if (all?.[key] && all[key] !== "none")
+      return { value: all[key], name: all[key === "value" ? "modifierName" : "worseModifierName"] };
+    return null;
+  };
 
-  if (!appliedAdjustment || appliedAdjustment === "none") {
+  const shift = (degree, adjustment) => {
+    switch (adjustment) {
+      case "one-degree-better":
+        return Math.min(degree + 1, 2);
+      case "two-degrees-better":
+        return Math.min(degree + 2, 2);
+      case "one-degree-worse":
+        return Math.max(degree - 1, -1);
+      case "two-degrees-worse":
+        return Math.max(degree - 2, -1);
+      case "to-critical-success":
+        return 2;
+      case "to-success":
+        return 1;
+      case "to-failure":
+        return 0;
+      case "to-critical-failure":
+        return -1;
+    }
+    return degree;
+  };
+
+  const better = pick("value");
+  const worse = pick("worse");
+  if (!better && !worse) {
     return { degree: degreeOfSuccess, modifierName: null };
   }
 
-  // Apply the adjustment
   let newDegree = degreeOfSuccess;
-  switch (appliedAdjustment) {
-    case "one-degree-better":
-      newDegree = Math.min(degreeOfSuccess + 1, 2);
-      break;
-    case "two-degrees-better":
-      newDegree = Math.min(degreeOfSuccess + 2, 2);
-      break;
-    case "one-degree-worse":
-      newDegree = Math.max(degreeOfSuccess - 1, -1);
-      break;
-    case "two-degrees-worse":
-      newDegree = Math.max(degreeOfSuccess - 2, -1);
-      break;
-    case "to-critical-success":
-      newDegree = 2;
-      break;
-    case "to-success":
-      newDegree = 1;
-      break;
-    case "to-failure":
-      newDegree = 0;
-      break;
-    case "to-critical-failure":
-      newDegree = -1;
-      break;
-  }
+  if (better) newDegree = shift(newDegree, better.value);
+  if (worse) newDegree = shift(newDegree, worse.value);
+  const names = [better?.name, worse?.name].filter(Boolean);
 
-  return { degree: newDegree, modifierName: appliedModifierName };
+  return { degree: newDegree, modifierName: names.join(", ") || null };
 }
 
 /**
@@ -2623,43 +3232,71 @@ function getDegreeOfSuccessAdjustments(
     allAdjustments.push(...adjustments);
   });
 
-  // Define adjustment priority (higher is better)
-  const adjustmentPriority = {
-    none: 0,
-    "two-degrees-worse": -2,
-    "one-degree-worse": -1,
-    "one-degree-better": 1,
-    "two-degrees-better": 2,
-    "to-failure": -1, // Specific to critical failure
-    "to-critical-success": 2, // Specific to success
+  // How far each adjustment moves a roll that landed on the given degree.
+  // Positive moves are improvements, negative are worsenings; the "to-X"
+  // adjustments are measured from the degree they apply to ("all" assumes a
+  // success for those).
+  const degreeIndex = { criticalFailure: -1, failure: 0, success: 1, all: 1 };
+  const adjustmentDelta = (adjustment, degreeType) => {
+    const from = degreeIndex[degreeType];
+    switch (adjustment) {
+      case "one-degree-better":
+        return 1;
+      case "two-degrees-better":
+        return 2;
+      case "one-degree-worse":
+        return -1;
+      case "two-degrees-worse":
+        return -2;
+      case "to-critical-success":
+        return 2 - from;
+      case "to-success":
+        return 1 - from;
+      case "to-failure":
+        return 0 - from;
+      case "to-critical-failure":
+        return -1 - from;
+    }
+    return 0;
   };
 
-  // Result object with best adjustment for each degree
+  // Result object with the best improvement (value) and the worst worsening
+  // (worse) for each degree (all, success, failure, criticalFailure)
+  const emptySlot = () => ({
+    value: "none",
+    modifierName: null,
+    worse: "none",
+    worseModifierName: null,
+  });
   const result = {
-    all: { value: "none", modifierName: null },
-    success: { value: "none", modifierName: null },
-    failure: { value: "none", modifierName: null },
-    criticalFailure: { value: "none", modifierName: null },
+    all: emptySlot(),
+    success: emptySlot(),
+    failure: emptySlot(),
+    criticalFailure: emptySlot(),
   };
 
-  // Process each adjustment and keep the best one for each degree
   allAdjustments.forEach((adj) => {
     if (!adj.active || !adj.value) return;
 
     const adjustmentValue = adj.value;
     const modifierName = adj.name;
 
-    // Process each degree type
     ["all", "success", "failure", "criticalFailure"].forEach((degreeType) => {
       const newValue = adjustmentValue[degreeType];
       if (!newValue || newValue === "none") return;
 
-      const currentPriority = adjustmentPriority[result[degreeType].value] || 0;
-      const newPriority = adjustmentPriority[newValue] || 0;
-
-      // Keep the better adjustment (higher priority for positive adjustments)
-      if (newPriority > currentPriority) {
-        result[degreeType] = { value: newValue, modifierName };
+      const delta = adjustmentDelta(newValue, degreeType);
+      const slot = result[degreeType];
+      if (delta > 0) {
+        if (delta > adjustmentDelta(slot.value, degreeType)) {
+          slot.value = newValue;
+          slot.modifierName = modifierName;
+        }
+      } else if (delta < 0) {
+        if (delta < adjustmentDelta(slot.worse, degreeType)) {
+          slot.worse = newValue;
+          slot.worseModifierName = modifierName;
+        }
       }
     });
   });
@@ -3589,7 +4226,9 @@ function updateAttribute({
     "hitpoints",
   ]);
   const extraHitpoints = hitpointsMaxMods.reduce((acc, mod) => {
-    return acc + parseInt(mod.value || 0, 10);
+    // A predicate that fails (or an opted-out modifier) adds nothing
+    if (mod.active === false) return acc;
+    return acc + (parseInt(mod.value || 0, 10) || 0);
   }, 0);
 
   // If this was constitution, update hitpoints
@@ -3667,8 +4306,23 @@ function updateAttribute({
     ac += additionalAcValue;
   }
   // AC = 10 + your Dexterity modifier. Wearing armor changes your AC.
-  if (bestArmor.armor.dexCap !== undefined && bestArmor.armor.dexCap > 0) {
-    ac += Math.min(dexValue, bestArmor.armor.dexCap);
+  // dexCap modifiers (Foundry's DexterityModifierCap: Animal Skin, Mountain
+  // Stance) cap it further; the lowest cap applies.
+  let dexCap = bestArmor.armor.dexCap;
+  getEffectsAndModifiersForToken(
+    record,
+    ["dexCap"],
+    undefined,
+    undefined,
+    undefined,
+    armorItem ? { item: armorItem } : {},
+  ).forEach((mod) => {
+    if (mod.active === false) return;
+    const cap = parseInt(mod.value, 10);
+    if (!isNaN(cap) && (dexCap === undefined || cap < dexCap)) dexCap = cap;
+  });
+  if (dexCap !== undefined && (dexCap > 0 || dexValue < 0)) {
+    ac += Math.min(dexValue, dexCap);
   }
   const shieldBroken = record.data?.shieldBroken === true;
   // AC bonus is only if shield is equipped AND raised AND not broken
@@ -3711,7 +4365,9 @@ function updateAttribute({
       !modifier.isEffect &&
       modifier.active
     ) {
-      ac += modifier.value;
+      // String values (e.g. "{3}" or "@actor.level" resolved by
+      // checkForReplacements) must not concatenate onto the AC number
+      ac += parseFloat(modifier.value) || 0;
       armorModsSet.add(JSON.stringify(modifier));
     }
   });
@@ -3733,7 +4389,7 @@ function updateAttribute({
         !modifier.isEffect &&
         modifier.active
       ) {
-        ac += modifier.value;
+        ac += parseFloat(modifier.value) || 0;
         armorModsSet.add(JSON.stringify(modifier));
       }
     });
@@ -3755,7 +4411,7 @@ function updateAttribute({
         !modifier.isEffect &&
         modifier.active
       ) {
-        ac += modifier.value;
+        ac += parseFloat(modifier.value) || 0;
         armorModsSet.add(JSON.stringify(modifier));
       }
     });
@@ -3803,9 +4459,15 @@ function updateAttribute({
     "speedBonus",
     "speedPenalty",
   ]);
+  // Land Speed takes bonuses with no field (or "land"/"land-speed", Foundry's
+  // selector); a field of fly/swim/climb/burrow targets that movement type
+  const isLandSpeedField = (field) =>
+    ["", "all", "land", "land-speed", "speed"].includes(
+      String(field || "").toLowerCase(),
+    );
   let totalSpeedModifier = 0;
   speedMods.forEach((mod) => {
-    if (mod.active) {
+    if (mod.active && isLandSpeedField(mod.field)) {
       totalSpeedModifier += parseInt(mod.value || 0, 10) || 0;
     }
   });
@@ -3830,6 +4492,9 @@ function updateAttribute({
     ancestrySpeed || (speedIsComputed ? storedBaseSpeed : speed) || "",
   )
     .replace(/\s*\([^)]*\)\s*$/, "")
+    // Other movement types appended by this function ("25 feet, climb 20
+    // feet") are recomputed, not part of the base
+    .replace(/\s*,\s*(fly|swim|climb|burrow)\b.*$/i, "")
     .trim();
   if (!ancestrySpeed && baseSpeedStr && baseSpeedStr !== storedBaseSpeed) {
     valuesToSet[`data.baseSpeed`] = baseSpeedStr;
@@ -3847,7 +4512,27 @@ function updateAttribute({
     // Preserve the unit from the base speed (e.g., "feet").
     const unitMatch = baseSpeedStr.match(/\d+\s+(\w+)/);
     const unit = unitMatch ? unitMatch[1] : "feet";
-    const newSpeed = `${effectiveSpeed} ${unit}`;
+    // Other movement types (Foundry's BaseSpeed): "speed" modifiers grant one
+    // (field fly/swim/climb/burrow, value feet or "land" for equal to land
+    // Speed); speedBonus with that field adds to it
+    const otherSpeeds = getOtherSpeeds(
+      record,
+      speedMods,
+      effectiveSpeed,
+      isLandSpeedField,
+    );
+    if (
+      JSON.stringify(record.data?.otherSpeeds || {}) !==
+      JSON.stringify(otherSpeeds)
+    ) {
+      valuesToSet[`data.otherSpeeds`] = otherSpeeds;
+    }
+    const otherSpeedText = Object.entries(otherSpeeds)
+      .map(([type, feet]) => `${type} ${feet} ${unit}`)
+      .join(", ");
+    const newSpeed = otherSpeedText
+      ? `${effectiveSpeed} ${unit}, ${otherSpeedText}`
+      : `${effectiveSpeed} ${unit}`;
     if (!ancestrySpeed) {
       valuesToSet[`data.computedSpeed`] = newSpeed;
     }
@@ -6156,8 +6841,11 @@ function updateTogglesList(record, valuesToSet) {
     }
   });
 
-  // Get all feats
-  const feats = record.data?.feats || [];
+  // Get all feats, including bonus feats (granted by other feats/features)
+  const feats = [
+    ...(record.data?.feats || []),
+    ...(record.data?.bonusFeats || []),
+  ];
   feats.forEach((feat) => {
     if (
       feat.data?.toggleable === true &&
@@ -6376,56 +7064,38 @@ function onAddEditFeature(
     }
   });
 
-  // Check for sense bonuses
-  const senseBonus = getEffectsAndModifiersForToken(record, ["sense"]);
+  // Senses from features (sense / lowLightDarkvision modifiers) are layered
+  // on a base each time, so a sense whose predicate stops passing (or that
+  // was removed) goes away. data.baseSenses holds the senses without them;
+  // a hand edit (data.senses differs from what was last computed) becomes
+  // the new base.
+  const senseBonus = getEffectsAndModifiersForToken(record, ["sense"]).filter(
+    (mod) => mod.active !== false,
+  );
   const lowLightDarkvisionBonus = getEffectsAndModifiersForToken(record, [
     "lowLightDarkvision",
-  ]);
+  ]).filter((mod) => mod.active !== false);
   const currentSenses = String(record.data?.senses || "");
-
-  // Handle low-light darkvision bonus
-  if (lowLightDarkvisionBonus.length > 0) {
-    let newSenses = currentSenses;
-
-    // Check if they already have Low-Light vision (various formats)
-    const hasLowLight = /low.?light|lowlight/i.test(currentSenses);
-    const hasDarkvision = /darkvision/i.test(currentSenses);
-
-    if (hasLowLight && !hasDarkvision) {
-      // Replace Low-Light vision with Darkvision
-      newSenses = currentSenses.replace(/low.?light|lowlight/gi, "Darkvision");
-    } else if (!hasDarkvision) {
-      // Add Low-Light vision if they don't have it and don't already have Darkvision
-      if (newSenses && !newSenses.includes("Low-Light")) {
-        newSenses = `${newSenses}, Low-Light`;
-      } else if (!newSenses) {
-        newSenses = "Low-Light";
-      }
-    }
-
+  const sensesAreComputed =
+    record.data?.computedSenses !== undefined &&
+    currentSenses === String(record.data.computedSenses);
+  const baseSenses = sensesAreComputed
+    ? String(record.data?.baseSenses || "")
+    : currentSenses;
+  const newSenses = applySenseModifiers(
+    baseSenses,
+    senseBonus,
+    lowLightDarkvisionBonus.length > 0,
+  );
+  if (newSenses !== currentSenses) {
     valuesToSet[`data.senses`] = newSenses;
   }
-
-  senseBonus.forEach((modifier) => {
-    const sense = String(modifier.value || modifier.field || "");
-    if (sense && sense.trim() && !currentSenses.includes(sense)) {
-      let newSenses = currentSenses;
-
-      // If the new sense is Darkvision, replace any existing Low-Light vision
-      if (sense.toLowerCase() === "darkvision") {
-        newSenses = currentSenses.replace(/low-light/gi, "Darkvision");
-      }
-
-      // Only append if the sense isn't already in the new senses string
-      if (newSenses && !newSenses.includes(sense)) {
-        newSenses = `${newSenses}, ${sense}`;
-      } else if (!newSenses) {
-        newSenses = sense;
-      }
-
-      valuesToSet[`data.senses`] = newSenses;
-    }
-  });
+  if (record.data?.baseSenses !== baseSenses) {
+    valuesToSet[`data.baseSenses`] = baseSenses;
+  }
+  if (record.data?.computedSenses !== newSenses) {
+    valuesToSet[`data.computedSenses`] = newSenses;
+  }
 
   // Check for trait bonuses
   const traitBonus = getEffectsAndModifiersForToken(record, ["trait"]);
@@ -6683,7 +7353,14 @@ function setTraits(traits, callback = undefined) {
 }
 
 // Roll a saving throw for PF2e
-function rollSave(record, type, dc = null, isSpell = false, isMacro = false) {
+function rollSave(
+  record,
+  type,
+  dc = null,
+  isSpell = false,
+  isMacro = false,
+  options = {},
+) {
   if (!record || !type) {
     console.error("rollSave: Invalid record or type");
     return;
@@ -6754,11 +7431,20 @@ function rollSave(record, type, dc = null, isSpell = false, isMacro = false) {
     modifiers.push(pwlSaveModifier);
   }
 
-  // Get any additional modifiers from effects
+  // What is being saved against: the macro may pass the source's traits
+  // (options.traits, e.g. a spell's "emotion", "fear", "mental"), which
+  // predicates read as item:trait:*, origin:trait:* and the bare trait
+  const context = getRollSourceContext(options, saveType, isSpell);
+
+  // Get any additional modifiers from effects ("saving-throw" is Foundry's
+  // selector for every save)
   const additionalMods = getEffectsAndModifiersForToken(
     record,
     [`saveBonus`, `savePenalty`],
-    saveType,
+    [saveType, "saving-throw"],
+    undefined,
+    undefined,
+    context,
   );
 
   const additionalModsSet = new Set();
@@ -6769,6 +7455,9 @@ function rollSave(record, type, dc = null, isSpell = false, isMacro = false) {
       record,
       [`saveBonus`, `savePenalty`],
       "spell",
+      undefined,
+      undefined,
+      context,
     );
     spellSaveMods.forEach((mod) => {
       const modString = modToString(mod);
@@ -6788,6 +7477,9 @@ function rollSave(record, type, dc = null, isSpell = false, isMacro = false) {
     record,
     [`allBonus`, `allPenalty`],
     [attribute, "saving-throw"],
+    undefined,
+    undefined,
+    context,
   );
 
   // Add save-specific modifiers
@@ -6809,10 +7501,13 @@ function rollSave(record, type, dc = null, isSpell = false, isMacro = false) {
   });
 
   // Get degree of success adjustments for both the save type and its attribute
-  const degreeOfSuccessAdjustments = getDegreeOfSuccessAdjustments(record, [
-    saveType,
-    attribute,
-  ]);
+  const degreeOfSuccessAdjustments = getDegreeOfSuccessAdjustments(
+    record,
+    [saveType, attribute, "saving-throw"],
+    undefined,
+    undefined,
+    context,
+  );
 
   // Prepare metadata for the roll handler
   const metadata = {
@@ -6851,6 +7546,58 @@ function rollSave(record, type, dc = null, isSpell = false, isMacro = false) {
   }
 }
 
+/**
+ * Damage modifiers that only apply on a critical hit: those active in a lookup
+ * made with outcome "critical-success" and flagged criticalOnly (data.critical
+ * or a check:outcome:critical-success predicate). Returned active and marked
+ * criticalOnly so the attack handler can drop them on a non-critical hit.
+ */
+function getCriticalOnlyDamageModifiers(record, fields, itemId, context) {
+  const seen = new Set();
+  const results = [];
+  fields.forEach((field) => {
+    getEffectsAndModifiersForToken(
+      record,
+      ["damageBonus", "damagePenalty"],
+      field,
+      itemId,
+      undefined,
+      { ...context, outcome: "critical-success" },
+    ).forEach((mod) => {
+      if (!mod.criticalOnly || !mod.active) return;
+      const key = `${mod.name}|${mod.value}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      results.push({ ...mod, active: true, criticalOnly: true });
+    });
+  });
+  return results;
+}
+
+/**
+ * Critical-only dice entries (the attack handler's criticalOnlyDice shape) for
+ * a damage modifier value like "1d6 fire", "2d8" or "3", so the damage handler
+ * does not double them on a critical hit.
+ */
+function getCriticalOnlyDiceForValue(value, damageType) {
+  const text = String(value ?? "").trim();
+  const typeMatch = text.match(/^[0-9d+\-\s]+\s+([a-z]+)/i);
+  const type = (typeMatch ? typeMatch[1] : damageType || "untyped").toLowerCase();
+  const entries = [];
+  const diceRegex = /(\d*)d(\d+)/gi;
+  let match;
+  while ((match = diceRegex.exec(text)) !== null) {
+    const count = parseInt(match[1] || "1", 10) || 1;
+    const dieType = parseInt(match[2], 10) || 0;
+    for (let i = 0; i < count; i++) entries.push({ dieType, damageType: type });
+  }
+  const flat = text.replace(diceRegex, "").match(/^\s*\+?\s*(\d+)/);
+  if (!entries.length && flat) {
+    entries.push({ dieType: 0, damageType: type, flatDamage: parseInt(flat[1], 10) });
+  }
+  return entries;
+}
+
 function modToString(mod) {
   return JSON.stringify({
     name: mod.name,
@@ -6861,7 +7608,13 @@ function modToString(mod) {
 }
 
 // Generate a clickable save macro for PF2e
-function getSaveMacro(saveType, dc = null, isSpell = false, showDc = false) {
+function getSaveMacro(
+  saveType,
+  dc = null,
+  isSpell = false,
+  showDc = false,
+  traits = [],
+) {
   if (!saveType) {
     console.error("getSaveMacro: Invalid saveType");
     return "";
@@ -6896,6 +7649,14 @@ selectedTokens.forEach(token => {
 
   // Add isSpell parameter
   macroContent += `, ${isSpell}, true`;
+
+  // The source's traits, so saves "against fear/emotion/poison/magic" apply
+  const sourceTraits = (Array.isArray(traits) ? traits : [])
+    .map((t) => String(typeof t === "string" ? t : t?.name || "").trim())
+    .filter((t) => t && !getIsTraitRarity(t));
+  if (sourceTraits.length > 0) {
+    macroContent += `, ${JSON.stringify({ traits: sourceTraits })}`;
+  }
 
   // Close the function call and forEach
   macroContent += `);
@@ -6991,9 +7752,17 @@ function rollSkill(
     modifiers.push(pwlSkillModifier);
   }
 
-  // Build context object for action-based predicates
+  // Predicate context: the action (action:*), the statistic rolled
+  // (check:statistic, proficiency:*) and any source traits passed by a macro
   const actionName = additionalMetadata.action || "";
-  const context = actionName ? { action: { name: actionName } } : {};
+  const context = getRollSourceContext(
+    { action: actionName, traits: additionalMetadata.traits },
+    isLore ? toSlug(skillName) : skill,
+  );
+  // Foundry selectors: every skill check, and every Lore check
+  const skillSelectors = isPerception
+    ? ["perception"]
+    : [skill, "skill-check", ...(isLore ? ["lore-skill-check"] : [])];
 
   // Get skill-specific modifiers
   const additionalModsSet = new Set();
@@ -7013,7 +7782,7 @@ function rollSkill(
     additionalMods = getEffectsAndModifiersForToken(
       record,
       [`skillBonus`, `skillPenalty`],
-      skill,
+      skillSelectors,
       undefined,
       undefined,
       context,
@@ -7059,6 +7828,9 @@ function rollSkill(
       record,
       ["allBonus", "allPenalty", "skillBonus", "skillPenalty"],
       attribute,
+      undefined,
+      undefined,
+      context,
     );
   }
 
@@ -7103,7 +7875,7 @@ function rollSkill(
   // Get degree of success adjustments for both the skill and its attribute
   const degreeOfSuccessAdjustments = getDegreeOfSuccessAdjustments(
     record,
-    [skill, attribute],
+    [...skillSelectors, attribute],
     undefined,
     undefined,
     context,
@@ -7199,11 +7971,11 @@ ${macroContent}
 }
 
 // For a quick custom macro
-function rollSavingThrow(save, dc) {
+function rollSavingThrow(save, dc, options = {}) {
   const escapedSaveType = save.toLowerCase().replace(/'/g, "\\'");
   const selectedTokens = api.getSelectedOrDroppedToken();
   selectedTokens.forEach((token) => {
-    rollSave(token, escapedSaveType, dc);
+    rollSave(token, escapedSaveType, dc, !!options.isSpell, false, options);
   });
 }
 
@@ -7226,6 +7998,7 @@ function rollSkillCheck(skill, dc, options = {}) {
       undefined,
       {
         action: actionName,
+        traits: options.traits,
       },
     );
   });
@@ -9126,7 +9899,7 @@ function hasCriticalSpecializationEffect(
 
           // Try to parse as JSON predicate (new format)
           const parsedPredicate = parseModifierPredicate(predicate);
-          if (parsedPredicate && parsedPredicate.length > 0) {
+          if (isNonEmptyPredicate(parsedPredicate)) {
             // Evaluate using the new JSON predicate system
             const predicateResult = evaluateEffectPredicate(
               parsedPredicate,
@@ -9250,6 +10023,8 @@ function hasArmorSpecializationEffect(record, item) {
 }
 
 function performAttackRoll(record, weapon, weaponDataPath, attackNumber = 1) {
+  // Feats and effects can change the die size or traits for this Strike
+  weapon = getAlteredWeapon(record, weapon);
   const valuesToSet = {};
 
   // Check if this is an NPC attack
@@ -9780,10 +10555,18 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber = 1) {
 
   // Get other bonuses and penalties
   const seenAttackModifiers = new Set();
+  // Foundry selectors: every attack roll, every Strike, and this weapon's
+  // base ("longsword-attack")
   const otherBonusesAndPenalties = getEffectsAndModifiersForToken(
     record,
     ["attackBonus", "attackPenalty", "allBonus", "allPenalty"],
-    isMelee ? "melee" : "ranged",
+    [
+      isMelee ? "melee" : "ranged",
+      "attack-roll",
+      "strike-attack-roll",
+      "attack",
+      `${getBaseItemSlug(weapon)}-attack`,
+    ],
     weapon._id,
     undefined,
     { weapon, targets },
@@ -9895,7 +10678,16 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber = 1) {
 
     if (mapReductionMod.length) {
       mapReductionMod.forEach((mod) => {
-        const mapReduction = mod.value;
+        // "1/2" reduces the second attack by 1 and the third by 2 (Agile
+        // Grace: -3 / -6 with agile weapons)
+        let mapReduction = mod.value;
+        if (typeof mapReduction === "string" && mapReduction.includes("/")) {
+          const [second, third] = mapReduction
+            .split("/")
+            .map((part) => parseFloat(part) || 0);
+          mapReduction = attackNumber === 2 ? second : third;
+        }
+        mapReduction = parseFloat(mapReduction) || 0;
         if (mod.active && Math.abs(mapReduction) > 0) {
           modifiers.push({
             name: `${mod.name} (Reduce MAP)`,
@@ -9921,10 +10713,19 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber = 1) {
   }
 
   // Get damage modifiers
+  // Foundry selectors: all damage, Strike damage, this weapon's base
+  // ("longsword-damage") and unarmed Strikes
+  const damageSelectors = [
+    isMelee ? "melee" : "ranged",
+    "damage",
+    "strike-damage",
+    `${getBaseItemSlug(weapon)}-damage`,
+    ...(weaponCategory === "unarmed" ? ["unarmed", "unarmed-damage"] : []),
+  ];
   let damageModifiers = getEffectsAndModifiersForToken(
     record,
     ["damageBonus", "damagePenalty"],
-    isMelee ? "melee" : "ranged",
+    damageSelectors,
     weapon._id,
     undefined,
     { weapon, targets },
@@ -9967,10 +10768,22 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber = 1) {
     });
   }
 
+  // Critical-hit-only riders come from a second lookup made as if the Strike
+  // were a critical success; the attack handler keeps them (undoubled) only
+  // when the attack actually crits
+  const criticalOnlyDamageModifiers = getCriticalOnlyDamageModifiers(
+    record,
+    [...damageSelectors, damageScore].filter(Boolean),
+    weapon._id,
+    { weapon, targets },
+  );
+  damageModifiers = damageModifiers.filter((mod) => !mod.criticalOnly);
+
   // Only the strongest damage bonus and penalty of each type apply across the
   // lookups (dice always stack). This must come before the map below, which
   // turns type into the damage type.
   damageModifiers = keepStrongestPerType(damageModifiers);
+  damageModifiers.push(...criticalOnlyDamageModifiers);
 
   // Preserve the modifierType before mapping to avoid losing deduplication info
   damageModifiers = damageModifiers.map((mod) => {
@@ -10030,6 +10843,7 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber = 1) {
   );
   damageModifiers = processedDamage.modifiers;
   persistentDamage = processedDamage.persistentDamage;
+  const criticalPersistentDamage = processedDamage.criticalPersistentDamage;
   splashDamage = processedDamage.splashDamage;
   splashDamageType = processedDamage.splashDamageType;
   // Add precision categories to damageCategories if any were found
@@ -10043,6 +10857,7 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber = 1) {
   const damageIgnoresResistances = damageModifiers
     .filter(
       (mod) =>
+        mod.active !== false &&
         mod.valueType === "string" &&
         typeof mod.value === "string" &&
         mod.value.trim().toLowerCase().startsWith("ignore") &&
@@ -10053,6 +10868,7 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber = 1) {
   const damageIgnoresImmunities = damageModifiers
     .filter(
       (mod) =>
+        mod.active !== false &&
         mod.valueType === "string" &&
         typeof mod.value === "string" &&
         mod.value.trim().toLowerCase().startsWith("ignore") &&
@@ -10064,6 +10880,7 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber = 1) {
   const damageIgnoresWeaknesses = damageModifiers
     .filter(
       (mod) =>
+        mod.active !== false &&
         mod.valueType === "string" &&
         typeof mod.value === "string" &&
         mod.value.trim().toLowerCase().startsWith("ignore") &&
@@ -10268,6 +11085,7 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber = 1) {
         damage: damage,
         showShieldDamage: targetShieldRaised && damageIsPhysical,
         persistentDamage: persistentDamage,
+        criticalPersistentDamage: criticalPersistentDamage,
         damageType: damageType,
         splashDamage: splashDamage,
         splashDamageType: splashDamageType,
@@ -10342,6 +11160,7 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber = 1) {
           : ourToken?.record?.name,
       damage: damage,
       persistentDamage: persistentDamage,
+      criticalPersistentDamage: criticalPersistentDamage,
       damageType: damageType,
       showShieldDamage: targetShieldRaised && damageIsPhysical,
       splashDamage: splashDamage,
@@ -10398,6 +11217,8 @@ function performDamageRoll(record, weapon, weaponDataPath, isCritical) {
     console.error(`Weapon not found for data path: ${weaponDataPath}`);
     return;
   }
+  // Feats and effects can change the die size or traits for this Strike
+  weapon = getAlteredWeapon(record, weapon);
 
   // Get weapon damage info using helper function
   const weaponDamageInfo = getWeaponDamageInfo(record, weapon);
@@ -10584,6 +11405,18 @@ function performDamageRoll(record, weapon, weaponDataPath, isCritical) {
     });
   }
 
+  // Foundry selectors: all damage, Strike damage, this weapon's base and
+  // unarmed Strikes
+  const damageSelectors = [
+    isMelee ? "melee" : "ranged",
+    "damage",
+    "strike-damage",
+    `${getBaseItemSlug(weapon)}-damage`,
+    ...(String(weapon?.data?.itemCategory || "").toLowerCase() === "unarmed"
+      ? ["unarmed", "unarmed-damage"]
+      : []),
+  ];
+
   // Get damage modifiers
   let damageModifiers = [];
   if (!weaponDamageInfo.isItem) {
@@ -10609,9 +11442,23 @@ function performDamageRoll(record, weapon, weaponDataPath, isCritical) {
       damageModifiers = getEffectsAndModifiersForToken(
         record,
         ["damageBonus", "damagePenalty"],
-        isMelee ? "melee" : "ranged",
+        damageSelectors,
         weapon._id,
         undefined,
+        { weapon },
+      );
+    }
+  }
+
+  // Critical-hit-only riders (data.critical / check:outcome:critical-success)
+  // join a critical damage roll undoubled; they never apply otherwise
+  let criticalRiders = [];
+  if (!weaponDamageInfo.isItem && !weaponDamageInfo.isSpell) {
+    if (isCritical) {
+      criticalRiders = getCriticalOnlyDamageModifiers(
+        record,
+        [...damageSelectors, damageScore].filter(Boolean),
+        weapon._id,
         { weapon },
       );
     }
@@ -10639,6 +11486,10 @@ function performDamageRoll(record, weapon, weaponDataPath, isCritical) {
       }
     });
   }
+
+  // Critical riders join only through criticalRiders (every lookup above
+  // can return them inactive)
+  damageModifiers = damageModifiers.filter((mod) => !mod.criticalOnly);
 
   // Only the strongest damage bonus and penalty of each type apply across the
   // lookups (dice always stack). This must come before the map below, which
@@ -10747,6 +11598,29 @@ function performDamageRoll(record, weapon, weaponDataPath, isCritical) {
     });
   }
 
+  // Critical riders go last so the damage handler finds their dice when it
+  // un-doubles critical-only damage; persistent riders join persistentDamage
+  // without doubling
+  let criticalPersistentDamage = "";
+  if (isCritical && criticalRiders.length > 0) {
+    const processedRiders = processDamageModifierCategories(criticalRiders);
+    criticalPersistentDamage = processedRiders.criticalPersistentDamage;
+    processedRiders.modifiers.forEach((mod) => {
+      const rider = {
+        ...mod,
+        active: true,
+        type:
+          getDamageType(mod?.value?.toString() || "") !== "untyped"
+            ? ""
+            : damageType,
+      };
+      damageModifiers.push(rider);
+      criticalOnlyDice.push(
+        ...getCriticalOnlyDiceForValue(rider.value, rider.type || damageType),
+      );
+    });
+  }
+
   if (isCritical && deadlyDie) {
     // Determine number of deadly dice based on striking runes
     let strikingRuneLevel = 0;
@@ -10817,6 +11691,7 @@ function performDamageRoll(record, weapon, weaponDataPath, isCritical) {
   const damageIgnoresResistances = damageModifiers
     .filter(
       (mod) =>
+        mod.active !== false &&
         mod.valueType === "string" &&
         typeof mod.value === "string" &&
         mod.value.trim().toLowerCase().startsWith("ignore") &&
@@ -10827,6 +11702,7 @@ function performDamageRoll(record, weapon, weaponDataPath, isCritical) {
   const damageIgnoresImmunities = damageModifiers
     .filter(
       (mod) =>
+        mod.active !== false &&
         mod.valueType === "string" &&
         typeof mod.value === "string" &&
         mod.value.trim().toLowerCase().startsWith("ignore") &&
@@ -10838,6 +11714,7 @@ function performDamageRoll(record, weapon, weaponDataPath, isCritical) {
   const damageIgnoresWeaknesses = damageModifiers
     .filter(
       (mod) =>
+        mod.active !== false &&
         mod.valueType === "string" &&
         typeof mod.value === "string" &&
         mod.value.trim().toLowerCase().startsWith("ignore") &&
@@ -10924,6 +11801,7 @@ function performDamageRoll(record, weapon, weaponDataPath, isCritical) {
     splashDamageType: splashDamageType,
     damageType: damageType,
     persistentDamage: persistentDamage,
+    criticalPersistentDamage: criticalPersistentDamage,
     damageIgnoresResistances: damageIgnoresResistances,
     damageIgnoresImmunities: damageIgnoresImmunities,
     damageIgnoresWeaknesses: damageIgnoresWeaknesses,
@@ -11155,7 +12033,12 @@ function getIWR(target, armorSpecDetails = null) {
     }
 
     const modifierType = modifier.modifierType || "";
-    const value = modifier.value || "";
+    // A number-only value (valueType "number", e.g. 5 with field "fire") takes
+    // its damage type from the field below
+    const value =
+      typeof modifier.value === "number"
+        ? String(modifier.value)
+        : modifier.value || "";
 
     if (typeof value !== "string") {
       return; // Skip non-string values

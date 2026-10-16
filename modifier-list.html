@@ -79,10 +79,21 @@
       showFieldField = false;
       showValueField = false;
       showActiveEffectField = true;
-    } else if (typeValue === "speedBonus") {
-      // Flat speed adjustment (e.g., Nimble Elf +5 status bonus to Speed)
-      showFieldField = false;
-    } else if (typeValue === "speedPenalty") {
+    } else if (typeValue === "speedBonus" || typeValue === "speedPenalty") {
+      // Flat speed adjustment (e.g., Nimble Elf +5 status bonus to Speed).
+      // Field: empty for land Speed, or fly/swim/climb/burrow
+      showFieldField = true;
+    } else if (typeValue === "speed") {
+      // Grants a movement type: field fly/swim/climb/burrow, value feet or
+      // "land" (equal to your land Speed)
+      showFieldField = true;
+    } else if (
+      typeValue === "weaponDieSize" ||
+      typeValue === "weaponTrait" ||
+      typeValue === "dexCap" ||
+      typeValue === "dyingMax" ||
+      typeValue === "recoveryDC"
+    ) {
       showFieldField = false;
     } else if (typeValue === "weaponProficiency") {
       // Weapon proficiency uses predicate to match weapons, value is the rank (1=trained, 2=expert, etc.)
@@ -93,6 +104,13 @@
       showFieldField = false;
       showValueField = false;
       showRollOptionField = true;
+    }
+
+    // Critical-hit-only applies to damage riders
+    const showCriticalField =
+      typeValue === "damageBonus" || typeValue === "damagePenalty";
+    if (modifier.fields?.critical?.hidden !== !showCriticalField) {
+      valuesToSet[`${modPath}.fields.critical.hidden`] = !showCriticalField;
     }
 
     if (modifier.fields?.value?.hidden !== !showValueField) {
@@ -204,6 +222,12 @@
       {"label": "Hit Point Maximum", "value": "hitpoints"},
       {"label": "Speed Bonus", "value": "speedBonus"},
       {"label": "Speed Penalty", "value": "speedPenalty"},
+      {"label": "Movement Speed (Fly, Swim, Climb, Burrow)", "value": "speed"},
+      {"label": "Weapon Damage Die Size", "value": "weaponDieSize"},
+      {"label": "Add Weapon Trait", "value": "weaponTrait"},
+      {"label": "Dexterity Modifier Cap", "value": "dexCap"},
+      {"label": "Dying Maximum", "value": "dyingMax"},
+      {"label": "Recovery Check DC", "value": "recoveryDC"},
       {"label": "Add Resistance", "value": "resistance"},
       {"label": "Add Weakness", "value": "weakness"},
       {"label": "Add Immunity", "value": "immunity"},
@@ -358,6 +382,13 @@
 
   <div style="display: flex; flex-direction: column; gap: 4px">
     <checkbox size="xs" field="active" label="Active by Default"></checkbox>
+    <checkbox
+      size="xs"
+      hidden="true"
+      width="175px"
+      field="critical"
+      label="Critical Hit Only"
+    ></checkbox>
     <checkbox
       size="xs"
       hidden="true"

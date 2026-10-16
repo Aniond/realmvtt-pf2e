@@ -59,6 +59,14 @@ let criticalDamageInfo = "";
 if (isCritical && persistentDamage && persistentDamage !== "") {
   persistentDamage = doubleDamageDice(persistentDamage);
 }
+// Persistent damage only a critical hit adds (e.g. Accursed Claws) is not doubled
+const criticalPersistentDamage =
+  data.roll?.metadata?.criticalPersistentDamage || "";
+if (isCritical && criticalPersistentDamage) {
+  persistentDamage = persistentDamage
+    ? `${persistentDamage}, ${criticalPersistentDamage}`
+    : criticalPersistentDamage;
+}
 
 // Set up the roll so we can color deadly/fatal dice
 let roll = {

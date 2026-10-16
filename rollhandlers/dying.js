@@ -23,19 +23,43 @@ function getDoomedValue(creature) {
 // The dying value a creature dies at: 4, or 5 with Diehard, less its doomed
 // value. At 0 or less it dies as soon as it gains dying.
 function getDeathThreshold(creature) {
-  return (hasFeatNamed(creature, "Diehard") ? 5 : 4) - getDoomedValue(creature);
+  return getDyingMaximum(creature) - getDoomedValue(creature);
+}
+
+// The dying value a creature dies at before doomed: 4, 5 with Diehard, or
+// higher from dyingMax modifiers (the highest applies)
+function getDyingMaximum(creature) {
+  let maximum = hasFeatNamed(creature, "Diehard") ? 5 : 4;
+  getEffectsAndModifiersForToken(creature, ["dyingMax"]).forEach((mod) => {
+    if (mod.active === false) return;
+    const value = parseInt(mod.value, 10);
+    if (value > maximum) maximum = value;
+  });
+  return maximum;
+}
+
+// recoveryDC modifiers adjust the recovery check DC (Toughness and Mountain's
+// Stoutness lower it by 1); like Toughness, the strongest reduction applies
+function getRecoveryDCAdjustment(creature) {
+  let adjustment = hasFeatNamed(creature, "Toughness") ? -1 : 0;
+  getEffectsAndModifiersForToken(creature, ["recoveryDC"]).forEach((mod) => {
+    if (mod.active === false) return;
+    const value = parseInt(mod.value, 10);
+    if (!isNaN(value) && value < adjustment) adjustment = value;
+  });
+  return adjustment;
 }
 
 // The highest wounded value, 1 below the dying value a creature dies at
 // before doomed (3, or 4 with Diehard)
 function getWoundedMax(creature) {
-  return (hasFeatNamed(creature, "Diehard") ? 5 : 4) - 1;
+  return getDyingMaximum(creature) - 1;
 }
 
 // The DC of a recovery check: 10 + the dying value, 1 lower with Toughness
 // (the Core Rulebook's Toughness made it 9 + dying, the same number)
 function getRecoveryCheckDC(creature, dying = getDyingValue(creature)) {
-  return 10 + dying - (hasFeatNamed(creature, "Toughness") ? 1 : 0);
+  return 10 + dying + getRecoveryDCAdjustment(creature);
 }
 
 // Whether damage has the nonlethal trait (fists, nonlethal spells), which
