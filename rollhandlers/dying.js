@@ -240,6 +240,14 @@ function applyHealingToToken(target, healing, options = {}) {
   if (!target?.data || !(healing > 0)) {
     return;
   }
+  // Magical healing a raging Superstition barbarian has to accept first
+  // (onMagicAccepted)
+  if (!options.magicAccepted && isMagicalHealing(options)) {
+    confirmMagicAccepted(target, options.source || "magical healing", () =>
+      applyHealingToToken(target, healing, { ...options, magicAccepted: true }),
+    );
+    return;
+  }
   // Healing the target receives changes by its own healingReceived
   // modifiers (Robust Health: + level from Treat Wounds). Context: the action
   // (action:treat-wounds) and, for spells, item:type:spell.
@@ -278,6 +286,17 @@ function applyHealingToToken(target, healing, options = {}) {
   const undo = `\`\`\`Undo\nif (isGM) { api.setValuesOnTokenById('${target._id}', '${target.recordType}', ${JSON.stringify(oldValues)}); api.editMessage(null, '~${text}~'); } else { api.showNotification('Only the GM can undo healing.', 'yellow', 'Notice'); }\n\`\`\``;
   api.sendMessage(`${text}\n${undo}`, undefined, undefined, undefined, target);
   api.floatText(target, `+${healing}`, "#1bc91b");
+}
+
+// Healing from a spell or a magical item (the roll's damageSource)
+function isMagicalHealing(options = {}) {
+  const source = options.damageSource || null;
+  return (
+    options.isSpell === true ||
+    source?.type === "spell" ||
+    source?.magical === true ||
+    isMagicalSource(source?.traits)
+  );
 }
 
 // The target's healingReceived modifiers for this healing: amount to add

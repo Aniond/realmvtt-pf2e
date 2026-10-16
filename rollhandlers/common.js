@@ -838,6 +838,69 @@ function getAttackModifiersForTarget(target, distance) {
   return results;
 }
 
+/**
+ * AC bonuses on the target that apply only against a reaction its movement
+ * triggered (Blessed Swiftness: trigger:movement). The attack can't know
+ * that, so the difference is offered in the attacker's roll prompt as an
+ * unticked penalty of the same size (a -2 to the roll is +2 AC for every
+ * degree of success). Empty when the target has none.
+ */
+function getTargetSituationalAcModifiers(
+  targetToken,
+  attackerToken = null,
+  targetIsOffGuardDueToFlanking = false,
+) {
+  if (!targetToken) return [];
+  const results = [];
+  REACTION_TRIGGERS.forEach((trigger) => {
+    const extra = { trigger };
+    const base = getArmorClassForToken(
+      targetToken,
+      targetIsOffGuardDueToFlanking,
+      attackerToken,
+    );
+    const names = [];
+    const triggered = getArmorClassForToken(
+      targetToken,
+      targetIsOffGuardDueToFlanking,
+      attackerToken,
+      names,
+      extra,
+    );
+    const difference = triggered - base;
+    if (difference === 0) return;
+    // Which modifiers apply only with the trigger, for the label
+    const lookup = (context) =>
+      getEffectsAndModifiersForToken(
+        targetToken,
+        ["armorClassBonus", "armorClassPenalty", "allBonus", "allPenalty"],
+        ["dex", "ac"],
+        undefined,
+        undefined,
+        context,
+      )
+        .filter((mod) => mod.active)
+        .map((mod) => mod.name);
+    const before = new Set(lookup({}));
+    lookup(extra).forEach((name) => {
+      if (!before.has(name) && !names.includes(name)) names.push(name);
+    });
+    const label = `vs reaction to ${trigger.replace(/-/g, " ")}`;
+    results.push({
+      name: `Target AC ${difference > 0 ? "+" : ""}${difference} (${[...names, label].join(", ")})`,
+      type: "",
+      value: -difference,
+      active: false,
+      isPenalty: difference > 0,
+      situational: label,
+    });
+  });
+  return results;
+}
+
+// Reaction triggers a roll prompt can offer as opt-ins (trigger:<name>)
+const REACTION_TRIGGERS = ["movement"];
+
 // In this call we look for effects that are relevant to the caller and the target for damage rolls
 function getDamageEffectsForTarget(ourToken, target) {
   if (!target) {
@@ -1081,9 +1144,19 @@ function collectTraitsAndProperties(
   }
 
   // Collect action name if provided (e.g., "Subsist" becomes "action:subsist")
+  // What triggered the reaction this roll is for (trigger:movement)
+  if (typeof context.trigger === "string" && context.trigger) {
+    traits.add(`trigger:${context.trigger}`);
+  }
+
   if (context.action && context.action.name) {
     const actionName = context.action.name.toLowerCase().replace(/\s+/g, "-");
     traits.add(`action:${actionName}`);
+    // Shove and Reposition force the target to move (Foundry's
+    // forced-movement): Sky's Call, Rock Dwarf
+    if (FORCED_MOVEMENT_ACTIONS.has(actionName)) {
+      traits.add("forced-movement");
+    }
   }
 
   // Collect properties from context objects (weapon, spell, etc.)
@@ -1255,6 +1328,11 @@ function collectTraitsAndProperties(
         traits.add(`origin:item:trait:${name}`);
       }
     });
+  }
+  // The creature attacking this one, for AC against that attacker
+  // (getOriginAtoms: origin:mark:hunted-prey for Outwit)
+  if (Array.isArray(context.originAtoms)) {
+    context.originAtoms.forEach((atom) => traits.add(atom));
   }
 
   // Skill and proficiency ranks: skill:<name>:rank:<n> for every skill (so
@@ -1994,6 +2072,23 @@ function getAlteredWeapon(record, weapon) {
  * land Speed; the highest grant wins) plus speedBonus modifiers with that
  * field. Returns e.g. { climb: 25, fly: 20 }.
  */
+// Creature sizes, and Foundry's short spellings of them
+const CREATURE_SIZES = ["tiny", "small", "medium", "large", "huge", "gargantuan"];
+const CREATURE_SIZE_ALIASES = { sm: "small", med: "medium", lg: "large", grg: "gargantuan" };
+
+// The size a creatureSize modifier gives (value or field "small"), the last
+// one that applies; "" without one
+function getFeatureCreatureSize(record) {
+  let size = "";
+  getEffectsAndModifiersForToken(record, ["creatureSize"]).forEach((mod) => {
+    if (mod.active === false) return;
+    const raw = String(mod.value || mod.field || "").trim().toLowerCase();
+    const value = CREATURE_SIZE_ALIASES[raw] || raw;
+    if (CREATURE_SIZES.includes(value)) size = value;
+  });
+  return size;
+}
+
 function getOtherSpeeds(record, speedMods, landSpeed, isLandSpeedField) {
   const speeds = {};
   const typeOf = (field) => {
@@ -2017,7 +2112,20 @@ function getOtherSpeeds(record, speedMods, landSpeed, isLandSpeedField) {
     if (feet > (speeds[type] || 0)) speeds[type] = feet;
   });
   speedMods.forEach((mod) => {
-    if (!mod.active || isLandSpeedField(mod.field)) return;
+    if (!mod.active) return;
+    // All Speeds: each other Speed too, which a penalty can't take below
+    // 5 feet
+    if (String(mod.field || "").toLowerCase() === "all-speeds") {
+      const change = parseInt(mod.value || 0, 10) || 0;
+      Object.keys(speeds).forEach((type) => {
+        speeds[type] =
+          change < 0
+            ? Math.max(Math.min(5, speeds[type]), speeds[type] + change)
+            : speeds[type] + change;
+      });
+      return;
+    }
+    if (isLandSpeedField(mod.field)) return;
     const type = typeOf(mod.field);
     if (type && speeds[type] !== undefined) {
       speeds[type] += parseInt(mod.value || 0, 10) || 0;
@@ -2367,8 +2475,12 @@ const SITUATIONAL_EFFECT_TRAITS = new Set([
   "electricity", "acid", "sonic", "void", "vitality", "spirit", "force",
   "darkness", "light", "charm", "controlled", "mechanical", "environmental",
   "paralyze", "nonlethal", "attack", "manipulate", "concentrate", "move",
-  "unholy", "holy", "aura", "inhaled",
+  "unholy", "holy", "aura", "inhaled", "forced-movement",
 ]);
+
+// Basic actions that force their target to move (Player Core pg. 422):
+// action:shove and action:reposition also give the forced-movement atom
+const FORCED_MOVEMENT_ACTIONS = new Set(["shove", "reposition"]);
 
 /**
  * True when an atom describes something the current roll can't know: the
@@ -2390,13 +2502,16 @@ function isSituationalAtom(atom, context = {}) {
   if (atom === "encounter" || atom.startsWith("encounter:")) {
     return getEncounterState() === null;
   }
-  if (
-    atom.startsWith("origin:") ||
-    atom.startsWith("inflicts:") ||
-    atom.startsWith("check:type:")
-  ) {
+  // The attacker (originAtoms, AC against an attack) counts as a source
+  if (atom.startsWith("origin:")) {
+    return !context.origin && !context.originAtoms;
+  }
+  if (atom.startsWith("inflicts:") || atom.startsWith("check:type:")) {
     return !context.origin;
   }
+  // What triggered a reaction (Blessed Swiftness: trigger:movement); no roll
+  // says so yet
+  if (atom.startsWith("trigger:")) return !context.trigger;
   if (atom.startsWith("item:trait:")) {
     return !hasItem && !context.origin;
   }
@@ -2450,6 +2565,7 @@ function getSituationalLabel(predicate, traits, context = {}, target = null) {
     if (atom.startsWith("inflicts:")) return `vs ${last.replace(/-/g, " ")}`;
     if (atom === "encounter") return "in an encounter";
     if (atom.startsWith("encounter:round:")) return `round ${last}`;
+    if (atom.startsWith("trigger:")) return `vs reaction to ${last.replace(/-/g, " ")}`;
     return `vs ${last.replace(/-/g, " ")}`;
   });
   return [...new Set(labels)].join(", ");
@@ -2952,6 +3068,9 @@ function getEffectsAndModifiersForToken(
             slug: rule.slug || "",
             targetSlug: rule.targetSlug || "",
             adjustMode: rule.adjustMode || "",
+            // The rule's predicate, for consumers that probe why it failed
+            // (getTargetSituationalAcModifiers)
+            effectPredicate: rule.data?.predicate || undefined,
           });
         }
       } else if (rule.valueType === "api") {
@@ -4078,7 +4197,7 @@ function applyEffect(
 // Gets macros for all effects that an ability can apply: one Apply button
 // per value the ability gives the effect (Apply_Frightened_1,
 // Apply_Frightened_2), each applying that value in one click
-function getEffectMacrosFor(effects = [], description = "") {
+function getEffectMacrosFor(effects = [], description = "", magical = false) {
   let effectButtons = "";
   const ourToken = api.getToken();
   const ourTokenId = ourToken?._id || "";
@@ -4107,12 +4226,182 @@ function getEffectMacrosFor(effects = [], description = "") {
 let targets = api.getSelectedOrDroppedToken();
 targets.forEach(target => {
 const ourToken = '${ourTokenId}' ? {_id: '${ourTokenId}', name: '${ourTokenName}'} : undefined;
-applyEffectButton('${effectID}', '${escapedEffectName}', target, ourToken, ${value});
+applyEffectButton('${effectID}', '${escapedEffectName}', target, ourToken, ${value}${magical ? ", true" : ""});
 });
 \`\`\``;
     });
   });
   return effectButtons;
+}
+
+// Traits that make a source magical: the magical trait or a tradition
+function isMagicalSource(traits) {
+  return getTraitNameList(traits).some((trait) =>
+    ["magical", "arcane", "divine", "occult", "primal"].includes(trait),
+  );
+}
+
+/**
+ * Apply buttons for what an action gives its user (Rage): the highest
+ * actionTempHp (temporary Hit Points) and the total actionHealing (Hit
+ * Points regained) whose predicates hold for this action (action:rage).
+ * An actionHealing value can use @tempHp, the temporary Hit Points the same
+ * action gives (Superstition Instinct), and its field names an effect the
+ * Apply button adds as well (a cooldown). "" without any.
+ */
+function getActionHealingMacros(action) {
+  const creature =
+    (typeof record !== "undefined" && record) || api.getToken() || null;
+  if (!creature || !action?.name) return "";
+  const context = { action: { name: action.name } };
+  const lookup = (type) =>
+    getEffectsAndModifiersForToken(
+      creature,
+      [type],
+      "",
+      undefined,
+      undefined,
+      context,
+    ).filter((mod) => mod.active !== false);
+  const amountOf = (value, tempHp = 0) => {
+    const text = String(value ?? "").replace(/@tempHp/g, String(tempHp));
+    const number = /^[\d\s+\-*/().]+$/.test(text.trim())
+      ? evaluateMath(text)
+      : parseInt(text, 10);
+    return Math.max(0, Math.floor(Number(number) || 0));
+  };
+  const tempHp = lookup("actionTempHp").reduce(
+    (best, mod) => Math.max(best, amountOf(mod.value)),
+    0,
+  );
+  const healing = lookup("actionHealing");
+  const healingAmount = healing.reduce(
+    (sum, mod) => sum + amountOf(mod.value, tempHp),
+    0,
+  );
+  const cooldowns = healing
+    .map((mod) => String(mod.field || "").trim())
+    .filter(Boolean);
+  const source = JSON.stringify(String(action.name));
+  let macros = "";
+  if (tempHp > 0) {
+    macros += `\n\`\`\`Apply_Temporary_HP_${tempHp}\napplyActionTemporaryHitPoints(${tempHp}, ${source});\n\`\`\``;
+  }
+  if (healingAmount > 0) {
+    const names = JSON.stringify(healing.map((mod) => mod.name).join(", "));
+    macros += `\n\`\`\`Apply_Healing_${healingAmount}\napplyActionHealing(${healingAmount}, ${names}, ${JSON.stringify(cooldowns)});\n\`\`\``;
+  }
+  return macros;
+}
+
+// The tokens an action card's Apply button acts on: the selected or dropped
+// tokens, or a player's own tokens
+function getActionApplyTargets() {
+  let targets = api.getSelectedOrDroppedToken() || [];
+  if (targets.length === 0 && typeof isGM !== "undefined" && !isGM) {
+    targets = (api.getSelectedOwnedTokens() || []).map((t) => t?.token || t);
+  }
+  return targets;
+}
+
+// Temporary Hit Points from an action (Rage): they replace lower ones
+function applyActionTemporaryHitPoints(amount, sourceName = "") {
+  getActionApplyTargets().forEach((target) => {
+    const oldTempHp = parseInt(target?.data?.tempHp || "0", 10) || 0;
+    const newTempHp = Math.max(amount, oldTempHp);
+    api.setValueOnToken(target, "data.tempHp", newTempHp);
+    const from = sourceName ? ` from ${sourceName}` : "";
+    api.sendMessage(
+      `${getTokenDisplayName(target)} gains ${amount} temporary Hit Points${from}.`,
+      undefined,
+      [],
+      [],
+      target,
+    );
+    api.floatText(target, `+${amount}`, "#1165ed");
+  });
+}
+
+// Hit Points regained from an action (Superstition Instinct), adding the
+// effects named (the 10-minute cooldown)
+function applyActionHealing(amount, sourceName = "", effectNames = []) {
+  getActionApplyTargets().forEach((target) => {
+    applyHealingToToken(target, amount, { source: sourceName });
+    (Array.isArray(effectNames) ? effectNames : []).forEach((name) => {
+      if (name && !getTokenCondition(target, name)) api.addEffect(name, target);
+    });
+  });
+}
+
+/**
+ * The conditions a creature gains when it accepts magic (onMagicAccepted:
+ * Superstition Instinct, frightened 1 while raging), from modifiers whose
+ * predicates hold. Value "frightened:1" or "Frightened 1".
+ */
+function getMagicAcceptedConditions(target) {
+  if (!target) return [];
+  return getEffectsAndModifiersForToken(target, ["onMagicAccepted"])
+    .filter((mod) => mod.active !== false)
+    .map((mod) => {
+      const match = String(mod.value ?? "")
+        .trim()
+        .match(/^([a-z][a-z\s-]*?)[\s:]+(\d+)$/i);
+      if (!match) return null;
+      const name = match[1].trim().replace(/(^|[\s-])([a-z])/g, (m) => m.toUpperCase());
+      return { name, value: parseInt(match[2], 10) || 1, source: mod.name };
+    })
+    .filter(Boolean);
+}
+
+/**
+ * Magic applied to a creature through the ruleset's Apply buttons. A
+ * creature with onMagicAccepted conditions is asked first ("willingly
+ * accept"): declining skips it; accepting applies it and the conditions. With
+ * an effectId (a lasting effect), the conditions' values can't go below that
+ * value while the effect stays (data.frightenedFloors, read by
+ * getFrightenedFloor). Without such modifiers it just applies.
+ */
+function confirmMagicAccepted(target, sourceName, apply, effectId = null) {
+  const conditions = getMagicAcceptedConditions(target);
+  if (conditions.length === 0) {
+    apply();
+    return;
+  }
+  const name = getTokenDisplayName(target);
+  const gains = conditions.map((c) => `${c.name.toLowerCase()} ${c.value}`).join(" and ");
+  const sources = [...new Set(conditions.map((c) => c.source))].join(", ");
+  api.showPrompt(
+    "Accept the Magic?",
+    `${name} is affected by ${sourceName || "magic"}. Accepting it makes them ${gains} (${sources}).`,
+    "Select...",
+    [
+      { label: "Accept", value: "accept" },
+      { label: "Decline", value: "decline" },
+    ],
+    null,
+    (choice) => {
+      const value = Array.isArray(choice) ? choice[0] : choice;
+      if (value !== "accept") return;
+      apply();
+      conditions.forEach((condition) => {
+        addConditionGain(target, condition.name, condition.value, (stacks) =>
+          api.addEffects(Array(stacks).fill(condition.name), target),
+        );
+      });
+      const frightened = conditions.find((c) => c.name.toLowerCase() === "frightened");
+      if (effectId && frightened) {
+        const existing = target?.data?.frightenedFloors || target?.record?.data?.frightenedFloors;
+        const floors = (Array.isArray(existing) ? existing : []).filter((entry) =>
+          (target?.effects || []).some((effect) => effect?._id === entry?.effectId),
+        );
+        floors.push({ effectId, value: frightened.value });
+        api.setValueOnToken(target, "data.frightenedFloors", floors);
+      }
+    },
+    "OK",
+    "Cancel",
+    1,
+  );
 }
 
 function useItem() {
@@ -4873,7 +5162,79 @@ function getDefenseDCForToken(token, defense, context = {}) {
   return null;
 }
 
-function getArmorClassForToken(token, targetIsOffGuardDueToFlanking = false) {
+/**
+ * Predicate atoms about the creature attacking this one, for AC against that
+ * attack (Foundry's origin:* on a defense): origin:mark:<value> for each
+ * tokenMark effect on the attacker that this creature applied (Hunt Prey on
+ * the prey gives the ranger origin:mark:hunted-prey, Outwit), plus
+ * origin:trait:<trait>, origin:level:<n> and origin:type:character|npc.
+ * A mark with no applier recorded counts, as on the attacker's side.
+ */
+function getOriginAtoms(defenderToken, attackerToken) {
+  const atoms = [];
+  if (!attackerToken) return atoms;
+  const defenderIds = [defenderToken?._id, defenderToken?.record?._id].filter(
+    Boolean,
+  );
+  (attackerToken.effects || []).forEach((effect) => {
+    (effect?.rules || []).forEach((rule) => {
+      if (rule?.type !== "tokenMark" || !rule.value) return;
+      const appliedById = attackerToken.effectValues?.[effect?._id]?.tokenId;
+      if (
+        appliedById === undefined ||
+        appliedById === null ||
+        defenderIds.includes(appliedById)
+      ) {
+        atoms.push(`origin:mark:${String(rule.value).toLowerCase().replace(/\s+/g, "-")}`);
+      }
+    });
+  });
+  const data = attackerToken.data || attackerToken.record?.data || {};
+  getTraitNameList(data.traits).forEach((trait) =>
+    atoms.push(`origin:trait:${trait}`),
+  );
+  const level = parseInt(data.level, 10);
+  if (!isNaN(level)) atoms.push(`origin:level:${level}`);
+  const recordType = attackerToken.recordType || attackerToken.record?.recordType;
+  if (recordType === "characters") atoms.push("origin:type:character");
+  else if (recordType) atoms.push("origin:type:npc");
+  return atoms;
+}
+
+/**
+ * The best (bonus) or worst (penalty) value of one modifier type already in
+ * a character's AC, for adding a feature modifier that only applies against
+ * this attacker: the sheet's feature modifiers, active effects and, for
+ * circumstance bonuses, a raised shield.
+ */
+function getArmorClassTypeBest(type, isBonus, mods, raisedShieldBonus) {
+  const values = mods
+    .filter((mod) => mod.active !== false && mod.type === type)
+    .map(getModifierSortValue)
+    .filter((value) => (isBonus ? value > 0 : value < 0));
+  if (isBonus && type === "circumstance" && raisedShieldBonus > 0) {
+    values.push(raisedShieldBonus);
+  }
+  if (values.length === 0) return 0;
+  return isBonus ? Math.max(...values) : Math.min(...values);
+}
+
+/**
+ * A creature's AC. targetIsOffGuardDueToFlanking applies off-guard's -2
+ * circumstance penalty (flanking, offGuardTarget); a Climbing creature without
+ * a climb Speed is off-guard too. With the attacker's token, modifiers that
+ * only apply against that attacker count (Outwit: origin:mark:hunted-prey);
+ * reasons, if given an array, receives the names of those modifiers.
+ * extraContext adds to the predicate context ({ trigger: "movement" }: the
+ * attack is a reaction to the creature's movement).
+ */
+function getArmorClassForToken(
+  token,
+  targetIsOffGuardDueToFlanking = false,
+  attackerToken = null,
+  reasons = null,
+  extraContext = null,
+) {
   // Get best equipped armor to pass as context for predicate evaluation
   const bestArmor = getBestEquippedArmor(token);
   let armorItem = null;
@@ -4882,6 +5243,16 @@ function getArmorClassForToken(token, targetIsOffGuardDueToFlanking = false) {
       token?.data?.inventory || token?.record?.data?.inventory || [];
     armorItem = inventory.find((item) => item._id === bestArmor.armor.armorId);
   }
+  const baseContext = armorItem ? { item: armorItem } : {};
+  // Against a known attacker, its atoms join the predicate context
+  const originAtoms = attackerToken
+    ? getOriginAtoms(token, attackerToken)
+    : null;
+  const context = {
+    ...baseContext,
+    ...(originAtoms ? { originAtoms } : {}),
+    ...(extraContext || {}),
+  };
 
   // AC is a Dex-based DC: clumsy and penalties to all checks and DCs
   // (frightened, sickened) lower it, but enfeebled, stupefied and drained don't.
@@ -4892,7 +5263,7 @@ function getArmorClassForToken(token, targetIsOffGuardDueToFlanking = false) {
     ["dex", "ac"],
     undefined,
     undefined,
-    armorItem ? { item: armorItem } : {},
+    context,
   );
 
   let tokenData = token.data === undefined ? token.record.data : token.data;
@@ -4921,7 +5292,7 @@ function getArmorClassForToken(token, targetIsOffGuardDueToFlanking = false) {
         "all",
         undefined,
         undefined,
-        armorItem ? { item: armorItem } : {},
+        baseContext,
       ).filter((mod) => mod.active)
     : [];
 
@@ -4949,12 +5320,66 @@ function getArmorClassForToken(token, targetIsOffGuardDueToFlanking = false) {
           ac -= getModifierSortValue(replaced);
         }
       }
+      // A modifier that applies against this attacker (an NPC's own)
+      if (
+        originAtoms &&
+        Array.isArray(reasons) &&
+        JSON.stringify(mod.predicate || mod.effectPredicate || "").includes("origin:")
+      ) {
+        reasons.push(mod.name);
+      }
     }
   });
 
+  // A character's feature modifiers that only apply against this attacker
+  // (left out of data.ac, which is worked out with no attacker). A typed one
+  // adds only what it beats of that type already in AC: Outwit's +1
+  // circumstance does nothing behind a raised shield's +2.
+  if (isCharacter && (originAtoms || extraContext)) {
+    const key = (mod) =>
+      JSON.stringify([mod.name, mod.modifierType, mod.type, mod.field, mod.slug, mod.predicate]);
+    const baked = new Set(sheetModifiers.map(key));
+    const raisedShieldBonus =
+      bestArmor?.shield &&
+      tokenData?.shieldRaised === "true" &&
+      tokenData?.shieldBroken !== true
+        ? parseFloat(
+            applyAdjustModifiers(token, bestArmor.shield.acBonus, "raised-shield"),
+          ) || 0
+        : 0;
+    const activeEffects = acModifiers.filter((mod) => mod.isEffect && mod.active);
+    getEffectsAndModifiersForToken(
+      { ...token, effects: [], effectIds: [] },
+      ["armorClassBonus", "armorClassPenalty"],
+      "all",
+      undefined,
+      undefined,
+      context,
+    )
+      .filter((mod) => mod.active && !baked.has(key(mod)))
+      .forEach((mod) => {
+        const value = getModifierSortValue(mod);
+        let delta = value;
+        if (["circumstance", "item", "status"].includes(mod.type)) {
+          const best = getArmorClassTypeBest(
+            mod.type,
+            value > 0,
+            [...sheetModifiers, ...activeEffects],
+            raisedShieldBonus,
+          );
+          delta = value > 0 ? Math.max(0, value - best) : Math.min(0, value - best);
+        }
+        if (delta !== 0) {
+          ac += delta;
+          if (Array.isArray(reasons)) reasons.push(mod.name);
+        }
+      });
+  }
+
   // Handle flanking: off-guard, a -2 circumstance penalty, which doesn't stack
-  // with a circumstance penalty the target already has
-  if (targetIsOffGuardDueToFlanking) {
+  // with a circumstance penalty the target already has. Climbing without a
+  // climb Speed is the same off-guard.
+  if (targetIsOffGuardDueToFlanking || isOffGuardFromClimbing(token)) {
     ac -= Math.max(0, 2 + worstCircumstancePenalty);
   }
 
@@ -5233,8 +5658,10 @@ function updateAttribute({
   ]);
   // Land Speed takes bonuses with no field (or "land"/"land-speed", Foundry's
   // selector); a field of fly/swim/climb/burrow targets that movement type
+  // "all-speeds" (Foundry's all-speeds) changes land Speed and every other
+  // Speed (Curse of Inclement Headwinds)
   const isLandSpeedField = (field) =>
-    ["", "all", "land", "land-speed", "speed"].includes(
+    ["", "all", "land", "land-speed", "speed", "all-speeds"].includes(
       String(field || "").toLowerCase(),
     );
   let totalSpeedModifier = 0;
@@ -7684,7 +8111,14 @@ function updateTogglesList(record, valuesToSet) {
       toggleableItems.push({
         name,
         predicateValue,
-        group: group ? `${source.name}|${group}` : "",
+        // A "shared:" group spans features: Precision's first-hit toggle
+        // and Masterful Hunter's second- and third-hit toggles turn each
+        // other off. Other groups are the feature's own.
+        group: group
+          ? group.startsWith("shared:")
+            ? group
+            : `${source.name}|${group}`
+          : "",
       });
       seenNames.add(name);
     });
@@ -7892,10 +8326,18 @@ function onAddEditFeature(
   const newTraits = [...currentTraits];
   const newTraitsList = [...currentTraitsList];
 
+  // A trait written "-plant" is removed instead (Foundry's ActorTraits
+  // remove: Fungus Leshy loses the plant trait), after every trait is added
+  const removedTraits = [];
   traitBonus.forEach((modifier) => {
     // A trait whose predicate fails (or that is opted out) isn't added
     if (modifier.active === false) return;
     const trait = modifier.value || modifier.field || "";
+    if (typeof trait === "string" && trait.trim().startsWith("-")) {
+      const removed = trait.trim().slice(1).trim().toLowerCase();
+      if (removed) removedTraits.push(removed);
+      return;
+    }
     if (trait && typeof trait === "string") {
       // Set traits list
       const traitObject = {
@@ -7918,12 +8360,44 @@ function onAddEditFeature(
     }
   });
 
+  if (removedTraits.length > 0) {
+    const isRemoved = (name) =>
+      removedTraits.includes(String(name || "").trim().toLowerCase());
+    for (let i = newTraits.length - 1; i >= 0; i--) {
+      if (isRemoved(newTraits[i])) newTraits.splice(i, 1);
+    }
+    for (let i = newTraitsList.length - 1; i >= 0; i--) {
+      if (isRemoved(newTraitsList[i]?.name)) newTraitsList.splice(i, 1);
+    }
+  }
+
   // Only update if there are changes
   if (JSON.stringify(newTraits) !== JSON.stringify(currentTraits)) {
     valuesToSet[`data.traits`] = newTraits;
   }
   if (JSON.stringify(newTraitsList) !== JSON.stringify(currentTraitsList)) {
     valuesToSet[`data.traitsList`] = newTraitsList;
+  }
+
+  // Size from a feature (Foundry's CreatureSize: Ant Kholo is Small, the
+  // kholo ancestry Medium): the last creatureSize modifier that applies sets
+  // data.size. data.computedSize is the size last set this way; when no
+  // modifier applies any more, a size still equal to it goes back to the
+  // ancestry's. Characters without one are unchanged.
+  const featureSize = getFeatureCreatureSize(record);
+  if (featureSize) {
+    if (record.data?.size !== featureSize) {
+      valuesToSet["data.size"] = featureSize;
+    }
+    if (record.data?.computedSize !== featureSize) {
+      valuesToSet["data.computedSize"] = featureSize;
+    }
+  } else if (record.data?.computedSize) {
+    const ancestrySize = record.data?.ancestries?.[0]?.data?.size;
+    if (ancestrySize && record.data?.size === record.data.computedSize) {
+      valuesToSet["data.size"] = ancestrySize;
+    }
+    valuesToSet["data.computedSize"] = "";
   }
 
   // Note: IWR (Immunities, Weaknesses, Resistances) from effects and modifiers
@@ -8360,7 +8834,13 @@ function rollSave(
 // (criticalSuccess, success, failure, criticalFailure; none = all). A note
 // whose predicate fails only on what the roll can't know is shown too, with
 // the reason in its name. [{ name, text, outcome: [-1..2] }]
-function getRollNotes(record, fields, itemId = undefined, context = {}) {
+function getRollNotes(
+  record,
+  fields,
+  itemId = undefined,
+  context = {},
+  onlyField = null,
+) {
   const degrees = {
     criticalsuccess: 2,
     success: 1,
@@ -8376,6 +8856,10 @@ function getRollNotes(record, fields, itemId = undefined, context = {}) {
     context,
   )
     .filter((mod) => mod.active !== false || mod.situational)
+    // Only notes for this field (not every roll's), when asked
+    .filter(
+      (mod) => !onlyField || String(mod.field || "").toLowerCase() === onlyField,
+    )
     .map((mod) => {
       const outcomes = Array.isArray(mod.outcome)
         ? mod.outcome
@@ -8806,7 +9290,11 @@ function rollSkill(
   );
 
   // Prepare metadata for the roll handler
-  const { extraModifiers: _extraModifiers, ...metadataExtras } = additionalMetadata;
+  const {
+    extraModifiers: _extraModifiers,
+    targetNotes: _targetNotes,
+    ...metadataExtras
+  } = additionalMetadata;
   const metadata = {
     rollName: actionName
       ? `${capitalize(skillName)}: ${actionName}`
@@ -8816,12 +9304,17 @@ function rollSkill(
     group: initiativeGroup,
     degreeOfSuccessAdjustments: degreeOfSuccessAdjustments,
     // Notes shown with the result
-    notes: getRollNotes(
-      record,
-      [...skillSelectors, attribute].filter(Boolean),
-      undefined,
-      context,
-    ),
+    notes: [
+      ...getRollNotes(
+        record,
+        [...skillSelectors, attribute].filter(Boolean),
+        undefined,
+        context,
+      ),
+      ...(Array.isArray(additionalMetadata.targetNotes)
+        ? additionalMetadata.targetNotes
+        : []),
+    ],
     ...metadataExtras,
   };
 
@@ -9063,7 +9556,28 @@ function performSkillAction(record, skill, actionName, isMacro = false) {
     action: action.name,
     extraModifiers,
     dcName: action.defense && target ? `${capitalize(action.defense)} DC` : undefined,
+    // Notes on the target for being forced to move (Rock Dwarf), shown with
+    // a Shove or Reposition result
+    targetNotes: FORCED_MOVEMENT_ACTIONS.has(toSlug(action.name))
+      ? getForcedMovementNotes(target, action.name)
+      : [],
   });
+}
+
+// A creature's notes for being forced to move: rollNote modifiers with field
+// "forced-movement", named after the creature, to show on the roll that
+// moves it (Rock Dwarf: moved only half of 10 feet or more). Their outcome
+// is the degree of the check against the creature.
+function getForcedMovementNotes(target, actionName) {
+  if (!target) return [];
+  const name = getTokenDisplayName(target);
+  return getRollNotes(
+    target,
+    ["forced-movement"],
+    undefined,
+    { action: { name: actionName } },
+    "forced-movement",
+  ).map((note) => ({ ...note, name: `${name} (${note.name})` }));
 }
 
 // Roll buttons for a basic skill action's card: one per skill it uses
@@ -9314,11 +9828,49 @@ function getTokenReach(token, weapon = null) {
 
 function isOffGuard(token) {
   const effects = token?.effects || [];
-  return effects.some(
-    (effect) =>
-      effect.name.toLowerCase().includes("off-guard") ||
-      effect.name.toLowerCase().includes("off guard") ||
-      effect.name.toLowerCase().includes("offguard"),
+  return (
+    effects.some(
+      (effect) =>
+        effect.name.toLowerCase().includes("off-guard") ||
+        effect.name.toLowerCase().includes("off guard") ||
+        effect.name.toLowerCase().includes("offguard"),
+    ) || isOffGuardFromClimbing(token)
+  );
+}
+
+// Whether a creature has a climb Speed: a character's computed other Speeds,
+// an NPC's Speeds list, or "climb 20 feet" in its Speed text
+function hasClimbSpeed(token) {
+  const data = token?.data || token?.record?.data || {};
+  if ((parseInt(data.otherSpeeds?.climb, 10) || 0) > 0) return true;
+  const speeds = Array.isArray(data.speeds) ? data.speeds : [];
+  if (
+    speeds.some(
+      (speed) =>
+        /climb/i.test(String(speed?.data?.type || speed?.type || "")) &&
+        (parseInt(speed?.data?.value ?? speed?.value, 10) || 0) > 0,
+    )
+  ) {
+    return true;
+  }
+  return /\bclimb\s+\d+/i.test(String(data.speed || ""));
+}
+
+// Climb (Player Core pg. 234): "You're off-guard while climbing unless you
+// have a climb Speed." Climbing is the Climbing effect on the token. An
+// offGuardPrevention modifier with field "climbing" (Shortshanks Hobgoblin)
+// prevents it against every attacker.
+function isOffGuardFromClimbing(token) {
+  if (!token || !getTokenCondition(token, "climbing")) return false;
+  if (hasClimbSpeed(token)) return false;
+  return !getEffectsAndModifiersForToken(
+    token,
+    ["offGuardPrevention"],
+    "climbing",
+  ).some(
+    (mod) =>
+      mod.active !== false &&
+      String(mod.field || "").toLowerCase() === "climbing",
   );
 }
 
@@ -9976,6 +10528,7 @@ function useAction(action) {
   const effectMacros = getEffectMacrosFor(
     action?.data?.effects || [],
     actionDescription,
+    isMagicalSource(traits),
   );
 
   const message = `
@@ -9983,7 +10536,7 @@ function useAction(action) {
 
 ---
 ${actionDescription}
-${effectMacros}${getFirstAidActionMacro(action)}${getSkillActionMacros(action)}
+${effectMacros}${getActionHealingMacros(action)}${getFirstAidActionMacro(action)}${getSkillActionMacros(action)}
 `;
 
   // Send the message
@@ -12300,10 +12853,22 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber = 1) {
         }
       });
 
+      // AC against us: modifiers that only apply against this attacker
+      // (Outwit) are named on the card
+      const acReasons = [];
       let targetAc = getArmorClassForToken(
         target?.token,
         targetIsOffGuardDueToFlanking,
+        ourToken,
+        acReasons,
       );
+      // AC bonuses only against a reaction to the target's movement
+      // (Blessed Swiftness): unticked, for a Reactive Strike
+      getTargetSituationalAcModifiers(
+        target?.token,
+        ourToken,
+        targetIsOffGuardDueToFlanking,
+      ).forEach((mod) => modifiers.push(mod));
 
       // Check if we have a critical specialization effect
       const hasCriticalSpecialization = hasCriticalSpecializationEffect(
@@ -12344,6 +12909,7 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber = 1) {
         targetId: target?.token?._id,
         autoCritical: autoCritical,
         dc: targetAc,
+        dcName: acReasons.length > 0 ? `AC (${[...new Set(acReasons)].join(", ")})` : undefined,
         damage: damage,
         showShieldDamage: targetShieldRaised && damageIsPhysical,
         persistentDamage: persistentDamage,
@@ -16272,9 +16838,20 @@ function getWizardLanguages(record) {
   ].filter((language) => language);
 
   const intMod = getWizardIntMod(record);
-  const extraCount =
+  // extraLanguages modifiers add language slots (Nomadic Halfling: 2)
+  const featureLanguages = getEffectsAndModifiersForToken(record, [
+    "extraLanguages",
+  ]).reduce(
+    (sum, mod) =>
+      mod.active === false ? sum : sum + (parseInt(mod.value, 10) || 0),
+    0,
+  );
+  const extraCount = Math.max(
+    0,
     Math.max(0, intMod) +
-    (parseInt(ancestry.additionalLanguages?.count || 0, 10) || 0);
+      (parseInt(ancestry.additionalLanguages?.count || 0, 10) || 0) +
+      featureLanguages,
+  );
 
   // Ancestry's listed languages first, then every common language
   const ancestryChoices = (ancestry.additionalLanguages?.value || []).map(
@@ -18516,14 +19093,28 @@ function addConditionGain(target, effectName, times = 1, addStacks) {
 // on the target as one gain (frightened 2 from a critical Demoralize is one
 // gain of 2), after the target's conditionGain modifiers. A single stack keeps
 // who applied it; more go on in one write.
-function applyEffectButton(effectId, effectName, target, appliedBy, value = 1) {
-  addConditionGain(target, effectName, value, (stacks) => {
-    if (stacks === 1) {
-      api.addEffectById(effectId, target, undefined, appliedBy);
-    } else {
-      api.addEffects(Array(stacks).fill(effectName), target);
-    }
-  });
+function applyEffectButton(
+  effectId,
+  effectName,
+  target,
+  appliedBy,
+  value = 1,
+  magical = false,
+) {
+  const apply = () =>
+    addConditionGain(target, effectName, value, (stacks) => {
+      if (stacks === 1) {
+        api.addEffectById(effectId, target, undefined, appliedBy);
+      } else {
+        api.addEffects(Array(stacks).fill(effectName), target);
+      }
+    });
+  // Magic a raging Superstition barbarian accepts (onMagicAccepted)
+  if (magical) {
+    confirmMagicAccepted(target, effectName, apply, effectId);
+  } else {
+    apply();
+  }
 }
 
 // The values an ability gives an effect: the effect's own value if it has
@@ -18630,12 +19221,20 @@ const FRIGHTENED_FLOOR_EFFECTS = {
 };
 
 // The lowest value frightened can go down to on a token: 0, or the highest
-// floor among its effects
+// floor among its effects. data.frightenedFloors holds floors that last while
+// one effect does ([{ effectId, value }], written by confirmMagicAccepted).
 function getFrightenedFloor(token) {
   let floor = 0;
   for (const [name, value] of Object.entries(FRIGHTENED_FLOOR_EFFECTS)) {
     if (getTokenCondition(token, name)) floor = Math.max(floor, value);
   }
+  const floors = token?.data?.frightenedFloors || token?.record?.data?.frightenedFloors;
+  (Array.isArray(floors) ? floors : []).forEach((entry) => {
+    const lasting = (token?.effects || []).some(
+      (effect) => effect?._id && effect._id === entry?.effectId,
+    );
+    if (lasting) floor = Math.max(floor, parseInt(entry?.value, 10) || 0);
+  });
   return floor;
 }
 

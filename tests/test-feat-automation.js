@@ -11,6 +11,10 @@
 // Engine group G3: weapon die-size, thrown-melee, material and deity
 // favored-weapon atoms, weapon proficiency in item:proficiency:rank, and
 // damage type and material changes for Strikes and spells.
+// Engine group G5: size, languages and trait removal from a heritage, shared
+// toggle groups, all-Speeds modifiers, AC against the attacker (Outwit),
+// forced movement, climbing, reactions to movement (Blessed Swiftness), and
+// Rage temporary HP with Superstition Instinct.
 // Run: node tests/test-feat-automation.js   (or via tests/run-all.js)
 
 const fs = require("fs");
@@ -1206,6 +1210,396 @@ section("Strike materials (Metal Strikes, Adamantine Strikes, Advanced Vials)");
   const chosen = pc({ feats: [vials], toggles: [{ name: "Advanced Vials (Bomber): Cold Iron", data: { predicateValue: "bomber-advanced-vials:cold-iron", toggled: true } }] });
   assert("Advanced Vials, cold iron chosen", ctx.getAlteredWeapon(chosen, vial).data.materials, ["cold-iron"]);
   assert("not chosen: no material", ctx.getAlteredWeapon(pc({ feats: [vials] }), vial).data.materials, undefined);
+}
+
+// --- engine group G5: character build and Tier 3 -----------------------------
+
+// What onAddEditFeature writes for a record
+function recalc(record) {
+  const saved = ctx.api.setValuesOnRecord;
+  const written = {};
+  ctx.api.setValuesOnRecord = (rec, values) => Object.assign(written, values);
+  try {
+    ctx.onAddEditFeature(record, undefined, true);
+  } finally {
+    ctx.api.setValuesOnRecord = saved;
+  }
+  return written;
+}
+// A heritage whose nested feature carries the given modifiers
+const heritage = (name, modifiers) => [
+  { name, data: { features: [{ _id: `hf-${name}`, name: `${name} Features`, data: { level: 1, modifiers: modifiers.map((data) => ({ data })) } }] } },
+];
+
+section("size from a heritage (Ant Kholo)");
+{
+  const kholo = (extra = {}) =>
+    pc({ size: "medium", ancestries: [{ name: "Kholo", data: { size: "medium", speed: "25 feet", hp: 8 } }], ...extra });
+  const small = { type: "creatureSize", modifierType: "none", field: "", active: true, valueType: "string", value: "small" };
+  const ant = recalc(kholo({ heritages: heritage("Ant Kholo", [small]) }));
+  assert("Ant Kholo: Small", [ant["data.size"], ant["data.computedSize"]], ["small", "small"]);
+  assert("Foundry's short spelling (sm) works", recalc(kholo({ heritages: heritage("Ant Kholo", [{ ...small, value: "sm" }]) }))["data.size"], "small");
+  const failed = recalc(kholo({ heritages: heritage("Ant Kholo", [{ ...small, predicate: '["self:effect:shrink"]' }]) }));
+  assert("a failed predicate leaves the size alone", failed["data.size"], undefined);
+  const plain = recalc(kholo({ heritages: heritage("Dog Kholo", []) }));
+  assert("unchanged: no size modifier, nothing written", [plain["data.size"], plain["data.computedSize"]], [undefined, undefined]);
+  const back = recalc(kholo({ size: "small", computedSize: "small", heritages: heritage("Dog Kholo", []) }));
+  assert("the modifier gone: back to the ancestry's size", [back["data.size"], back["data.computedSize"]], ["medium", ""]);
+  const handEdited = recalc(kholo({ size: "large", computedSize: "small", heritages: [] }));
+  assert("a size changed by hand is kept", handEdited["data.size"], undefined);
+}
+
+section("extra languages from a heritage (Nomadic Halfling)");
+{
+  const base = ctx.getWizardLanguages(pc()).extraCount;
+  const nomadic = { type: "extraLanguages", modifierType: "none", field: "", active: true, valueType: "number", value: "2" };
+  assert("Nomadic Halfling: 2 more", ctx.getWizardLanguages(pc({ heritages: heritage("Nomadic Halfling", [nomadic]) })).extraCount - base, 2);
+  assert("a failed predicate adds none", ctx.getWizardLanguages(pc({ heritages: heritage("Nomadic Halfling", [{ ...nomadic, predicate: '["feat:nothing"]' }]) })).extraCount, base);
+  assert("unchanged without one", ctx.getWizardLanguages(pc({ heritages: heritage("Gutsy Halfling", []) })).extraCount, base);
+}
+
+section("removing a trait (Fungus Leshy)");
+{
+  const leshy = (modifiers) =>
+    pc({
+      traits: ["Leshy", "Plant"],
+      traitsList: [{ _id: "1", name: "Leshy", data: {} }, { _id: "2", name: "Plant", data: {} }],
+      heritages: heritage("Fungus Leshy", modifiers),
+    });
+  const fungus = { type: "trait", modifierType: "none", field: "Fungus", active: true, valueType: "string", value: "" };
+  const noPlant = { type: "trait", modifierType: "none", field: "", active: true, valueType: "string", value: "-plant" };
+  const written = recalc(leshy([fungus, noPlant]));
+  assert("Fungus Leshy: fungus added, plant removed", written["data.traits"], ["Leshy", "Fungus"]);
+  assert("... from the traits list too", written["data.traitsList"].map((t) => t.name), ["Leshy", "Fungus"]);
+  assert("a -trait in the field works too", recalc(leshy([{ ...noPlant, field: "-Plant", value: "" }]))["data.traits"], ["Leshy"]);
+  assert("unchanged: adding only", recalc(leshy([fungus]))["data.traits"], ["Leshy", "Plant", "Fungus"]);
+  assert("a removal whose predicate fails removes nothing", recalc(leshy([{ ...noPlant, predicate: '["self:effect:wilt"]' }]))["data.traits"], undefined);
+}
+
+section("toggles that turn each other off across features (Precision)");
+{
+  const precision = { ...feat("Precision", []), data: { type: "class", level: 1, toggleOptions: [{ name: "First hit", data: { predicateValue: "precision-hunters-edge", group: "shared:precision-hunters-edge" } }] } };
+  const masterful = { ...feat("Masterful Hunter (Precision)", []), data: { type: "class", level: 1, toggleOptions: [
+    { name: "Second hit", data: { predicateValue: "precision-hunters-edge:second-hit", group: "shared:precision-hunters-edge" } },
+    { name: "Third hit", data: { predicateValue: "precision-hunters-edge:third-hit", group: "shared:precision-hunters-edge" } },
+  ] } };
+  const own = { ...feat("Bomber", []), data: { type: "class", level: 1, toggleOptions: [{ name: "Fire", data: { predicateValue: "bomber:fire", group: "vials" } }] } };
+  const written = {};
+  ctx.updateTogglesList(pc({ feats: [precision, masterful, own] }), written);
+  const toggles = written["data.toggles"];
+  assert("a shared group is the same on both features", toggles.filter((t) => t.data.group === "shared:precision-hunters-edge").length, 3);
+  assert("unchanged: another group stays the feature's own", toggles.find((t) => t.name === "Bomber: Fire").data.group, "Bomber|vials");
+  // Turning on the second hit turns off Precision's first hit (toggle-list.html)
+  const html = fs.readFileSync(`${__dirname}/../toggle-list.html`, "utf8");
+  new vm.Script(html.match(/<script>([\s\S]*?)<\/script>/)[1]).runInContext(ctx);
+  toggles.forEach((t) => (t.data.toggled = t.name === "Precision: First hit"));
+  const savedRecord = ctx.record;
+  const saved = { getValue: ctx.api.getValue, setValues: ctx.api.setValues, dataPath: ctx.dataPath };
+  ctx.record = { ...pc(), data: { ...pc().data, toggles } };
+  const second = toggles.findIndex((t) => t.name === "Masterful Hunter (Precision): Second hit");
+  let set = {};
+  ctx.dataPath = `data.toggles.${second}.data.toggled`;
+  ctx.api.getValue = () => toggles[second];
+  ctx.api.setValues = (values) => (set = values);
+  ctx.onToggleChanged(true);
+  const first = toggles.findIndex((t) => t.name === "Precision: First hit");
+  assert("second hit on: Precision's first hit off", [set[`data.toggles.${second}.data.toggled`], set[`data.toggles.${first}.data.toggled`]], [true, false]);
+  ctx.record = savedRecord;
+  ctx.api.getValue = saved.getValue;
+  ctx.api.setValues = saved.setValues;
+  ctx.dataPath = saved.dataPath;
+}
+
+section("a Speed modifier to all Speeds (Curse of Inclement Headwinds)");
+{
+  const speedWith = (mods, extra = {}) => {
+    const record = { ...pc({ feats: [feat("Mover", mods)] }), ...extra };
+    const written = {};
+    ctx.updateAttribute({ record, attribute: "str", value: 2, moreValuesToSet: written });
+    return written["data.speed"] ?? record.data.speed;
+  };
+  const climb = { type: "speed", field: "climb", value: "20" };
+  const headwinds = { type: "speedPenalty", modifierType: "status", field: "all-speeds", active: true, valueType: "number", value: "-10", predicate: '["self:condition:cursebound:4"]' };
+  const cursebound = (n) => ({ effects: [{ _id: "cb", name: "Cursebound", rules: [] }], effectIds: Array(n).fill("cb") });
+  assert("cursebound 4: -10 to land and climb Speed", speedWith([climb, headwinds], cursebound(4)), "15 feet, climb 10 feet");
+  assert("cursebound 3: no penalty", speedWith([climb, headwinds], cursebound(3)), "25 feet, climb 20 feet");
+  assert("not below 5 feet", speedWith([{ type: "speed", field: "fly", value: "10" }, headwinds], cursebound(4)), "15 feet, fly 5 feet");
+  assert("unchanged: field '' is land Speed only", speedWith([climb, { ...headwinds, field: "" }], cursebound(4)), "15 feet, climb 20 feet");
+  assert("a bonus to all Speeds adds to each", speedWith([climb, { ...headwinds, type: "speedBonus", value: "5", predicate: "" }]), "30 feet, climb 25 feet");
+}
+
+section("AC against the attacker (Outwit)");
+{
+  const outwit = feat("Outwit", [{ type: "armorClassBonus", modifierType: "circumstance", field: "", active: true, valueType: "number", value: "1", slug: "outwit", predicate: '["origin:mark:hunted-prey"]' }]);
+  const masterful = feat("Masterful Hunter (Outwit)", [{ type: "adjustModifier", targetSlug: "outwit", value: "2", valueType: "number", adjustMode: "upgrade", active: true, field: "",
+    predicate: '[{"or":[{"and":["self:armor:category:light",{"gte":["actor:armor:light:rank",3]}]},{"and":["self:armor:category:medium",{"gte":["actor:armor:medium:rank",3]}]},{"and":["self:armor:category:heavy",{"gte":["actor:armor:heavy:rank",3]}]},{"and":["self:armor:category:unarmored",{"gte":["actor:armor:unarmored:rank",3]}]}]}]' }]);
+  const steelShield = { _id: "s", name: "Steel Shield", data: { type: "shield", carried: "equipped", acBonus: 2, hardness: 5, hp: { value: 20, max: 20 } } };
+  const ranger = (extra = {}) => {
+    const record = pc({ feats: [outwit], ...extra });
+    const written = {};
+    ctx.updateAttribute({ record, attribute: "dex", value: 3, moreValuesToSet: written });
+    record.data.ac = written["data.ac"];
+    return record;
+  };
+  const prey = (appliedBy = "pc") => ({ _id: "prey", recordType: "npcs", data: { level: 4, traits: ["Undead"] }, effects: [{ _id: "hp1", name: "Hunt Prey", rules: [{ type: "tokenMark", value: "hunted-prey" }] }], effectValues: { hp1: { tokenId: appliedBy } } });
+  const stranger = { _id: "x", recordType: "npcs", data: { level: 4, traits: [] }, effects: [], effectValues: {} };
+  const r = ranger();
+  const base = ctx.getArmorClassForToken(r);
+  assert("the sheet AC leaves Outwit out", ctx.getArmorClassForToken(r, false, stranger), base);
+  const reasons = [];
+  assert("the prey attacks: +1", ctx.getArmorClassForToken(r, false, prey(), reasons) - base, 1);
+  assert("... named", reasons, ["Outwit"]);
+  assert("a mark another ranger applied: no bonus", ctx.getArmorClassForToken(r, false, prey("someone-else")), base);
+  assertIncludes("attacker atoms: the mark, traits, level, type", ctx.getOriginAtoms(r, prey()), "origin:trait:undead");
+  const shielded = ranger({ inventory: [steelShield], shieldRaised: "true" });
+  const shieldBase = ctx.getArmorClassForToken(shielded);
+  assert("behind a raised steel shield (+2 circumstance): no change", ctx.getArmorClassForToken(shielded, false, prey()), shieldBase);
+  const master = ranger({ feats: [outwit, masterful], defenses: { unarmored: 3 } });
+  assert("Masterful Hunter, master unarmored defense: +2", ctx.getArmorClassForToken(master, false, prey()) - ctx.getArmorClassForToken(master), 2);
+  const expert = ranger({ feats: [outwit, masterful], defenses: { unarmored: 2 } });
+  assert("... expert only: +1", ctx.getArmorClassForToken(expert, false, prey()) - ctx.getArmorClassForToken(expert), 1);
+  const flanked = ctx.getArmorClassForToken(r, true, prey());
+  assert("flanked and the prey: -2 and +1", flanked - base, -1);
+  // An NPC defender takes its own origin modifiers
+  const npc = { _id: "n", recordType: "npcs", data: { attributes: { ac: { value: 20 } }, features: [{ name: "Ghost Ward", data: { modifiers: [{ data: { type: "armorClassBonus", modifierType: "status", field: "", valueType: "number", value: "2", predicate: '["origin:trait:undead"]' } }] } }] }, effects: [] };
+  assert("NPC: +2 status vs undead attackers", [ctx.getArmorClassForToken(npc), ctx.getArmorClassForToken(npc, false, prey()), ctx.getArmorClassForToken(npc, false, stranger)], [20, 22, 20]);
+  // The attack card: AC against us, with the reason
+  const sword = weapon("Longsword");
+  const realTargets = ctx.api.getTargets;
+  const realToken = ctx.api.getToken;
+  ctx.api.getTargets = () => [{ token: r, distance: 5 }];
+  ctx.api.getToken = () => prey();
+  const card = capturePrompt(() => ctx.performAttackRoll(pc({ inventory: [sword] }), sword, "data.inventory.0", 1)).metadata;
+  assert("attack card: AC +1 and named", [card.dc - base, card.dcName], [1, "AC (Outwit)"]);
+  ctx.api.getToken = () => stranger;
+  const plainCard = capturePrompt(() => ctx.performAttackRoll(pc({ inventory: [sword] }), sword, "data.inventory.0", 1)).metadata;
+  assert("unchanged: another attacker, plain AC", [plainCard.dc, plainCard.dcName], [base, undefined]);
+  ctx.api.getTargets = realTargets;
+  ctx.api.getToken = realToken;
+  // A spell attack against the ranger, from the prey
+  const ray = { name: "Ray", data: { defense: { passive: { statistic: "ac" } }, traits: [], damage: [] } };
+  const spellCard = (attacker, target) => {
+    const caster = { ...pc(), _id: "caster" };
+    const macro = ctx.getSpellAttackMacro(caster, ray, { data: { dc: 20, attribute: "cha", attack: 10 } }, "data.spells.0", null);
+    const body = String(macro).replace(/^```Roll_Attack\n/, "").replace(/```\s*$/, "");
+    const saved = { ...ctx.api };
+    let captured = null;
+    ctx.api.getRecord = (type, id, cb) => cb(caster);
+    ctx.api.getValueOnRecord = (r, path) => (path === "data.spells.0" ? ray : null);
+    ctx.api.getTargets = () => [{ token: target, distance: 30 }];
+    ctx.api.getToken = () => attacker;
+    ctx.api.promptRoll = (name, dice, modifiers, metadata) => (captured = { modifiers, metadata });
+    try {
+      new vm.Script(body, { filename: "spell-attack-macro.js" }).runInContext(ctx);
+    } finally {
+      Object.assign(ctx.api, saved);
+    }
+    return captured;
+  };
+  const spellVsRanger = spellCard(prey(), r);
+  assert("spell attack from the prey: AC +1, named", [spellVsRanger?.metadata.dc - base, spellVsRanger?.metadata.dcName], [1, "AC (Outwit)"]);
+  const spellPlain = spellCard(stranger, r);
+  assert("unchanged: from another caster", [spellPlain?.metadata.dc, spellPlain?.metadata.dcName], [base, "AC"]);
+  const swiftAlly = { ...pc({ ac: 20 }), effects: [{ _id: "bs", name: "Blessed Swiftness", rules: [{ type: "armorClassBonus-status", field: "", valueType: "number", value: "2", data: { predicate: ["trigger:movement"] } }] }], effectIds: ["bs"] };
+  const spellVsSwift = spellCard(stranger, swiftAlly);
+  assert("spell attack vs Blessed Swiftness: the unticked -2", spellVsSwift?.modifiers.some((m) => m.name.startsWith("Target AC +2") && m.active === false && m.value === -2), true);
+}
+
+section("forced movement (Sky's Call, Rock Dwarf)");
+{
+  assertIncludes("Shove is forced movement", traitsFor(pc(), { action: { name: "Shove" } }), "forced-movement");
+  assertIncludes("Reposition is forced movement", traitsFor(pc(), { action: { name: "Reposition" } }), "forced-movement");
+  assertNotIncludes("Trip is not", traitsFor(pc(), { action: { name: "Trip" } }), "forced-movement");
+  const cursebound = { effects: [{ _id: "cb", name: "Cursebound", rules: [] }], effectIds: ["cb", "cb"] };
+  const skysCall = feat("Curse of the Sky's Call", [
+    { type: "saveBonus", modifierType: "status", field: "all", active: true, valueType: "number", value: "-@actor.conditions.cursebound.value", predicate: '["forced-movement","self:condition:cursebound"]' },
+    { type: "saveDCPenalty", modifierType: "status", field: "saving-throw", active: true, valueType: "number", value: "@actor.conditions.cursebound.value", predicate: '["forced-movement","self:condition:cursebound"]' },
+  ]);
+  const oracle = { ...pc({ feats: [skysCall], fortitudeMod: 8 }), ...cursebound };
+  const dc = (action) => ctx.getDefenseDCForToken(oracle, "fortitude", { action: { name: action } });
+  assert("Sky's Call, cursebound 2: Shove DC -2", dc("Shove"), 16);
+  assert("Reposition too", dc("Reposition"), 16);
+  assert("Grapple: unchanged", dc("Grapple"), 18);
+  const save = (options) => capturePrompt(() => ctx.rollSave(oracle, "fortitude", 20, true, false, options)).modifiers.find((m) => m.name.startsWith("Curse of the Sky's Call"));
+  assert("a save against a forced-movement spell: -2 applied", [save({ traits: ["Air", "forced-movement"] })?.active, save({ traits: ["Air", "forced-movement"] })?.value], [true, "-2"]);
+  const unknown = save({});
+  assert("an unflagged save: offered unticked as vs forced movement", [unknown?.active, unknown?.name], [false, "Curse of the Sky's Call (vs forced movement)"]);
+  // The spell's Forces Movement box passes the trait to its save button
+  const gust = { _id: "g", name: "Gust of Wind", recordType: "spells", data: { traits: ["Air"], defense: { save: { statistic: "fortitude", forcedMovement: true } } } };
+  assert("a spell with Forces Movement: its save button passes forced-movement", ctx.getSpellSaveMacro(pc(), gust, { data: { dc: 20 } }).includes('"forced-movement"'), true);
+  const plainSpell = { ...gust, data: { ...gust.data, defense: { save: { statistic: "fortitude" } } } };
+  assert("unchanged without it", ctx.getSpellSaveMacro(pc(), plainSpell, { data: { dc: 20 } }).includes("forced-movement"), false);
+  // Rock Dwarf: half the distance, as a note on the Shove against it
+  const rockNote = { type: "rollNote", modifierType: "none", field: "forced-movement", active: true, valueType: "string", value: "Moved only half the distance (5 feet).", outcome: "criticalSuccess" };
+  const rockSave = { type: "saveBonus", modifierType: "circumstance", field: "all", active: true, valueType: "number", value: "2", predicate: '[{"or":["inflicts:prone","forced-movement"]}]' };
+  const dwarf = { ...pc({ fortitudeMod: 7, heritages: heritage("Rock Dwarf", [rockNote, rockSave]) }), _id: "dwarf", name: "Torgga" };
+  const realTargets = ctx.api.getTargets;
+  ctx.api.getTargets = () => [{ token: dwarf, distance: 5 }];
+  const shove = capturePrompt(() => ctx.performSkillAction(pc(), "athletics", "Shove")).metadata;
+  const note = (shove.notes || []).find((n) => n.text.startsWith("Moved only half"));
+  assert("Shove vs a Rock Dwarf: the note, for a critical success", [!!note, note?.outcome], [true, [2]]);
+  assert("the note shows on a critical success only", [ctx.getRollNotesText([note], 2).includes("Moved only half"), ctx.getRollNotesText([note], 1)], [true, ""]);
+  assert("Trip: no note", (capturePrompt(() => ctx.performSkillAction(pc(), "athletics", "Trip")).metadata.notes || []).length, 0);
+  ctx.api.getTargets = realTargets;
+  assert("the dwarf's own Athletics doesn't show it", (capturePrompt(() => ctx.rollSkill(dwarf, "athletics")).metadata.notes || []).length, 0);
+  const dwarfSave = capturePrompt(() => ctx.rollSave(dwarf, "reflex", 20, true, false, { traits: ["forced-movement"] })).modifiers.find((m) => m.name.startsWith("Rock Dwarf"));
+  assert("Rock Dwarf: +2 to a save against forced movement", dwarfSave?.active, true);
+}
+
+section("climbing (Shortshanks Hobgoblin)");
+{
+  const climbing = { _id: "cl", name: "Climbing", rules: [] };
+  const offGuard = { _id: "og", name: "Off-Guard", rules: [{ type: "armorClassPenalty-circumstance", field: "", valueType: "number", value: "2" }] };
+  const npc = (effects, data = {}) => ({ _id: "n", recordType: "npcs", data: { attributes: { ac: { value: 20 } }, ...data }, effects, effectIds: effects.map((e) => e._id) });
+  assert("climbing without a climb Speed: off-guard, AC 18", [ctx.isOffGuard(npc([climbing])), ctx.getArmorClassForToken(npc([climbing]))], [true, 18]);
+  assert("with a climb Speed: not", [ctx.isOffGuard(npc([climbing], { speeds: [{ data: { type: "climb", value: 20 } }] })), ctx.getArmorClassForToken(npc([climbing], { speeds: [{ data: { type: "climb", value: 20 } }] }))], [false, 20]);
+  assert("a character's climb Speed counts", ctx.isOffGuard({ ...pc({ otherSpeeds: { climb: 25 } }), effects: [climbing] }), false);
+  assert("climbing and flanked: still 18", ctx.getArmorClassForToken(npc([climbing]), true), 18);
+  assert("climbing and Off-Guard: still 18", ctx.getArmorClassForToken(npc([climbing, offGuard])), 18);
+  assert("unchanged: not climbing", [ctx.isOffGuard(npc([])), ctx.getArmorClassForToken(npc([]))], [false, 20]);
+  const shortshanks = { type: "offGuardPrevention", modifierType: "none", field: "climbing", active: true, valueType: "string", value: "all" };
+  const hobgoblin = (modifiers) => ({ ...pc({ ac: 20, heritages: heritage("Shortshanks Hobgoblin", modifiers) }), effects: [climbing], effectIds: ["cl"] });
+  assert("Shortshanks: not off-guard while climbing", [ctx.isOffGuard(hobgoblin([shortshanks])), ctx.getArmorClassForToken(hobgoblin([shortshanks]))], [false, 20]);
+  const denyAdvantage = { type: "offGuardPrevention", valueType: "string", value: "Character Level", active: true };
+  assert("a prevention with no field (Deny Advantage) doesn't cover climbing", ctx.isOffGuard(hobgoblin([denyAdvantage])), true);
+  // Sneak attack and the attack card see it
+  const realTargets = ctx.api.getTargets;
+  ctx.api.getTargets = () => [{ token: npc([climbing]), distance: 5 }];
+  const card = capturePrompt(() => ctx.performAttackRoll(pc({ inventory: [weapon("Rapier")] }), weapon("Rapier"), "data.inventory.0", 1)).metadata;
+  assert("attack card: off-guard, AC 18", [card.isOffGuard, card.dc], [true, 18]);
+  ctx.api.getTargets = realTargets;
+}
+
+section("reactions to movement (Blessed Swiftness)");
+{
+  const aura = (predicate) => ({ _id: "bs", name: "Blessed Swiftness", rules: [
+    { type: "armorClassBonus-status", field: "", valueType: "number", value: "2", data: { predicate } },
+    { type: "saveBonus-status", field: "reflex", valueType: "number", value: "2", data: { predicate } },
+  ] });
+  const ally = (effects, feats = []) => ({ ...pc({ ac: 20, feats }), effects, effectIds: effects.map((e) => e._id) });
+  const swift = ally([aura(["trigger:movement"])]);
+  assert("the aura's +2 isn't in AC", ctx.getArmorClassForToken(swift), 20);
+  assert("... it applies against a reaction to movement", ctx.getArmorClassForToken(swift, false, null, null, { trigger: "movement" }), 22);
+  const options = ctx.getTargetSituationalAcModifiers(swift);
+  assert("offered to the attacker unticked: -2", [options.length, options[0]?.value, options[0]?.active], [1, -2, false]);
+  assert("... named for the aura", options[0]?.name, "Target AC +2 (Blessed Swiftness, vs reaction to movement)");
+  assert("no aura: nothing offered", ctx.getTargetSituationalAcModifiers(ally([])), []);
+  const statusBonus = { _id: "sb", name: "Bulwark", rules: [{ type: "armorClassBonus-status", field: "", valueType: "number", value: "1" }] };
+  assert("a +1 status AC bonus already there: only +1 more", ctx.getTargetSituationalAcModifiers(ally([aura(["trigger:movement"]), statusBonus]))[0]?.value, -1);
+  // The old predicate, the feat's own name, never applied (effect rules are
+  // read before feature names become atoms), even against a reaction
+  const sameFeature = [feat("Blessed Swiftness", [])];
+  assert("old predicate: never on, even for an ally with the feature", ctx.getArmorClassForToken(ally([aura(["blessed-swiftness"])], sameFeature), false, null, null, { trigger: "movement" }), 20);
+  assert("new predicate: an ally with the feature still gets it only vs movement", [ctx.getArmorClassForToken(ally([aura(["trigger:movement"])], sameFeature)), ctx.getTargetSituationalAcModifiers(ally([aura(["trigger:movement"])], sameFeature)).length], [20, 1]);
+  const reflex = capturePrompt(() => ctx.rollSave(swift, "reflex")).modifiers.find((m) => m.name === "Blessed Swiftness");
+  assert("saves: offered unticked", reflex?.active, false);
+  // The attack prompt
+  const realTargets = ctx.api.getTargets;
+  ctx.api.getTargets = () => [{ token: swift, distance: 5 }];
+  const sword = weapon("Longsword");
+  const prompt = capturePrompt(() => ctx.performAttackRoll(pc({ inventory: [sword] }), sword, "data.inventory.0", 1));
+  const line = prompt.modifiers.find((m) => m.name.startsWith("Target AC +2"));
+  assert("Strike prompt: the unticked -2, AC as written", [line?.value, line?.active, prompt.metadata.dc], [-2, false, 20]);
+  ctx.api.getTargets = () => [{ token: ally([]), distance: 5 }];
+  assert("unchanged: no line without the aura", capturePrompt(() => ctx.performAttackRoll(pc({ inventory: [sword] }), sword, "data.inventory.0", 1)).modifiers.some((m) => m.name.startsWith("Target AC")), false);
+  ctx.api.getTargets = realTargets;
+  // Mounted: the champion's Speed bonus stops, by the toggle or the Mounted effect
+  const speedFor = (extra) => {
+    const blessed = { ...feat("Blessed Swiftness", [{ type: "speedBonus", modifierType: "status", field: "", active: true, valueType: "number", value: "5", slug: "blessed-swiftness", predicate: '[{"not":"self:mounted"},{"not":"self:effect:mounted"}]' }]), data: { type: "class", level: 1, toggleOptions: [{ name: "Mounted", data: { predicateValue: "self:mounted" } }], modifiers: [{ data: { type: "speedBonus", modifierType: "status", field: "", active: true, valueType: "number", value: "5", slug: "blessed-swiftness", predicate: '[{"not":"self:mounted"},{"not":"self:effect:mounted"}]' } }] } };
+    const record = { ...pc({ feats: [blessed], toggles: extra.toggles || [] }), ...(extra.effects ? { effects: extra.effects, effectIds: extra.effectIds } : {}) };
+    const written = {};
+    ctx.updateAttribute({ record, attribute: "str", value: 2, moreValuesToSet: written });
+    return written["data.speed"] ?? record.data.speed;
+  };
+  assert("on foot: +5", speedFor({}), "30 feet");
+  assert("Mounted toggle on: no bonus", speedFor({ toggles: [{ name: "Blessed Swiftness: Mounted", data: { predicateValue: "self:mounted", toggled: true } }] }), "25 feet");
+  assert("the Mounted effect: no bonus", speedFor({ effects: [{ _id: "m", name: "Mounted", rules: [] }], effectIds: ["m"] }), "25 feet");
+}
+
+section("Rage temporary HP and Superstition Instinct");
+{
+  const rage = { _id: "rage", name: "Rage", recordType: "actions", data: { actionType: "action", actions: "oneAction", traits: ["Barbarian", "Concentrate", "Emotion", "Mental"], level: 1, description: "<p>You rage.</p>",
+    modifiers: [{ data: { type: "actionTempHp", modifierType: "none", field: "", active: true, valueType: "string", value: "@actor.level+@actor.abilities.con.mod", predicate: '["action:rage",{"not":"self:effect:rage-temporary-hit-points-immunity"}]' } }] } };
+  const superstition = feat("Superstition Instinct", [
+    { type: "actionHealing", modifierType: "none", field: "Superstitious Resilience (Used)", active: true, valueType: "string", value: "@tempHp", predicate: '["action:rage",{"not":"self:effect:superstitious-resilience-used"}]' },
+    { type: "onMagicAccepted", modifierType: "none", field: "", active: true, valueType: "string", value: "frightened:1", predicate: '["self:effect:rage"]' },
+  ]);
+  const barbarian = (feats, effects = []) => ({ ...pc({ con: 3, feats, actions: [rage], curhp: 10, hitpoints: 60 }), effects, effectIds: effects.map((e) => e._id) });
+  const macros = (creature, action = rage) => {
+    const saved = ctx.record;
+    ctx.record = creature;
+    try {
+      return ctx.getActionHealingMacros(action);
+    } finally {
+      ctx.record = saved;
+    }
+  };
+  const both = macros(barbarian([superstition]));
+  assert("Rage: temporary HP level + Con (8), and Superstition heals the same", [both.includes("applyActionTemporaryHitPoints(8, \"Rage\")"), both.includes("applyActionHealing(8, \"Superstition Instinct\", [\"Superstitious Resilience (Used)\"])")], [true, true]);
+  const immune = macros(barbarian([superstition], [{ _id: "im", name: "Rage Temporary Hit Points Immunity", rules: [] }]));
+  assert("no temporary HP from Rage: nothing to regain either", immune, "");
+  const cooling = macros(barbarian([superstition], [{ _id: "cd", name: "Superstitious Resilience (Used)", rules: [] }]));
+  assert("within 10 minutes: temporary HP only", [cooling.includes("Apply_Temporary_HP_8"), cooling.includes("Apply_Healing")], [true, false]);
+  assert("another barbarian: temporary HP only", macros(barbarian([])).includes("Apply_Healing"), false);
+  assert("another action: no buttons", macros(barbarian([superstition]), { _id: "s", name: "Stride", data: {} }), "");
+  // useAction puts them on the card
+  ctx.__state.messages = [];
+  const savedRecord = ctx.record;
+  ctx.record = barbarian([superstition]);
+  ctx.api.richTextToMarkdown = (text) => text;
+  ctx.useAction(rage);
+  delete ctx.api.richTextToMarkdown;
+  ctx.record = savedRecord;
+  assert("the Rage card has both buttons", [ctx.__state.messages[0].includes("Apply_Temporary_HP_8"), ctx.__state.messages[0].includes("Apply_Healing_8")], [true, true]);
+  // The buttons
+  const token = { ...barbarian([superstition]), _id: "tok", recordType: "characters" };
+  const saved = { sel: ctx.api.getSelectedOrDroppedToken, setOn: ctx.api.setValueOnToken, prompt: ctx.api.showPrompt, add: ctx.api.addEffect, addAll: ctx.api.addEffects, byId: ctx.api.addEffectById };
+  const calls = [];
+  ctx.api.getSelectedOrDroppedToken = () => [token];
+  ctx.api.setValueOnToken = (t, path, value) => calls.push([path, value]);
+  ctx.api.addEffect = (name) => calls.push(["effect", name]);
+  ctx.api.addEffects = (names) => calls.push(["effects", names]);
+  ctx.api.addEffectById = (id) => calls.push(["effectById", id]);
+  ctx.applyActionTemporaryHitPoints(8, "Rage");
+  assert("Apply temporary HP", calls[0], ["data.tempHp", 8]);
+  ctx.__state.lastSet = null;
+  calls.length = 0;
+  ctx.applyActionHealing(8, "Superstition Instinct", ["Superstitious Resilience (Used)"]);
+  assert("Apply healing: 10 -> 18 HP, and the cooldown", [ctx.__state.lastSet?.["data.curhp"], calls[0]], [18, ["effect", "Superstitious Resilience (Used)"]]);
+  // Accepting magic while raging
+  let prompted = null;
+  ctx.api.showPrompt = (title, message, placeholder, options, query, onSelect) => (prompted = { title, onSelect });
+  const raging = { ...barbarian([superstition], [{ _id: "rg", name: "Rage", rules: [] }]), _id: "tok" };
+  ctx.__state.lastSet = null;
+  calls.length = 0;
+  ctx.applyHealingToToken(raging, 5, { isSpell: true, source: "Heal" });
+  assert("magical healing while raging: asked first, nothing applied yet", [prompted?.title, ctx.__state.lastSet], ["Accept the Magic?", null]);
+  prompted.onSelect("decline");
+  assert("declined: nothing", [ctx.__state.lastSet, calls.length], [null, 0]);
+  prompted.onSelect("accept");
+  assert("accepted: healed and frightened 1", [ctx.__state.lastSet?.["data.curhp"], calls[0]], [15, ["effects", ["Frightened"]]]);
+  prompted = null;
+  ctx.__state.lastSet = null;
+  ctx.applyHealingToToken(raging, 5, { source: "Treat Wounds" });
+  assert("non-magical healing: no question", [prompted, ctx.__state.lastSet?.["data.curhp"]], [null, 15]);
+  ctx.__state.lastSet = null;
+  ctx.applyHealingToToken({ ...barbarian([superstition]), _id: "tok" }, 5, { isSpell: true });
+  assert("not raging: no question", [prompted, ctx.__state.lastSet?.["data.curhp"]], [null, 15]);
+  // A lasting magical effect from an action's Apply button: frightened can't drop below 1 while it lasts
+  calls.length = 0;
+  ctx.applyEffectButton("bless", "Bless", raging, undefined, 1, true);
+  prompted.onSelect("accept");
+  assert("accepted effect: applied, frightened 1, floor while it lasts", calls, [["effectById", "bless"], ["effects", ["Frightened"]], ["data.frightenedFloors", [{ effectId: "bless", value: 1 }]]]);
+  const withFloor = (effects) => ({ ...raging, effects, data: { ...raging.data, frightenedFloors: [{ effectId: "bless", value: 1 }] } });
+  assert("the floor holds while the effect lasts", ctx.getFrightenedFloor(withFloor([{ _id: "bless", name: "Bless" }])), 1);
+  assert("... and goes with it", ctx.getFrightenedFloor(withFloor([])), 0);
+  prompted = null;
+  calls.length = 0;
+  ctx.applyEffectButton("bless", "Bless", raging, undefined, 1, false);
+  assert("unchanged: a non-magical button applies at once", [prompted, calls[0]], [null, ["effectById", "bless"]]);
+  assert("an action's magical traits mark its buttons", ctx.getEffectMacrosFor([JSON.stringify({ _id: "b", name: "Bless" })], "", true).includes(", 1, true);"), true);
+  assert("unchanged: other actions' buttons", ctx.getEffectMacrosFor([JSON.stringify({ _id: "b", name: "Bless" })], "").includes(", 1);"), true);
+  Object.assign(ctx.api, { getSelectedOrDroppedToken: saved.sel, setValueOnToken: saved.setOn, showPrompt: saved.prompt, addEffect: saved.add, addEffects: saved.addAll, addEffectById: saved.byId });
 }
 
 process.exitCode = summary();

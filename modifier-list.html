@@ -83,7 +83,25 @@
       showActiveEffectField = true;
     } else if (typeValue === "speedBonus" || typeValue === "speedPenalty") {
       // Flat speed adjustment (e.g., Nimble Elf +5 status bonus to Speed).
-      // Field: empty for land Speed, or fly/swim/climb/burrow
+      // Field: empty for land Speed, fly/swim/climb/burrow, or all-speeds
+      // for every Speed
+      showFieldField = true;
+    } else if (
+      typeValue === "creatureSize" ||
+      typeValue === "extraLanguages" ||
+      typeValue === "actionTempHp" ||
+      typeValue === "onMagicAccepted"
+    ) {
+      // Creature Size value: tiny, small, medium, large, huge or gargantuan.
+      // Extra Languages value: the language slots added. Action Temporary
+      // Hit Points value: the amount (@actor.level+@actor.abilities.con.mod),
+      // predicated on the action (action:rage). Condition When Accepting
+      // Magic value: the condition and its value (frightened:1).
+      showFieldField = false;
+    } else if (typeValue === "actionHealing") {
+      // Value: Hit Points regained when the action is used (@tempHp, the
+      // same action's temporary Hit Points). Field: an effect the Apply
+      // button adds too, such as a cooldown (optional).
       showFieldField = true;
     } else if (typeValue === "speed") {
       // Grants a movement type: field fly/swim/climb/burrow, value feet or
@@ -315,7 +333,12 @@
       {"label": "Roll Note", "value": "rollNote"},
       {"label": "Add Sense", "value": "sense"},
       {"label": "Add Low-Light or Darkvision", "value": "lowLightDarkvision"},
-      {"label": "Add Trait", "value": "trait"},
+      {"label": "Add Trait (or -trait to Remove)", "value": "trait"},
+      {"label": "Creature Size", "value": "creatureSize"},
+      {"label": "Extra Languages", "value": "extraLanguages"},
+      {"label": "Action Temporary Hit Points", "value": "actionTempHp"},
+      {"label": "Action Healing", "value": "actionHealing"},
+      {"label": "Condition When Accepting Magic", "value": "onMagicAccepted"},
       {"label": "Initiative Bonus", "value": "initiativeBonus"},
       {"label": "Initiative Penalty", "value": "initiativePenalty"},
       {"label": "Perception Bonus", "value": "perceptionBonus"},

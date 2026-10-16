@@ -1052,6 +1052,12 @@ function getSpellSaveMacro(record, spell, spellCastingEntry, dataPathToSpell) {
   const sourceTraits = [...(spell?.data?.traits || [])];
   const tradition = spellCastingEntry?.data?.tradition;
   if (tradition) sourceTraits.push(tradition);
+  // A spell that forces the target to move (the spell's "Forces Movement"
+  // box): saves against forced movement apply (Sky's Call, Rock Dwarf)
+  const forcesMovement = spell?.data?.defense?.save?.forcedMovement;
+  if (forcesMovement === true || forcesMovement === "true") {
+    sourceTraits.push("forced-movement");
+  }
   return getSaveMacro(saveType, saveDC, true, true, sourceTraits);
 }
 
@@ -1278,15 +1284,23 @@ api.getRecord('${record.recordType}', '${record._id}', (record) => {
   
       // Calculate target DC using proper functions
       let targetDC = 10;
+      // AC against us: modifiers that only apply against this attacker
+      // (Outwit) are named on the card
+      const acReasons = [];
       if (${isAC}) {
-        targetDC = getArmorClassForToken(targetToken, targetIsOffGuardDueToFlanking);
+        targetDC = getArmorClassForToken(targetToken, targetIsOffGuardDueToFlanking, ourToken, acReasons);
       } else {
         targetDC = getSaveDCForToken(targetToken, "${saveType}");
       }
   
       // Get attack modifiers from effects on the target
       const targetEffects = getAttackModifiersForTarget(targetToken, targetDistance);
-      const targetModifiers = [...modifiers, ...targetEffects];
+      // AC bonuses only against a reaction to the target's movement
+      // (Blessed Swiftness): unticked
+      const situationalAc = ${isAC}
+        ? getTargetSituationalAcModifiers(targetToken, ourToken, targetIsOffGuardDueToFlanking)
+        : [];
+      const targetModifiers = [...modifiers, ...targetEffects, ...situationalAc];
   
       const targetName = targetToken?.identified === false ? targetRecord?.unidentifiedName : targetRecord?.name;
   
@@ -1300,7 +1314,7 @@ api.getRecord('${record.recordType}', '${record._id}', (record) => {
         isMelee: ${isMelee},
         isRanged: ${!isMelee},
         dc: targetDC,
-        dcName: "${dcDescription}",
+        dcName: acReasons.length > 0 ? "${dcDescription} (" + [...new Set(acReasons)].join(", ") + ")" : "${dcDescription}",
         targetName: targetName,
         isOffGuard: targetIsOffGuard,
         tokenId: ourToken?._id,
