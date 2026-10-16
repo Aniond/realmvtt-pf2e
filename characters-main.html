@@ -1026,21 +1026,22 @@ ${getLevelUpSummary(gains)}`,
     const valuesToSet = {};
 
     // Add HP per resting rules
-    // - The character regains Hit Points equal to their Constitution modifier (minimum 1) multiplied by their level.
-    const level = record.data?.level || 0;
-    const constitution = record.data?.con || 0;
-    const constitutionModifier = Math.max(1, constitution);
+    // - The character regains Hit Points equal to their Constitution modifier (minimum 1) multiplied by their level,
+    //   plus restHealing modifiers (Hillock Halfling adds the level) (dying.js)
     const curHp = record.data?.curhp || 0;
     const maxHp = record.data?.hitpoints || 0;
 
-    const healedBy = Math.max(1, constitutionModifier * level);
+    const restHealing = getRestHealing(record);
+    const healedBy = restHealing.amount;
     const newHp = Math.min(curHp + healedBy, maxHp);
 
     valuesToSet["data.curhp"] = newHp;
 
     let message = `Resting for the day.`;
     if (healedBy > 0) {
-      message += ` Recovered ${healedBy} HP.`;
+      const added =
+        restHealing.names.length > 0 ? ` (${restHealing.names.join(", ")})` : "";
+      message += ` Recovered ${healedBy} HP${added}.`;
     }
 
     // Waking from a knockout, the wounded condition gone at full Hit Points,

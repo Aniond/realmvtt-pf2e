@@ -190,3 +190,6 @@ ${macro}`
     api.sendMessage(summary);
   }
 }
+
+// The encounter is over: encounter predicates no longer hold
+setEncounterState([], 0);

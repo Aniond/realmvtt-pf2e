@@ -30,6 +30,8 @@
     let showAdjustModifierField = false;
     let showActiveEffectField = false;
     let showRollOptionField = false;
+    let showIWRField = false;
+    let showRollNoteField = false;
 
     if (typeValue === "attributeBonus") {
       showAttributeField = true;
@@ -81,7 +83,25 @@
       showActiveEffectField = true;
     } else if (typeValue === "speedBonus" || typeValue === "speedPenalty") {
       // Flat speed adjustment (e.g., Nimble Elf +5 status bonus to Speed).
-      // Field: empty for land Speed, or fly/swim/climb/burrow
+      // Field: empty for land Speed, fly/swim/climb/burrow, or all-speeds
+      // for every Speed
+      showFieldField = true;
+    } else if (
+      typeValue === "creatureSize" ||
+      typeValue === "extraLanguages" ||
+      typeValue === "actionTempHp" ||
+      typeValue === "onMagicAccepted"
+    ) {
+      // Creature Size value: tiny, small, medium, large, huge or gargantuan.
+      // Extra Languages value: the language slots added. Action Temporary
+      // Hit Points value: the amount (@actor.level+@actor.abilities.con.mod),
+      // predicated on the action (action:rage). Condition When Accepting
+      // Magic value: the condition and its value (frightened:1).
+      showFieldField = false;
+    } else if (typeValue === "actionHealing") {
+      // Value: Hit Points regained when the action is used (@tempHp, the
+      // same action's temporary Hit Points). Field: an effect the Apply
+      // button adds too, such as a cooldown (optional).
       showFieldField = true;
     } else if (typeValue === "speed") {
       // Grants a movement type: field fly/swim/climb/burrow, value feet or
@@ -95,6 +115,9 @@
       typeValue === "recoveryDC" ||
       typeValue === "weaponRange" ||
       typeValue === "weaponRune" ||
+      typeValue === "weaponDamageType" ||
+      typeValue === "weaponMaterial" ||
+      typeValue === "spellDamageType" ||
       typeValue === "rangeIncrementPenalty" ||
       typeValue === "offGuardTarget"
     ) {
@@ -105,6 +128,10 @@
       showFieldField = true;
     } else if (typeValue === "bulkLimit") {
       showFieldField = false;
+    } else if (typeValue === "conditionGain") {
+      // Field: the condition's name, as its effect is named (Frightened).
+      // Value: the change to a value gained (-1)
+      showFieldField = true;
     } else if (typeValue === "weaponProficiency") {
       // Weapon proficiency uses predicate to match weapons, value is the rank (1=trained, 2=expert, etc.)
       showFieldField = false;
@@ -114,6 +141,38 @@
       showFieldField = false;
       showValueField = false;
       showRollOptionField = true;
+    } else if (
+      typeValue === "resistance" ||
+      typeValue === "weakness" ||
+      typeValue === "immunity"
+    ) {
+      // Field: the damage type (Physical is bludgeoning, piercing and
+      // slashing). Exceptions and definition read where the damage comes from.
+      showIWRField = true;
+    } else if (typeValue === "suppressIWR") {
+      // Field: immunity, resistance, weakness, all, or empty for immunity and
+      // resistance. Value: the damage types, comma-separated (vitality,void)
+      showFieldField = true;
+    } else if (typeValue === "persistentRecoveryDC") {
+      // Field: the persistent damage type (fire), or empty for all. Value:
+      // the DC (10), or a change to it (-5)
+      showFieldField = true;
+    } else if (typeValue === "harmedBy" || typeValue === "restHealing") {
+      // Harmed By value: vitality or void. Overnight Rest Healing value: the
+      // Hit Points added (@actor.level)
+      showFieldField = false;
+    } else if (
+      typeValue === "voidHealing" ||
+      typeValue === "maximizeHealing"
+    ) {
+      // No field or value; gate with the predicate (item:slug:...)
+      showFieldField = false;
+      showValueField = false;
+    } else if (typeValue === "rollNote") {
+      // Field: the roll (will, saving-throw, athletics, skill-check,
+      // attack-roll). Value: the note's text.
+      showFieldField = true;
+      showRollNoteField = true;
     }
 
     // Critical-hit-only applies to damage riders
@@ -173,6 +232,12 @@
     if (modifier.fields?.rollOptionBox?.hidden !== !showRollOptionField) {
       valuesToSet[`${modPath}.fields.rollOptionBox.hidden`] =
         !showRollOptionField;
+    }
+    if (modifier.fields?.iwrBox?.hidden !== !showIWRField) {
+      valuesToSet[`${modPath}.fields.iwrBox.hidden`] = !showIWRField;
+    }
+    if (modifier.fields?.rollNoteBox?.hidden !== !showRollNoteField) {
+      valuesToSet[`${modPath}.fields.rollNoteBox.hidden`] = !showRollNoteField;
     }
 
     if (Object.keys(valuesToSet).length > 0) {
@@ -243,6 +308,8 @@
       {"label": "Recovery Check DC", "value": "recoveryDC"},
       {"label": "Weapon Range Increment", "value": "weaponRange"},
       {"label": "Add Weapon Property Rune", "value": "weaponRune"},
+      {"label": "Weapon Damage Type", "value": "weaponDamageType"},
+      {"label": "Weapon Counts As Material", "value": "weaponMaterial"},
       {"label": "Range Increment Penalty", "value": "rangeIncrementPenalty"},
       {"label": "Target Is Off-Guard To You", "value": "offGuardTarget"},
       {"label": "Roll Twice (Fortune / Misfortune)", "value": "rollTwice"},
@@ -251,13 +318,27 @@
       {"label": "Healing Received Bonus", "value": "healingReceivedBonus"},
       {"label": "Healing Received Penalty", "value": "healingReceivedPenalty"},
       {"label": "Bulk Limit", "value": "bulkLimit"},
+      {"label": "Condition Gained Value", "value": "conditionGain"},
       {"label": "Spell Die Size", "value": "spellDieSize"},
+      {"label": "Spell Damage Type", "value": "spellDamageType"},
       {"label": "Add Resistance", "value": "resistance"},
       {"label": "Add Weakness", "value": "weakness"},
       {"label": "Add Immunity", "value": "immunity"},
+      {"label": "Suppress Immunity, Resistance or Weakness", "value": "suppressIWR"},
+      {"label": "Harmed By (Vitality or Void)", "value": "harmedBy"},
+      {"label": "Void Healing", "value": "voidHealing"},
+      {"label": "Persistent Damage Recovery DC", "value": "persistentRecoveryDC"},
+      {"label": "Maximize Healing Dice", "value": "maximizeHealing"},
+      {"label": "Overnight Rest Healing", "value": "restHealing"},
+      {"label": "Roll Note", "value": "rollNote"},
       {"label": "Add Sense", "value": "sense"},
       {"label": "Add Low-Light or Darkvision", "value": "lowLightDarkvision"},
-      {"label": "Add Trait", "value": "trait"},
+      {"label": "Add Trait (or -trait to Remove)", "value": "trait"},
+      {"label": "Creature Size", "value": "creatureSize"},
+      {"label": "Extra Languages", "value": "extraLanguages"},
+      {"label": "Action Temporary Hit Points", "value": "actionTempHp"},
+      {"label": "Action Healing", "value": "actionHealing"},
+      {"label": "Condition When Accepting Magic", "value": "onMagicAccepted"},
       {"label": "Initiative Bonus", "value": "initiativeBonus"},
       {"label": "Initiative Penalty", "value": "initiativePenalty"},
       {"label": "Perception Bonus", "value": "perceptionBonus"},
@@ -549,6 +630,14 @@
       {"label": "Override (replace value)", "value": "override"},
       {"label": "Multiply (multiply values)", "value": "multiply"}]'
   ></dropdown>
+
+  <stringfield
+    width="100%"
+    size="xs"
+    field="damageType"
+    label="Change Damage Type To"
+    placeholder="Optional: the damage type the adjusted modifier deals instead (spirit)"
+  ></stringfield>
 </box>
 
 <box field="activeEffectBox" hidden="true">
@@ -591,6 +680,35 @@
     field="option"
     label="Option (Trait to Add)"
     placeholder="Enter trait to add when predicate passes (e.g., junction:air:impulse)"
+  ></stringfield>
+</box>
+
+<box field="iwrBox" hidden="true">
+  <stringfield
+    width="100%"
+    size="xs"
+    field="exceptions"
+    label="Exceptions"
+    placeholder='Optional: damage types, traits or materials (force, adamantine), or [{"definition":["item:category:unarmed"]}]'
+  ></stringfield>
+
+  <stringfield
+    width="100%"
+    size="xs"
+    field="definition"
+    label="Applies Only To (Definition)"
+    placeholder='Optional predicate on the damage source, e.g. ["origin:mode:undead"] or ["item:type:spell","item:trait:arcane"]'
+    multiline="true"
+  ></stringfield>
+</box>
+
+<box field="rollNoteBox" hidden="true">
+  <stringfield
+    width="100%"
+    size="xs"
+    field="outcome"
+    label="Show On Outcomes"
+    placeholder="Optional: criticalSuccess, success, failure, criticalFailure (empty = all)"
   ></stringfield>
 </box>
 

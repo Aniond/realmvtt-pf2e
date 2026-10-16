@@ -439,6 +439,31 @@ function getCastingRank(record, spell, dataPathToSpell) {
   return castingRank;
 }
 
+// The rank a spell is cast at and whether it is cast from a spell slot (a
+// prepared or spontaneous spell, not a cantrip), as the predicate context of
+// its damage and healing rolls: Foundry's @spell.level and item:spell-slot
+// (Sorcerous Potency)
+function getSpellCastContext(record, spell, dataPathToSpell) {
+  const path = String(dataPathToSpell || "");
+  if (!path) return {};
+  let entryPath = getNearestParentDataPath(path);
+  // An overlay's parent is its spell; the entry is one more up
+  if (/\.data\.overlays\.\d+$/.test(path)) {
+    entryPath = getNearestParentDataPath(entryPath);
+  }
+  const entry = api.getValueOnRecord(record, entryPath);
+  const isCantrip =
+    /\.cantrips\.\d+/.test(path) ||
+    (spell?.data?.traits || []).some(
+      (trait) => String(trait).toLowerCase() === "cantrip"
+    );
+  const type = entry?.data?.type;
+  return {
+    castRank: getCastingRank(record, spell, path),
+    spellSlot: (type === "prepared" || type === "spontaneous") && !isCantrip,
+  };
+}
+
 function getSpellHeighteningInfo(spell, castingRank) {
   const heightening = spell?.data?.heightening || [];
   const baseRank = spell?.data?.level || 1;
@@ -810,7 +835,7 @@ function isVitalityDualKindSpell(spell) {
   return hasDualKind;
 }
 
-function getSpellDamageMacro(record, spell, dataPathToSpell) {
+function getSpellDamageMacro(record, spell, dataPathToSpell, tradition = "") {
   const spellName = spell?.name || "Unknown Spell";
   const spellDamage = calculateSpellDamage(record, spell, dataPathToSpell);
 
@@ -880,7 +905,7 @@ api.getRecord('${record.recordType}', '${record._id}', (record) => {
     "",
     undefined,
     undefined,
-    { spell }
+    { spell, ...${JSON.stringify(getSpellCastContext(record, spell, dataPathToSpell))} }
   );
 
   let damage = "${spellDamage.damageString}";
@@ -943,6 +968,8 @@ api.getRecord('${record.recordType}', '${record._id}', (record) => {
       attack: "${spellName}",
       icon: "IconWand",
       portrait: ${JSON.stringify(spell?.portrait || "")},
+      // The spell and its casting tradition, for resistances to spells
+      damageSource: getDamageSource(record, spell, ${JSON.stringify(tradition)}),
     },
     "damage"
   );
@@ -975,7 +1002,7 @@ api.getRecord('${record.recordType}', '${record._id}', (record) => {
     "",
     undefined,
     undefined,
-    { spell }
+    { spell, ...${JSON.stringify(getSpellCastContext(record, spell, dataPathToSpell))} }
   );
 
   const healing = "${spellEffect.healingString}";
@@ -1025,6 +1052,12 @@ function getSpellSaveMacro(record, spell, spellCastingEntry, dataPathToSpell) {
   const sourceTraits = [...(spell?.data?.traits || [])];
   const tradition = spellCastingEntry?.data?.tradition;
   if (tradition) sourceTraits.push(tradition);
+  // A spell that forces the target to move (the spell's "Forces Movement"
+  // box): saves against forced movement apply (Sky's Call, Rock Dwarf)
+  const forcesMovement = spell?.data?.defense?.save?.forcedMovement;
+  if (forcesMovement === true || forcesMovement === "true") {
+    sourceTraits.push("forced-movement");
+  }
   return getSaveMacro(saveType, saveDC, true, true, sourceTraits);
 }
 
@@ -1132,7 +1165,7 @@ api.getRecord('${record.recordType}', '${record._id}', (record) => {
     "",
     undefined,
     undefined,
-    { spell }
+    { spell, ...${JSON.stringify(getSpellCastContext(record, spell, dataPathToSpell))} }
   );
   
   const modifiers = [
@@ -1212,6 +1245,7 @@ api.getRecord('${record.recordType}', '${record._id}', (record) => {
       animation: ${JSON.stringify(animation)},
       isVitalityDual: ${isVitalityDual},
       criticalOnlyDice: criticalOnlyDice,
+      damageSource: getDamageSource(record, spell, ${JSON.stringify(spellCastingEntry?.data?.tradition || "")}),
     };
   
     api.promptRoll(
@@ -1250,15 +1284,23 @@ api.getRecord('${record.recordType}', '${record._id}', (record) => {
   
       // Calculate target DC using proper functions
       let targetDC = 10;
+      // AC against us: modifiers that only apply against this attacker
+      // (Outwit) are named on the card
+      const acReasons = [];
       if (${isAC}) {
-        targetDC = getArmorClassForToken(targetToken, targetIsOffGuardDueToFlanking);
+        targetDC = getArmorClassForToken(targetToken, targetIsOffGuardDueToFlanking, ourToken, acReasons);
       } else {
         targetDC = getSaveDCForToken(targetToken, "${saveType}");
       }
   
       // Get attack modifiers from effects on the target
       const targetEffects = getAttackModifiersForTarget(targetToken, targetDistance);
-      const targetModifiers = [...modifiers, ...targetEffects];
+      // AC bonuses only against a reaction to the target's movement
+      // (Blessed Swiftness): unticked
+      const situationalAc = ${isAC}
+        ? getTargetSituationalAcModifiers(targetToken, ourToken, targetIsOffGuardDueToFlanking)
+        : [];
+      const targetModifiers = [...modifiers, ...targetEffects, ...situationalAc];
   
       const targetName = targetToken?.identified === false ? targetRecord?.unidentifiedName : targetRecord?.name;
   
@@ -1272,7 +1314,7 @@ api.getRecord('${record.recordType}', '${record._id}', (record) => {
         isMelee: ${isMelee},
         isRanged: ${!isMelee},
         dc: targetDC,
-        dcName: "${dcDescription}",
+        dcName: acReasons.length > 0 ? "${dcDescription} (" + [...new Set(acReasons)].join(", ") + ")" : "${dcDescription}",
         targetName: targetName,
         isOffGuard: targetIsOffGuard,
         tokenId: ourToken?._id,
@@ -1289,6 +1331,7 @@ api.getRecord('${record.recordType}', '${record._id}', (record) => {
         animation: ${JSON.stringify(animation)},
         isVitalityDual: ${isVitalityDual},
         criticalOnlyDice: criticalOnlyDice,
+        damageSource: getDamageSource(record, spell, ${JSON.stringify(spellCastingEntry?.data?.tradition || "")}),
       };
   
       api.promptRoll(
@@ -1305,6 +1348,8 @@ api.getRecord('${record.recordType}', '${record._id}', (record) => {
 }
 
 function castSpell(record, spell, dataPathToSpell, isOverlay = false) {
+  // spellDamageType modifiers can change the damage type for this casting
+  spell = getAlteredSpell(record, spell);
   const isCantrip = (spell?.data?.traits || []).some(
     (trait) => trait?.toLowerCase() === "cantrip"
   );
@@ -1497,7 +1542,12 @@ function castSpell(record, spell, dataPathToSpell, isOverlay = false) {
 
   const spellDescription = updateDamageMacros(
     api.richTextToMarkdown(spell?.data?.description || ""),
-    { item: spell, level: castingRank }
+    {
+      item: spell,
+      level: castingRank,
+      creature: record,
+      tradition: spellCastingEntry?.data?.tradition || "",
+    }
   );
 
   let portrait = spell?.portrait
@@ -1573,7 +1623,12 @@ function castSpell(record, spell, dataPathToSpell, isOverlay = false) {
       macros.push(saveMacro);
 
       // Add damage macro for saving throw spells
-      const damageMacro = getSpellDamageMacro(record, spell, dataPathToSpell);
+      const damageMacro = getSpellDamageMacro(
+        record,
+        spell,
+        dataPathToSpell,
+        spellCastingEntry?.data?.tradition || ""
+      );
       if (damageMacro) {
         macros.push(damageMacro);
       }
@@ -1582,7 +1637,12 @@ function castSpell(record, spell, dataPathToSpell, isOverlay = false) {
 
   // Add damage/healing macros even if no defense (for spells that just do damage/healing)
   if (!defense || (!defense.passive && !defense.save)) {
-    const damageMacro = getSpellDamageMacro(record, spell, dataPathToSpell);
+    const damageMacro = getSpellDamageMacro(
+      record,
+      spell,
+      dataPathToSpell,
+      spellCastingEntry?.data?.tradition || ""
+    );
     if (damageMacro) {
       macros.push(damageMacro);
     }
