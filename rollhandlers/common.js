@@ -9402,6 +9402,58 @@ function activateSneakAttackIfConditionsMet(
   });
 }
 
+/**
+ * Once the target is known to be off-guard (from its conditions or from
+ * flanking, which the target's effects don't show): activate modifiers whose
+ * predicate needs target:condition:off-guard, and add the backstabber trait's
+ * precision damage (1, or 2 with a +3 potency rune).
+ */
+function applyTargetOffGuardDamage(record, modifiers, weapon, target, targetIsOffGuard) {
+  if (!targetIsOffGuard) return modifiers;
+  let result = modifiers;
+  const needsOffGuard = (mod) =>
+    typeof mod.predicate === "string" &&
+    /target:(condition|effect):off-guard/.test(mod.predicate);
+  if (result.some((mod) => !mod.active && needsOffGuard(mod))) {
+    const traits = collectTraitsAndProperties(record, {
+      weapon,
+      targets: target ? [target] : [],
+    });
+    traits.add("target:condition:off-guard");
+    traits.add("target:effect:off-guard");
+    result = result.map((mod) => {
+      if (mod.active || !needsOffGuard(mod)) return mod;
+      const passes = evaluateEffectPredicate(
+        parseModifierPredicate(mod.predicate),
+        traits,
+        record,
+        { weapon, targets: target ? [target] : [] },
+      );
+      return passes
+        ? { ...mod, active: true, name: mod.name.replace(/\s*\(target off guard\)$/i, "") }
+        : mod;
+    });
+  }
+  const weaponTraits = (weapon?.data?.traits || []).map((t) =>
+    String(typeof t === "string" ? t : t?.name || "").toLowerCase(),
+  );
+  if (weaponTraits.includes("backstabber")) {
+    const potency = parseInt(weapon?.data?.runes?.potency || "0", 10) || 0;
+    result = [
+      ...result,
+      {
+        name: "Backstabber",
+        value: `${potency >= 3 ? 2 : 1}`,
+        valueType: "string",
+        active: true,
+        type: "",
+        precisionDamage: true,
+      },
+    ];
+  }
+  return result;
+}
+
 function collectFeatures(record) {
   // Collect all features from ancestries, heritages, classes, feats, and inventory
   const features = [];
@@ -11016,9 +11068,15 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber = 1) {
       }
 
       // Activate sneak attack modifiers if conditions are met
-      const finalDamageModifiers = activateSneakAttackIfConditionsMet(
-        allDamageModifiers,
+      const finalDamageModifiers = applyTargetOffGuardDamage(
+        record,
+        activateSneakAttackIfConditionsMet(
+          allDamageModifiers,
+          weapon,
+          targetIsOffGuard,
+        ),
         weapon,
+        target,
         targetIsOffGuard,
       );
 
@@ -11764,9 +11822,15 @@ function performDamageRoll(record, weapon, weaponDataPath, isCritical) {
   }
 
   // Activate sneak attack modifiers if conditions are met
-  const finalDamageModifiers = activateSneakAttackIfConditionsMet(
-    filteredDamageModifiers,
+  const finalDamageModifiers = applyTargetOffGuardDamage(
+    record,
+    activateSneakAttackIfConditionsMet(
+      filteredDamageModifiers,
+      weapon,
+      targetIsOffGuard,
+    ),
     weapon,
+    targets.length === 1 ? targets[0] : undefined,
     targetIsOffGuard,
   );
 

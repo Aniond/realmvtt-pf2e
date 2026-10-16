@@ -494,4 +494,24 @@ section("smaller engine fixes");
   assert("third attack reduced by 2", reduce(3), 2);
 }
 
+section("off-guard targets: backstabber and off-guard predicates");
+{
+  const dagger = weapon("Dagger", { traits: ["agile", "finesse", "backstabber"], group: "knife", damage: { dice: 1, die: "d4", damageType: "piercing" } });
+  const ambush = feat("Ambush", [{ type: "damageBonus", modifierType: "circumstance", field: "", valueType: "number", value: "2", predicate: '["target:condition:off-guard"]' }]);
+  const rogue = pc({ feats: [ambush], inventory: [dagger] });
+  const realTargets = ctx.api.getTargets;
+  const realOther = ctx.api.getOtherTokens;
+  ctx.api.getTargets = () => [{ token: { _id: "t", recordType: "npcs", effects: [{ name: "Off-Guard", rules: [] }], data: { ac: 15, level: 1, traits: [] } }, distance: 5 }];
+  ctx.api.getOtherTokens = () => [];
+  const mods = capturePrompt(() => ctx.performAttackRoll(rogue, dagger, "data.inventory.0", 1)).metadata.damageModifiers || [];
+  const backstab = mods.find((m) => m.name === "Backstabber");
+  assert("backstabber adds 1 precision vs an off-guard target", `${backstab?.value}|${backstab?.precisionDamage}`, "1|true");
+  assert("an off-guard predicate applies", mods.find((m) => m.name.startsWith("Ambush"))?.active, true);
+  ctx.api.getTargets = () => [{ token: { _id: "t", recordType: "npcs", effects: [], data: { ac: 15, level: 1, traits: [] } }, distance: 5 }];
+  const calm = capturePrompt(() => ctx.performAttackRoll(rogue, dagger, "data.inventory.0", 1)).metadata.damageModifiers || [];
+  assert("no backstabber vs a target that isn't off-guard", calm.some((m) => m.name === "Backstabber"), false);
+  ctx.api.getTargets = realTargets;
+  ctx.api.getOtherTokens = realOther;
+}
+
 summary();
