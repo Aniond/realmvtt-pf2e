@@ -1348,7 +1348,12 @@ function getSkillRankAtoms(token, statistic) {
   if (statistic) {
     const stat = toSlug(String(statistic));
     atoms.push(`check:statistic:${stat}`);
-    const rank = parseInt(data[stat] || "0", 10) || 0;
+    // A Lore's rank lives on its data.loreSkills entry, not data.<skill>
+    const lore = (Array.isArray(data.loreSkills) ? data.loreSkills : []).find(
+      (entry) => toSlug(String(entry?.name || "")) === stat,
+    );
+    const rank =
+      parseInt((lore ? lore.data?.rank : data[stat]) || "0", 10) || 0;
     atoms.push(`proficiency:rank:${rank}`);
     atoms.push(
       `proficiency:${(PROFICIENCY_RANK_NAMES[rank] || "Untrained").toLowerCase()}`,
@@ -1903,10 +1908,17 @@ function isSituationalAtom(atom, context = {}) {
  * Human-readable reason a situational modifier applies, e.g. "Demoralize",
  * "vs undead", "vs fear", "aquatic terrain".
  */
-function getSituationalLabel(predicate, traits, context = {}) {
+function getSituationalLabel(predicate, traits, context = {}, target = null) {
   const atoms = [];
   const walk = (node, negated) => {
     if (typeof node === "string") {
+      // Resolve @record.data.<path> (e.g. a chosen terrain) for the label
+      if (node.includes("@record.data.") && target) {
+        node = node.replace(/@record\.data\.([\w.]+)/g, (match, path) => {
+          const value = api.getValueOnRecord(target, `data.${path}`);
+          return value ? toSlug(String(value)) : match;
+        });
+      }
       if (!negated && !traits.has(node) && isSituationalAtom(node, context)) {
         atoms.push(node);
       }
@@ -2761,6 +2773,7 @@ function getEffectsAndModifiersForToken(
               parsedPredicate,
               traitsSet,
               context,
+              target,
             );
             resultObj.situational = label || true;
             if (label) resultObj.name = `${resultObj.name} (${label})`;
@@ -7097,6 +7110,8 @@ function onAddEditFeature(
   const newTraitsList = [...currentTraitsList];
 
   traitBonus.forEach((modifier) => {
+    // A trait whose predicate fails (or that is opted out) isn't added
+    if (modifier.active === false) return;
     const trait = modifier.value || modifier.field || "";
     if (trait && typeof trait === "string") {
       // Set traits list
@@ -11105,7 +11120,7 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber = 1) {
       const attackField = isMelee ? "melee" : "ranged";
       const degreeOfSuccessAdjustments = getDegreeOfSuccessAdjustments(
         record,
-        [attackField, abilityScore],
+        [attackField, abilityScore, "attack-roll", "strike-attack-roll"],
         weapon._id,
         undefined,
         { weapon, targets: [target] },
@@ -11185,7 +11200,7 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber = 1) {
     const attackField = isMelee ? "melee" : "ranged";
     const degreeOfSuccessAdjustments = getDegreeOfSuccessAdjustments(
       record,
-      [attackField, abilityScore],
+      [attackField, abilityScore, "attack-roll", "strike-attack-roll"],
       weapon._id,
       undefined,
       { weapon },

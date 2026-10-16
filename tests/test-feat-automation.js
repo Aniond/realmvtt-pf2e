@@ -530,4 +530,20 @@ section("Treat Wounds and First Aid pass their action");
   assert("a Treat Wounds degree adjustment applies with the action", adjustments.success.value, "one-degree-better");
 }
 
+section("lore ranks and resolved labels");
+{
+  const sailor = pc({ loreSkills: [{ name: "Sailing Lore", data: { rank: "2" } }] });
+  const traits = traitsFor(sailor, { statistic: "Sailing Lore" });
+  assertIncludes("a Lore roll's proficiency comes from its entry", traits, "proficiency:expert");
+  const guide = pc({
+    flags: { terrain: "Aquatic" },
+    feats: [feat("Terrain Expertise", [{ type: "skillBonus", modifierType: "circumstance", field: "survival", valueType: "number", value: "1", predicate: '["terrain:@record.data.flags.terrain"]' }])],
+  });
+  const realGet = ctx.api.getValueOnRecord;
+  ctx.api.getValueOnRecord = (rec, path) => path.split(".").reduce((o, k) => o?.[k], rec);
+  const mod = capturePrompt(() => ctx.rollSkill(guide, "survival")).modifiers.find((m) => m.name.startsWith("Terrain Expertise"));
+  ctx.api.getValueOnRecord = realGet;
+  assert("the label shows the chosen terrain", mod?.name, "Terrain Expertise (aquatic terrain)");
+}
+
 summary();
