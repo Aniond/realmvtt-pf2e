@@ -439,6 +439,31 @@ function getCastingRank(record, spell, dataPathToSpell) {
   return castingRank;
 }
 
+// The rank a spell is cast at and whether it is cast from a spell slot (a
+// prepared or spontaneous spell, not a cantrip), as the predicate context of
+// its damage and healing rolls: Foundry's @spell.level and item:spell-slot
+// (Sorcerous Potency)
+function getSpellCastContext(record, spell, dataPathToSpell) {
+  const path = String(dataPathToSpell || "");
+  if (!path) return {};
+  let entryPath = getNearestParentDataPath(path);
+  // An overlay's parent is its spell; the entry is one more up
+  if (/\.data\.overlays\.\d+$/.test(path)) {
+    entryPath = getNearestParentDataPath(entryPath);
+  }
+  const entry = api.getValueOnRecord(record, entryPath);
+  const isCantrip =
+    /\.cantrips\.\d+/.test(path) ||
+    (spell?.data?.traits || []).some(
+      (trait) => String(trait).toLowerCase() === "cantrip"
+    );
+  const type = entry?.data?.type;
+  return {
+    castRank: getCastingRank(record, spell, path),
+    spellSlot: (type === "prepared" || type === "spontaneous") && !isCantrip,
+  };
+}
+
 function getSpellHeighteningInfo(spell, castingRank) {
   const heightening = spell?.data?.heightening || [];
   const baseRank = spell?.data?.level || 1;
@@ -880,7 +905,7 @@ api.getRecord('${record.recordType}', '${record._id}', (record) => {
     "",
     undefined,
     undefined,
-    { spell }
+    { spell, ...${JSON.stringify(getSpellCastContext(record, spell, dataPathToSpell))} }
   );
 
   let damage = "${spellDamage.damageString}";
@@ -977,7 +1002,7 @@ api.getRecord('${record.recordType}', '${record._id}', (record) => {
     "",
     undefined,
     undefined,
-    { spell }
+    { spell, ...${JSON.stringify(getSpellCastContext(record, spell, dataPathToSpell))} }
   );
 
   const healing = "${spellEffect.healingString}";
@@ -1134,7 +1159,7 @@ api.getRecord('${record.recordType}', '${record._id}', (record) => {
     "",
     undefined,
     undefined,
-    { spell }
+    { spell, ...${JSON.stringify(getSpellCastContext(record, spell, dataPathToSpell))} }
   );
   
   const modifiers = [

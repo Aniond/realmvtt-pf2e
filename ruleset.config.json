@@ -2592,7 +2592,9 @@
       "onTurnEnd": {
         "file": "rollhandlers/onTurnEnd.js"
       },
-      "onRoundStart": "",
+      "onRoundStart": {
+        "file": "rollhandlers/onRoundStart.js"
+      },
       "onRoundEnd": "",
       "onRollInitiative": {
         "file": "rollhandlers/onRollInitiative.js"

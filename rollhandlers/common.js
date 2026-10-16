@@ -471,6 +471,16 @@ function checkForReplacements(
     );
   }
 
+  // @spell.level / @spell.rank: the rank the spell in context is cast at
+  // (Sorcerous Potency), or its own rank when the roll doesn't say
+  if (/@spell\.(?:level|rank)\b/.test(value) && context?.spell) {
+    const castRank =
+      parseInt(context.castRank, 10) ||
+      parseInt(context.spell.data?.level, 10) ||
+      1;
+    value = value.replace(/@spell\.(?:level|rank)\b/g, String(castRank));
+  }
+
   // Replace @actor.level with actual level
   const actorLevel = parseInt(thisRecord?.data?.level || "1", 10);
   value = value.replaceAll("@actor.level", String(actorLevel));
@@ -1216,6 +1226,12 @@ function collectTraitsAndProperties(
       traits.add("item:deity-favored");
     }
   }
+  // A spell cast from a spell slot (prepared or spontaneous, not a cantrip):
+  // Foundry's item:spell-slot (Sorcerous Potency). Spell damage and healing
+  // rolls pass it with the rank cast at (getSpellCastContext).
+  if (context.spell && context.spellSlot === true) {
+    traits.add("item:spell-slot");
+  }
   // The deity's favored weapons on the creature itself, for predicates with
   // no weapon in hand (providesItems: ["deity:favored-weapon:fist"])
   getDeityFavoredWeapons(token).forEach((weapon) =>
@@ -1256,8 +1272,13 @@ function collectTraitsAndProperties(
   getShieldAtoms(token).forEach((atom) => traits.add(atom));
 
   // Targets (attack and damage lookups): target:trait:*, target:condition:*,
-  // target:effect:*, target:level:<n>, target:type:*, target:range-increment
+  // target:effect:*, target:level:<n>, target:type:*, target:range-increment,
+  // target:distance:<feet>
   getTargetAtoms(token, context).forEach((atom) => traits.add(atom));
+
+  // The combat encounter the creature is in: encounter, encounter:round:<n>,
+  // self:participant:initiative:stat:<statistic>
+  getEncounterAtoms(token).forEach((atom) => traits.add(atom));
 
   // Add item:proficiency:rank:{value} for items in context
   const item = context.item || context.weapon || context.spell;
@@ -1413,7 +1434,38 @@ function collectTraitsAndProperties(
     });
   }
 
+  // Roll options that depend on the action taken (Panache: Tumble Through
+  // gains the bravado trait, ["action:tumble-through"]): the stored ones are
+  // worked out with no action, so read them for this roll
+  if (!skipRollOptions && context.action?.name && !context.__actionRollOptions) {
+    getActionRollOptions(token, traits, context).forEach((option) =>
+      traits.add(option),
+    );
+  }
+
   return traits;
+}
+
+// The options of rollOption modifiers whose predicate names an action and
+// holds for this roll
+function getActionRollOptions(token, traits, context) {
+  return getEffectsAndModifiersForToken(
+    token,
+    ["rollOption"],
+    undefined,
+    undefined,
+    undefined,
+    { ...context, __actionRollOptions: true },
+    new Set(traits),
+  )
+    .filter((mod) => {
+      const predicate =
+        typeof mod.predicate === "string"
+          ? mod.predicate
+          : JSON.stringify(mod.predicate || "");
+      return mod.active && mod.option && predicate.includes("action:");
+    })
+    .map((mod) => String(mod.option).trim());
 }
 
 /**
@@ -1710,6 +1762,22 @@ function getTargetAtoms(token, context) {
       `target:type:${recordType === "characters" ? "character" : "npc"}`,
     );
   }
+  // The distance to the target in feet (target:distance:<feet>, so
+  // {"lte":["target:distance",30]} works): from api.getTargets, or measured
+  // from the creature's token when the target came without one
+  let targetDistance = parseFloat(context.targetDistance ?? target.distance);
+  if (!Number.isFinite(targetDistance) && typeof api?.getDistance === "function") {
+    try {
+      const ourToken = api.getToken?.();
+      if (ourToken) targetDistance = parseFloat(api.getDistance(ourToken, targetToken));
+    } catch (e) {
+      // No scene to measure on
+    }
+  }
+  if (Number.isFinite(targetDistance) && targetDistance >= 0) {
+    atoms.push(`target:distance:${Math.round(targetDistance)}`);
+  }
+
   // Range increment for ranged weapons (and increment 1 inside melee reach)
   const weapon = context.weapon || context.item;
   const distance = context.targetDistance || target.distance || 0;
@@ -2099,6 +2167,28 @@ function isNonEmptyPredicate(predicate) {
   return typeof predicate === "string" && predicate.trim() !== "";
 }
 
+// The features that granted this one through a choice (data.grantedBy,
+// nearest first, e.g. ["bloodline-draconic", "crossblooded-evolution"])
+function getFeatureGranters(feature) {
+  const grantedBy = feature?.data?.grantedBy;
+  const list = Array.isArray(grantedBy) ? grantedBy : grantedBy ? [grantedBy] : [];
+  return list.map((slug) => toSlug(String(slug))).filter(Boolean);
+}
+
+// The traits with Foundry's granter atoms for a feature something granted:
+// parent:granter:slug:<slug> and parent:granter:<slug> for each feature above
+// it. The same set for a feature nothing granted.
+function getGranterTraits(feature, traits) {
+  const granters = getFeatureGranters(feature);
+  if (granters.length === 0) return traits;
+  const result = new Set(traits);
+  granters.forEach((slug) => {
+    result.add(`parent:granter:slug:${slug}`);
+    result.add(`parent:granter:${slug}`);
+  });
+  return result;
+}
+
 function parseModifierPredicate(predicateInput) {
   // If already an object or array (already parsed), return as-is
   if (typeof predicateInput === "object") {
@@ -2216,6 +2306,23 @@ function resolvePredicateValue(value, target, context, traits) {
     return 0;
   }
 
+  // The creature's or its target's place in the initiative order (1 =
+  // first): Surprise Attack's
+  // {"lt":["self:participant:initiative:rank","target:participant:initiative:rank"]}.
+  // Not a number (every comparison fails) outside an encounter.
+  if (
+    value === "self:participant:initiative:rank" ||
+    value === "target:participant:initiative:rank"
+  ) {
+    const targets = Array.isArray(context?.targets) ? context.targets : [];
+    const contextTarget =
+      context?.target || (targets.length === 1 ? targets[0] : null);
+    const subject = value.startsWith("self:")
+      ? target
+      : contextTarget?.token || contextTarget;
+    return getInitiativeRank(subject, target, contextTarget?.token || contextTarget);
+  }
+
   // Check if it's a trait key with a numeric value (e.g., "item:proficiency:rank:3").
   // The numeric one wins over a bare match of the same key, as conditions add
   // both "self:condition:cursebound" and "self:condition:cursebound:2".
@@ -2278,6 +2385,11 @@ function isSituationalAtom(atom, context = {}) {
   if (atom.startsWith("action:")) return !context.action;
   if (atom.startsWith("target:")) return !hasTarget;
   if (atom.startsWith("terrain:") || atom.startsWith("environment:")) return true;
+  // Whether there is an encounter is unknown until the encounter hooks have
+  // recorded one in this campaign
+  if (atom === "encounter" || atom.startsWith("encounter:")) {
+    return getEncounterState() === null;
+  }
   if (
     atom.startsWith("origin:") ||
     atom.startsWith("inflicts:") ||
@@ -2336,6 +2448,8 @@ function getSituationalLabel(predicate, traits, context = {}, target = null) {
     if (atom.startsWith("terrain:") || atom.startsWith("environment:"))
       return `${last.replace(/-/g, " ")} terrain`;
     if (atom.startsWith("inflicts:")) return `vs ${last.replace(/-/g, " ")}`;
+    if (atom === "encounter") return "in an encounter";
+    if (atom.startsWith("encounter:round:")) return `round ${last}`;
     return `vs ${last.replace(/-/g, " ")}`;
   });
   return [...new Set(labels)].join(", ");
@@ -2352,6 +2466,9 @@ function getSituationalLabel(predicate, traits, context = {}, target = null) {
  * @returns {boolean} Whether the predicate is satisfied
  */
 function evaluateEffectPredicate(predicate, traits, target, context = {}) {
+  // A part already settled (reducePredicateBeforeRoll)
+  if (typeof predicate === "boolean") return predicate;
+
   // Base case: string predicate - check if trait exists
   if (typeof predicate === "string") {
     // When probing whether a failed modifier is situational, atoms the roll
@@ -3019,6 +3136,9 @@ function getEffectsAndModifiersForToken(
 
   [...features, ...equippedItems, ...runeModifiers].forEach((feature) => {
     const modifiers = feature.data?.modifiers || [];
+    // A feature's own predicates also see what granted it
+    // (parent:granter:slug:crossblooded-evolution)
+    const featureTraits = getGranterTraits(feature, traitsSet);
     modifiers.forEach((modifier) => {
       const ruleType = modifier.data?.type || "";
       const bonusPenaltyType = modifier.data?.modifierType || "";
@@ -3036,7 +3156,7 @@ function getEffectsAndModifiersForToken(
         const parsedPredicate = parseModifierPredicate(predicate);
         const predicatePassed = evaluateEffectPredicate(
           parsedPredicate,
-          traitsSet,
+          featureTraits,
           target,
           context,
         );
@@ -3225,14 +3345,14 @@ function getEffectsAndModifiersForToken(
         ) {
           const parsedPredicate = parseModifierPredicate(predicate);
           if (
-            evaluateEffectPredicate(parsedPredicate, traitsSet, target, {
+            evaluateEffectPredicate(parsedPredicate, featureTraits, target, {
               ...context,
               __assumeSituational: true,
             })
           ) {
             const label = getSituationalLabel(
               parsedPredicate,
-              traitsSet,
+              featureTraits,
               context,
               target,
             );
@@ -3607,8 +3727,11 @@ function mergeModifierLists(...lists) {
  * @param {Object} adjustments - Adjustment object from metadata.degreeOfSuccessAdjustments
  * @returns {Object} {degree: number, modifierName: string|null}
  */
-function applyDegreeOfSuccessAdjustment(degreeOfSuccess, adjustments) {
+function applyDegreeOfSuccessAdjustment(degreeOfSuccess, adjustments, roll = null) {
   if (!adjustments) return { degree: degreeOfSuccess, modifierName: null };
+  // Adjustments that depend on the die (Keen Flair: a natural 19), settled
+  // now that the roll is known
+  adjustments = withPostRollAdjustments(adjustments, roll);
 
   // Map degree number to name: -1=criticalFailure, 0=failure, 1=success, 2=criticalSuccess
   let currentDegreeName = "";
@@ -3702,34 +3825,6 @@ function getDegreeOfSuccessAdjustments(
     allAdjustments.push(...adjustments);
   });
 
-  // How far each adjustment moves a roll that landed on the given degree.
-  // Positive moves are improvements, negative are worsenings; the "to-X"
-  // adjustments are measured from the degree they apply to ("all" assumes a
-  // success for those).
-  const degreeIndex = { criticalFailure: -1, failure: 0, success: 1, all: 1 };
-  const adjustmentDelta = (adjustment, degreeType) => {
-    const from = degreeIndex[degreeType];
-    switch (adjustment) {
-      case "one-degree-better":
-        return 1;
-      case "two-degrees-better":
-        return 2;
-      case "one-degree-worse":
-        return -1;
-      case "two-degrees-worse":
-        return -2;
-      case "to-critical-success":
-        return 2 - from;
-      case "to-success":
-        return 1 - from;
-      case "to-failure":
-        return 0 - from;
-      case "to-critical-failure":
-        return -1 - from;
-    }
-    return 0;
-  };
-
   // Result object with the best improvement (value) and the worst worsening
   // (worse) for each degree (all, success, failure, criticalFailure)
   const emptySlot = () => ({
@@ -3745,32 +3840,149 @@ function getDegreeOfSuccessAdjustments(
     criticalFailure: emptySlot(),
   };
 
+  let traits = null;
   allAdjustments.forEach((adj) => {
-    if (!adj.active || !adj.value) return;
-
-    const adjustmentValue = adj.value;
-    const modifierName = adj.name;
-
-    ["all", "success", "failure", "criticalFailure"].forEach((degreeType) => {
-      const newValue = adjustmentValue[degreeType];
-      if (!newValue || newValue === "none") return;
-
-      const delta = adjustmentDelta(newValue, degreeType);
-      const slot = result[degreeType];
-      if (delta > 0) {
-        if (delta > adjustmentDelta(slot.value, degreeType)) {
-          slot.value = newValue;
-          slot.modifierName = modifierName;
-        }
-      } else if (delta < 0) {
-        if (delta < adjustmentDelta(slot.worse, degreeType)) {
-          slot.worse = newValue;
-          slot.worseModifierName = modifierName;
-        }
+    if (!adj.value) return;
+    if (!adj.active) {
+      // An adjustment whose predicate reads the rolled die or total (Keen
+      // Flair: "check:roll:total:natural:19") is settled after the roll: the
+      // rest of its predicate is worked out now and carried in postRoll
+      if (!hasPostRollAtom(adj.predicate)) return;
+      traits = traits || collectTraitsAndProperties(record, context);
+      const predicate = reducePredicateBeforeRoll(
+        parseModifierPredicate(adj.predicate),
+        traits,
+        record,
+        context,
+      );
+      if (predicate === false || (Array.isArray(predicate) && predicate.includes(false))) {
+        return;
       }
-    });
+      result.postRoll = result.postRoll || [];
+      result.postRoll.push({ name: adj.name, adjustment: adj.value, predicate });
+      return;
+    }
+    addDegreeAdjustment(result, adj.value, adj.name);
   });
 
+  return result;
+}
+
+// How far an adjustment moves a roll that landed on the given degree.
+// Positive moves are improvements, negative are worsenings; the "to-X"
+// adjustments are measured from the degree they apply to ("all" assumes a
+// success for those).
+function getDegreeAdjustmentDelta(adjustment, degreeType) {
+  const degreeIndex = { criticalFailure: -1, failure: 0, success: 1, all: 1 };
+  const from = degreeIndex[degreeType];
+  switch (adjustment) {
+    case "one-degree-better":
+      return 1;
+    case "two-degrees-better":
+      return 2;
+    case "one-degree-worse":
+      return -1;
+    case "two-degrees-worse":
+      return -2;
+    case "to-critical-success":
+      return 2 - from;
+    case "to-success":
+      return 1 - from;
+    case "to-failure":
+      return 0 - from;
+    case "to-critical-failure":
+      return -1 - from;
+  }
+  return 0;
+}
+
+// Keeps an adjustment in the result if it is the best improvement or the
+// worst worsening for its degrees
+function addDegreeAdjustment(result, adjustmentValue, modifierName) {
+  ["all", "success", "failure", "criticalFailure"].forEach((degreeType) => {
+    const newValue = adjustmentValue[degreeType];
+    if (!newValue || newValue === "none") return;
+
+    const delta = getDegreeAdjustmentDelta(newValue, degreeType);
+    const slot = result[degreeType];
+    if (delta > 0) {
+      if (delta > getDegreeAdjustmentDelta(slot.value, degreeType)) {
+        slot.value = newValue;
+        slot.modifierName = modifierName;
+      }
+    } else if (delta < 0) {
+      if (delta < getDegreeAdjustmentDelta(slot.worse, degreeType)) {
+        slot.worse = newValue;
+        slot.worseModifierName = modifierName;
+      }
+    }
+  });
+}
+
+// Foundry's post-roll atoms: check:total:<n>, check:total:natural:<n> (the
+// d20), check:roll:total:natural:<n> (its older spelling) and
+// check:total:delta:<n> (total minus DC). The roll knows them only once the
+// die is rolled.
+function isPostRollAtom(atom) {
+  return typeof atom === "string" && /^check:(?:roll:)?total(?::|$)/.test(atom);
+}
+
+function hasPostRollAtom(predicate) {
+  const text = typeof predicate === "string" ? predicate : JSON.stringify(predicate || "");
+  return /check:(?:roll:)?total/.test(text);
+}
+
+function getPostRollAtoms({ natural, total, dc } = {}) {
+  const atoms = [];
+  if (Number.isFinite(total)) atoms.push(`check:total:${total}`);
+  if (Number.isFinite(natural) && natural > 0) {
+    atoms.push(`check:total:natural:${natural}`);
+    atoms.push(`check:roll:total:natural:${natural}`);
+  }
+  if (Number.isFinite(total) && Number.isFinite(dc) && dc > 0) {
+    atoms.push(`check:total:delta:${total - dc}`);
+  }
+  return atoms;
+}
+
+// The predicate with every part the roll knows before the die is rolled
+// replaced by true or false, keeping only the post-roll atoms (and
+// comparisons on them) to be read once the roll is made
+function reducePredicateBeforeRoll(predicate, traits, target, context = {}) {
+  const reduce = (node) => reducePredicateBeforeRoll(node, traits, target, context);
+  if (typeof predicate === "string") {
+    return isPostRollAtom(predicate)
+      ? predicate
+      : evaluateEffectPredicate(predicate, traits, target, context);
+  }
+  if (Array.isArray(predicate)) return predicate.map(reduce);
+  if (predicate && typeof predicate === "object") {
+    const key = Object.keys(predicate)[0];
+    const operand = predicate[key];
+    if (["not", "or", "and", "nand", "nor", "xor"].includes(key)) {
+      return { [key]: Array.isArray(operand) ? operand.map(reduce) : reduce(operand) };
+    }
+    if (Array.isArray(operand) && operand.some(isPostRollAtom)) return predicate;
+    return evaluateEffectPredicate(predicate, traits, target, context);
+  }
+  return predicate;
+}
+
+// The adjustments with those that waited for the roll (postRoll) added when
+// the roll meets them; unchanged without any
+function withPostRollAdjustments(adjustments, roll) {
+  const pending = Array.isArray(adjustments?.postRoll) ? adjustments.postRoll : [];
+  if (pending.length === 0 || !roll) return adjustments;
+  const result = {};
+  ["all", "success", "failure", "criticalFailure"].forEach((degreeType) => {
+    result[degreeType] = { value: "none", worse: "none", ...(adjustments[degreeType] || {}) };
+  });
+  const traits = new Set(getPostRollAtoms(roll));
+  pending.forEach((entry) => {
+    if (evaluateEffectPredicate(entry.predicate, traits, null, {})) {
+      addDegreeAdjustment(result, entry.adjustment || {}, entry.name);
+    }
+  });
   return result;
 }
 
@@ -5616,8 +5828,21 @@ function promptForChoices(record, choicesToMake, index, depth = 0) {
       ancestryFeatures: [],
     };
 
+    // What granted the features and feats added here, nearest first, for
+    // Foundry's parent:granter atoms (a bloodline Crossblooded Evolution
+    // grants skips its skill training)
+    const grantedBy = [
+      toSlug(currentFeature?.name || ""),
+      ...getFeatureGranters(currentFeature),
+    ].filter(Boolean);
+
     // Process each item from the selected option's value array
-    itemsToAdd.forEach((item) => {
+    itemsToAdd.forEach((rawItem) => {
+      const item =
+        grantedBy.length > 0 &&
+        (rawItem.recordType === "features" || rawItem.recordType === "feats")
+          ? { ...rawItem, data: { ...rawItem.data, grantedBy } }
+          : rawItem;
       const recordType = item.recordType;
 
       if (recordType === "items") {
@@ -6552,6 +6777,10 @@ function updateProficiencies(record, valuesToSet) {
   // Get character level (check valuesToSet first)
   const characterLevel = valuesToSet["data.level"] ?? record.data?.level ?? 1;
 
+  // Skills used in place of another (Chirurgeon: Crafting for Medicine),
+  // from proficiency entries with substituteSkill
+  const skillSubstitutes = {};
+
   // Go through each feature and update proficiencies if the new rank is higher
   for (const feature of features) {
     // Check if character level meets the feature's level requirement
@@ -6572,7 +6801,11 @@ function updateProficiencies(record, valuesToSet) {
     const proficiencyPredicateContext = {
       proficiencies: proficienciesBeforeFeature,
     };
-    const traitsSet = collectTraitsAndProperties(record, {});
+    // (with what granted the feature: parent:granter:slug:<slug>)
+    const traitsSet = getGranterTraits(
+      feature,
+      collectTraitsAndProperties(record, {}),
+    );
     featureProficiencies.forEach((proficiency) => {
       const predicate = proficiency?.data?.predicate;
       if (predicate) {
@@ -6596,6 +6829,18 @@ function updateProficiencies(record, valuesToSet) {
       const field = proficiency?.data?.field || "";
       const setProfiency =
         field === "" || field === null || field === undefined;
+
+      // This skill can use another skill's rank and modifier instead
+      const substituteSkill = String(proficiency?.data?.substituteSkill || "")
+        .toLowerCase()
+        .trim();
+      if (
+        substituteSkill &&
+        possibleSkills.includes(name) &&
+        possibleSkills.includes(substituteSkill)
+      ) {
+        skillSubstitutes[name] = substituteSkill;
+      }
 
       if (name && rank > 0 && setProfiency) {
         // Check if it's a saving throw
@@ -6663,6 +6908,18 @@ function updateProficiencies(record, valuesToSet) {
       }
     });
   }
+
+  // A skill that can use another skill's rank has at least that rank
+  // ("anything that requires a proficiency rank in Medicine")
+  Object.entries(skillSubstitutes).forEach(([skill, from]) => {
+    const fromRank = Math.max(
+      proficiencies[from] || 0,
+      parseInt(record.data?.[from] || "0", 10) || 0,
+    );
+    if (fromRank > (proficiencies[skill] || 0)) {
+      proficiencies[skill] = fromRank;
+    }
+  });
 
   // Set Class DC
   const keyAbility = record.data?.keyAbility;
@@ -6791,6 +7048,24 @@ function updateProficiencies(record, valuesToSet) {
 
     // Always set the modifier based on the effective proficiency
     valuesToSet[`data.${skillName}Mod`] = abilityMod + skillProficiencyBonus;
+
+    // Or the other skill's modifier, when it can be used instead and is
+    // higher (Chirurgeon: the Crafting modifier for Medicine checks)
+    const substituteSkill = skillSubstitutes[skillName];
+    if (substituteSkill) {
+      const substituteRank = Math.max(
+        proficiencies[substituteSkill] || 0,
+        parseInt(record.data?.[substituteSkill] || "0", 10) || 0,
+      );
+      const substituteMod =
+        getAbilityScore(
+          record.data?.[`${substituteSkill}Ability`] ||
+            pathfinderSkills[substituteSkill],
+        ) + calculateProficiencyBonus(record, substituteRank);
+      if (substituteMod > valuesToSet[`data.${skillName}Mod`]) {
+        valuesToSet[`data.${skillName}Mod`] = substituteMod;
+      }
+    }
 
     // Only update the proficiency value if the calculated one is higher
     // Don't override manually set higher values
@@ -18448,6 +18723,106 @@ function getCombatRound(callback) {
   } catch (e) {
     finish(null);
   }
+}
+
+// The combat encounter, for encounter predicates (Stylish Combatant's
+// "encounter", Surprise Attack's "encounter:round:1"). The combat tracker can
+// only be read with a callback, so onRoundStart keeps the round and the
+// creatures in the encounter in a campaign variable, which every client can
+// read at once, and onEncounterEnd sets the round back to 0.
+const ENCOUNTER_VARIABLE = "pf2eEncounter";
+
+// { round, participants: [{ id, recordId }] } (round 0: no encounter), or
+// null when this campaign hasn't recorded an encounter yet (unknown)
+function getEncounterState() {
+  try {
+    if (typeof api?.getCampaignVariable !== "function") return null;
+    const state = api.getCampaignVariable(ENCOUNTER_VARIABLE);
+    if (!state || typeof state !== "object") return null;
+    const round = parseInt(state.round, 10);
+    return {
+      round: Number.isFinite(round) && round > 0 ? round : 0,
+      participants: Array.isArray(state.participants) ? state.participants : [],
+    };
+  } catch (e) {
+    return null;
+  }
+}
+
+// Records the encounter's round and the tokens in it (round 0 ends it)
+function setEncounterState(tokens, round) {
+  if (typeof api?.setCampaignVariable !== "function") return;
+  const currentRound = Math.max(0, parseInt(round, 10) || 0);
+  const participants = (Array.isArray(tokens) ? tokens : [])
+    .filter((token) => token?._id)
+    .map((token) => ({ id: token._id, recordId: token.recordId || null }));
+  api.setCampaignVariable(ENCOUNTER_VARIABLE, {
+    round: currentRound,
+    participants: currentRound > 0 ? participants : [],
+  });
+}
+
+// The encounter's entry for a creature: its token, or the character record a
+// token links to
+function findEncounterParticipant(state, creature) {
+  if (!state || !creature) return null;
+  const ids = [creature._id, creature.recordId, creature.record?._id].filter(Boolean);
+  return (
+    state.participants.find(
+      (p) => ids.includes(p.id) || (p.recordId && ids.includes(p.recordId)),
+    ) || null
+  );
+}
+
+function isInEncounter(state, creature) {
+  if (!state || state.round <= 0 || !creature) return false;
+  return state.participants.length === 0 || !!findEncounterParticipant(state, creature);
+}
+
+// encounter, encounter:round:<n> and self:participant:initiative:stat:<stat>
+// (the statistic initiative was rolled with) while the creature is in the
+// running encounter
+function getEncounterAtoms(token) {
+  const state = getEncounterState();
+  if (!isInEncounter(state, token)) return [];
+  const statistic =
+    token?.data?.initiativeStatistic || token?.data?.initiativeSkill || "perception";
+  return [
+    "encounter",
+    `encounter:round:${state.round}`,
+    `self:participant:initiative:stat:${toSlug(String(statistic))}`,
+  ];
+}
+
+// A creature's place in the initiative order (1 = first): one more than the
+// number of creatures in the encounter with a higher initiative. The roll's
+// creature and target are read as given, the others from the scene. NaN when
+// the creature isn't in the encounter or has no initiative.
+function getInitiativeRank(subject, self = null, target = null) {
+  const state = getEncounterState();
+  if (!isInEncounter(state, subject)) return NaN;
+  const initiativeOf = (creature) =>
+    parseFloat(creature?.data?.initiative ?? creature?.record?.data?.initiative);
+  const own = initiativeOf(subject);
+  if (!Number.isFinite(own)) return NaN;
+  const keyOf = (creature) =>
+    findEncounterParticipant(state, creature)?.id || creature?._id;
+  const creatures = [self, target];
+  try {
+    creatures.push(...(api.getOtherTokens?.() || []), api.getToken?.());
+  } catch (e) {
+    // No scene: only the roll's creature and target
+  }
+  const seen = new Set([keyOf(subject)]);
+  let higher = 0;
+  creatures.forEach((creature) => {
+    if (!creature || !isInEncounter(state, creature)) return;
+    const key = keyOf(creature);
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    if (initiativeOf(creature) > own) higher++;
+  });
+  return higher + 1;
 }
 
 function getUpkeepRound(token, field) {

@@ -85,7 +85,8 @@ if (dc > 0) {
   // Apply degree of success adjustments from effects/modifiers
   const adjustmentResult = applyDegreeOfSuccessAdjustment(
     degreeOfSuccess,
-    degreeOfSuccessAdjustments
+    degreeOfSuccessAdjustments,
+    { natural: naturalRoll, total, dc }
   );
   degreeOfSuccess = adjustmentResult.degree;
   noteDegree = degreeOfSuccess;
