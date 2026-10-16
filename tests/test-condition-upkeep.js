@@ -1,5 +1,8 @@
 // Tests for condition upkeep in the turn hooks (frightened, stunned, slowed,
-// quickened) and the effects that end with an encounter.
+// quickened), the effects that end with an encounter, a creature's own
+// condition values (self:condition:<slug>:<n>, @actor.conditions.<slug>.value),
+// curse penalties as plain modifiers, and modifiers to a condition's value
+// when gained.
 
 const fs = require("fs");
 const vm = require("vm");
@@ -434,6 +437,405 @@ section("onEncounterEnd hook");
     ["remove", "Rage", "t1"],
     ["set", "t1", { "data.conditionUpkeepStartRound": null, "data.conditionUpkeepEndRound": null }],
   ]);
+}
+
+
+// --- condition values, curse penalties, condition gain ----------------------
+
+// Effect and data writes the Apply buttons and hooks make (curse penalties
+// must make none)
+ctx.api.addEffects = (names, token) => {
+  calls.push(["add", names, token?._id]);
+};
+ctx.api.addEffect = (name, token, duration, value) => {
+  calls.push(["addOne", name, token?._id, value]);
+};
+ctx.api.addEffectById = (effectId, token) => {
+  calls.push(["addById", effectId, token?._id]);
+};
+ctx.api.removeEffectById = (effectId, token, cb, options) => {
+  calls.push(options ? ["remove", effectId, token?._id, options] : ["remove", effectId, token?._id]);
+  if (cb) cb();
+};
+ctx.api.setValuesOnRecord = (rec, values, cb) => {
+  calls.push(["setRecord", rec?._id, values]);
+  if (cb) cb(rec);
+};
+
+const CURSEBOUND = { ...effect("Cursebound", 0, "indefinite", "cursebound"), stackable: true };
+const UNCONSCIOUS = effect("Unconscious", 0, "indefinite", "unconscious");
+const PERSISTENT = {
+  ...effect("Persistent Damage", 0, "indefinite", "persistent"),
+  rules: [{ type: "persistentDamage", valueType: "api" }],
+};
+
+// A class feature with these modifiers
+const feature = (name, modifiers, extra = {}) => ({
+  _id: `f-${name}`,
+  name,
+  recordType: "features",
+  data: { level: 1, modifiers: modifiers.map((data) => ({ data })), ...extra },
+});
+// A curse's condition as a plain modifier: a status penalty of the same type
+// and field as the campaign's condition record has (Clumsy: allPenalty
+// status on dex), equal to the cursebound value
+const cursePenalty = (
+  type,
+  field,
+  predicate = '["self:condition:cursebound"]',
+  value = "@actor.conditions.cursebound.value",
+) => ({ type, modifierType: "status", field, valueType: "number", value, predicate });
+const MEDDLING = feature("Curse of Ancestral Meddling", [cursePenalty("allPenalty", "dex")]);
+const SKYS_CALL = feature("Curse of the Sky's Call", [
+  cursePenalty("allPenalty", "str"),
+  cursePenalty("damagePenalty", "str"),
+]);
+const TORRENTIAL = feature("Curse of Torrential Knowledge", [
+  { type: "saveBonus", modifierType: "status", field: "will", valueType: "number", value: "-@actor.conditions.cursebound.value", predicate: '["self:condition:cursebound"]' },
+  ...["int", "wis", "cha"].map((field) => cursePenalty("allPenalty", field, '["self:condition:cursebound:4"]', "1")),
+]);
+
+// A level 5 oracle token with these conditions, class features and data
+function oracle(conditions, features, extra = {}) {
+  const token = tokenWith(conditions);
+  return {
+    ...token,
+    _id: "oracle",
+    name: "Korakai",
+    recordType: "characters",
+    ...extra,
+    data: {
+      level: 5,
+      classes: [{ name: "Oracle", data: { features } }],
+      feats: [],
+      ...(extra.data || {}),
+    },
+  };
+}
+const traitList = (token, context = {}) => [...ctx.collectTraitsAndProperties(token, context)];
+const passes = (token, predicate, context = {}) =>
+  ctx.evaluateEffectPredicate(predicate, ctx.collectTraitsAndProperties(token, context), token, context);
+
+section("self condition values");
+{
+  const two = oracle([[CURSEBOUND, 2]], []);
+  const traits = traitList(two);
+  assert("self:condition:cursebound:2", traits.includes("self:condition:cursebound:2"), true);
+  assert("bare self:condition:cursebound still there", traits.includes("self:condition:cursebound"), true);
+  assert("unvalued effects get :1", traitList(oracle([[UNCONSCIOUS]], [])).includes("self:condition:unconscious:1"), true);
+  assert('{"gte":["self:condition:cursebound",2]} at 2', passes(two, [{ gte: ["self:condition:cursebound", 2] }]), true);
+  assert("... fails at 1", passes(oracle([[CURSEBOUND, 1]], []), [{ gte: ["self:condition:cursebound", 2] }]), false);
+  assert("... fails without the condition", passes(oracle([], []), [{ gte: ["self:condition:cursebound", 2] }]), false);
+  assert('{"lt":["self:condition:cursebound",3]} at 2', passes(two, [{ lt: ["self:condition:cursebound", 3] }]), true);
+  assert("self:condition:cursebound:4 only at 4", [passes(two, ["self:condition:cursebound:4"]), passes(oracle([[CURSEBOUND, 4]], []), ["self:condition:cursebound:4"])], [false, true]);
+  // The numeric atom wins over the bare one on the target side too
+  const scared = { ...tokenWith([[FRIGHTENED, 2]]), _id: "foe" };
+  assert('{"gte":["target:condition:frightened",2]} with a frightened 2 target', passes(oracle([], []), [{ gte: ["target:condition:frightened", 2] }], { targets: [scared] }), true);
+  assert("skill ranks still compare", passes(oracle([], [], { data: { athletics: "2" } }), [{ gte: ["skill:athletics:rank", 2] }]), true);
+}
+
+section("@actor.conditions.<slug>.value");
+{
+  const replace = (value, token) => ctx.checkForReplacements(value, {}, token);
+  const two = oracle([[CURSEBOUND, 2]], []);
+  assert("the value", replace("@actor.conditions.cursebound.value", two), "2");
+  assert("0 without the condition", replace("@actor.conditions.cursebound.value", oracle([], [])), "0");
+  assert("badge spelling", replace("@actor.conditions.cursebound.badge.value", two), "2");
+  assert("@self.condition.<slug>", replace("@self.condition.cursebound", two), "2");
+  assert("formula worked out: -level times value", replace("-@actor.level*@actor.conditions.cursebound.value", two), "-10");
+  assert("ternary picks 5 + level at cursebound 3", replace("ternary(gte(@actor.conditions.cursebound.value,3),5+@actor.level,2)", oracle([[CURSEBOUND, 3]], [])), "10");
+  assert("... and 2 below it", replace("ternary(gte(@actor.conditions.cursebound.value,3),5+@actor.level,2)", two), "2");
+  assert("a damage value keeps its type", replace("@actor.conditions.cursebound.value fire", two), "2 fire");
+  assert("text without tokens is left alone", replace("4/8", two), "4/8");
+  assert("dice are left alone", replace("1d6+@actor.level", two), "1d6+5");
+  const will = (token) =>
+    ctx.getEffectsAndModifiersForToken(token, ["saveBonus"], "will").filter((m) => m.name === "Curse of Torrential Knowledge");
+  const atTwo = will(oracle([[CURSEBOUND, 2]], [TORRENTIAL]));
+  assert("a number value starting with -@ is a formula: -2 at cursebound 2", [atTwo[0]?.value, atTwo[0]?.active], ["-2", true]);
+  assert("not cursebound: inactive", will(oracle([], [TORRENTIAL]))[0]?.active ?? false, false);
+  const plain = feature("Plain", [{ type: "saveBonus", modifierType: "status", field: "will", valueType: "number", value: "2" }]);
+  assert("a plain number is unchanged", ctx.getEffectsAndModifiersForToken(oracle([], [plain]), ["saveBonus"], "will")[0]?.value, 2);
+}
+
+// The campaign's condition effect records, as the PF2e campaigns have them:
+// rules scaled by @effect.count
+const CLUMSY_RECORD = {
+  _id: "clumsy-record",
+  name: "Clumsy",
+  stackable: true,
+  rules: [{ type: "allPenalty-status", field: "dex", valueType: "string", value: "@effect.count" }],
+};
+const FRIGHTENED_RECORD = {
+  _id: "frightened-record",
+  name: "Frightened",
+  stackable: true,
+  rules: [{ type: "allPenalty-status", field: "all", valueType: "string", value: "@effect.count" }],
+};
+const QUICKENED_RECORD = { _id: "quickened-record", name: "Quickened", stackable: false, rules: [] };
+
+// An oracle who can roll: Reflex +9, Acrobatics +8, Athletics +6, AC 20 on
+// the sheet
+function roller(conditions, features, extra = {}) {
+  const token = oracle(conditions, features, extra);
+  token.fields = {};
+  token.data = {
+    dex: 3,
+    reflex: "2",
+    reflexMod: 9,
+    will: "1",
+    willMod: 7,
+    acrobatics: "1",
+    acrobaticsMod: 8,
+    athletics: "1",
+    athleticsMod: 6,
+    ac: 20,
+    bonusFeats: [],
+    inventory: [],
+    ...token.data,
+  };
+  return token;
+}
+// A real condition as the token has it: the campaign's record, value stacks
+const real = (record, value) => [record, value];
+// The roll's bonus as the prompt totals it: every active modifier
+function rollBonus(run) {
+  const saved = ctx.api.promptRoll;
+  let total = null;
+  ctx.api.promptRoll = (name, dice, modifiers) => {
+    total = (modifiers || [])
+      .filter((m) => m.active !== false)
+      .reduce((sum, m) => sum + (parseInt(m.value, 10) || 0), 0);
+  };
+  try {
+    run();
+  } finally {
+    ctx.api.promptRoll = saved;
+  }
+  return total;
+}
+const reflex = (token) => rollBonus(() => ctx.rollSave(token, "reflex"));
+const acrobatics = (token) => rollBonus(() => ctx.rollSkill(token, "acrobatics"));
+const will = (token) => rollBonus(() => ctx.rollSave(token, "will"));
+const athletics = (token) => rollBonus(() => ctx.rollSkill(token, "athletics"));
+const ac = (token) => ctx.getArmorClassForToken(token);
+const numbers = (token) => [acrobatics(token), reflex(token), ac(token), ctx.getSaveDCForToken(token, "reflex")];
+const BASE = [8, 9, 20, 19];
+
+section("curse penalties: plain modifiers, at the final numbers");
+{
+  calls = [];
+  assert("no curse: Acrobatics, Reflex, AC, Reflex DC unchanged", numbers(roller([[CURSEBOUND, 2]], [])), BASE);
+  assert("curse clumsy at cursebound 2: -2 to Dex checks, Reflex, AC and Reflex DC", numbers(roller([[CURSEBOUND, 2]], [MEDDLING])), [6, 7, 18, 17]);
+  assert("cursebound 1: -1, read live", numbers(roller([[CURSEBOUND, 1]], [MEDDLING])), [7, 8, 19, 18]);
+  assert("cursebound 3: -3", numbers(roller([[CURSEBOUND, 3]], [MEDDLING])), [5, 6, 17, 16]);
+  assert("not cursebound: no penalty", numbers(roller([], [MEDDLING])), BASE);
+  assert("nothing written to the token or record", calls, []);
+  // The sheet's AC (data.ac) holds armorClass modifiers only, so the
+  // roll-time AC above counts the curse's clumsy once
+  const written = {};
+  ctx.updateAttribute({ record: roller([[CURSEBOUND, 2]], [MEDDLING]), attribute: "dex", value: 3, moreValuesToSet: written });
+  const plainSheet = {};
+  ctx.updateAttribute({ record: roller([[CURSEBOUND, 2]], []), attribute: "dex", value: 3, moreValuesToSet: plainSheet });
+  assert("the sheet AC leaves the curse penalty out", [typeof written["data.ac"], written["data.ac"]], ["number", plainSheet["data.ac"]]);
+  // A feature's AC modifier is already in data.ac: not counted again
+  const ward = feature("Ward", [{ type: "armorClassBonus", modifierType: "circumstance", field: "all", valueType: "number", value: "1" }]);
+  assert("a feature's armorClassBonus is still read from the sheet only", ac(roller([], [ward])), 20);
+  // A feature's penalty to all checks and DCs counts for AC (frightened-like)
+  const dread = feature("Dread", [{ type: "allPenalty", modifierType: "status", field: "all", valueType: "number", value: "1" }]);
+  assert("a feature's allPenalty status all: -1 AC", ac(roller([], [dread])), 19);
+}
+
+section("curse penalties: typed stacking with the real condition");
+{
+  assert("real clumsy 1 + curse clumsy 2: -2, not -3", numbers(roller([[CURSEBOUND, 2], real(CLUMSY_RECORD, 1)], [MEDDLING])), [6, 7, 18, 17]);
+  assert("real clumsy 3 + curse clumsy 2: -3", numbers(roller([[CURSEBOUND, 2], real(CLUMSY_RECORD, 3)], [MEDDLING])), [5, 6, 17, 16]);
+  assert("real clumsy 2 + curse clumsy 2: -2", numbers(roller([[CURSEBOUND, 2], real(CLUMSY_RECORD, 2)], [MEDDLING])), [6, 7, 18, 17]);
+  assert("real clumsy 1, no curse: -1 (unchanged)", numbers(roller([real(CLUMSY_RECORD, 1)], [])), [7, 8, 19, 18]);
+  assert("real frightened 1 + curse clumsy 2: Reflex -2 (status penalties, the worst applies)", reflex(roller([[CURSEBOUND, 2], real(FRIGHTENED_RECORD, 1)], [MEDDLING])), 7);
+  assert("real frightened 3 + curse clumsy 2: Reflex -3", reflex(roller([[CURSEBOUND, 2], real(FRIGHTENED_RECORD, 3)], [MEDDLING])), 6);
+  // The curse doesn't make the creature clumsy: no condition atom
+  assert("no self:condition:clumsy from the curse", traitList(roller([[CURSEBOUND, 2]], [MEDDLING])).includes("self:condition:clumsy"), false);
+}
+
+section("curse penalties: enfeebled, stupefied, Giant Instinct");
+{
+  assert("Sky's Call at cursebound 2: Athletics -2", athletics(roller([[CURSEBOUND, 2]], [SKYS_CALL])), 4);
+  assert("... not cursebound: unchanged", athletics(roller([], [SKYS_CALL])), 6);
+  const strDamage = (token) =>
+    ctx.getEffectsAndModifiersForToken(token, ["damageBonus", "damagePenalty"], "str").filter((m) => m.active !== false).map((m) => parseInt(m.value, 10));
+  assert("... and -2 to Strength damage", strDamage(roller([[CURSEBOUND, 2]], [SKYS_CALL])), [-2]);
+  // Torrential Knowledge: Will takes the curse's status penalty; stupefied 1
+  // at cursebound 4 is a status penalty too, so only the worst applies
+  assert("Torrential Knowledge at cursebound 3: Will -3", will(roller([[CURSEBOUND, 3]], [TORRENTIAL])), 4);
+  assert("... at cursebound 4: Will -4 (stupefied 1 doesn't add)", will(roller([[CURSEBOUND, 4]], [TORRENTIAL])), 3);
+  const wisMods = (token) =>
+    ctx.getEffectsAndModifiersForToken(token, ["allBonus", "allPenalty"], "wis").filter((m) => m.active !== false).map((m) => parseInt(m.value, 10));
+  assert("... stupefied 1 only at cursebound 4", [wisMods(roller([[CURSEBOUND, 3]], [TORRENTIAL])), wisMods(roller([[CURSEBOUND, 4]], [TORRENTIAL]))], [[], [-1]]);
+  // Giant Instinct: clumsy 1 while its toggle (wielding the larger weapon) is on
+  const giant = feature("Giant Instinct", [{ type: "allPenalty", modifierType: "status", field: "dex", valueType: "number", value: "1", predicate: '["item:oversized"]' }], { toggleable: true, predicateValue: "item:oversized" });
+  const toggles = (toggled) => ({ data: { toggles: [{ name: "Giant Instinct", data: { predicateValue: "item:oversized", toggled } }] } });
+  assert("Giant Instinct toggled on: -1 to Dex checks, Reflex, AC and Reflex DC", numbers(roller([], [giant], toggles(true))), [7, 8, 19, 18]);
+  assert("Giant Instinct toggled off: unchanged", numbers(roller([], [giant], toggles(false))), BASE);
+  assert("toggled on with real clumsy 2: -2", numbers(roller([real(CLUMSY_RECORD, 2)], [giant], toggles(true))), [6, 7, 18, 17]);
+}
+
+section("upkeep reads real effects only");
+{
+  assert("real quickened: 4 actions", ctx.getTurnStartActions(roller([[QUICKENED_RECORD, 1]], [])).actions, 4);
+  assert("no quickened: 3 actions", ctx.getTurnStartActions(roller([], [])).actions, 3);
+  assert("real frightened 1: its stack comes off at turn end", ctx.getTurnEndFrightened(roller([real(FRIGHTENED_RECORD, 1)], []))?._id, "frightened-record");
+  const dealt = (token) => {
+    state.messages = [];
+    const rolled = [];
+    const savedRoll = ctx.api.roll;
+    ctx.api.roll = (formula) => rolled.push(formula);
+    try {
+      runHook("onTurnEnd.js", { token });
+    } finally {
+      ctx.api.roll = savedRoll;
+    }
+    const flat = state.messages
+      .map((m) => (m.match(/```Apply_(.+?)_Persistent_Damage/) || [])[1])
+      .filter(Boolean)
+      .map((v) => v.replace(/_/g, " "));
+    return [...rolled, ...flat];
+  };
+  const burning = (cursebound, instances) =>
+    roller(
+      [...(cursebound ? [[CURSEBOUND, cursebound]] : []), ...(instances ? [[PERSISTENT]] : [])],
+      [],
+      { effectValues: instances ? { persistent: instances } : {} },
+    );
+  assert("real persistent 2 fire: dealt", dealt(burning(0, ["2 fire"])), ["2 fire"]);
+  assert("cursebound with no persistent damage effect: nothing (Engulfing Flames is manual)", dealt(burning(2)), []);
+  assert("two instances: each with its recovery index", ctx.getTurnEndPersistentDamage(burning(0, [{ value: "1d4 fire", _id: "foe", name: "Goblin" }, "1d6 bleed"])), [{ value: "1d4 fire", partIndex: 0 }, { value: "1d6 bleed", partIndex: 1 }]);
+}
+
+section("turn end: persistent damage recovery check (G2)");
+{
+  const charhide = feature("Charhide Goblin", [{ type: "persistentRecoveryDC", modifierType: "none", field: "fire", valueType: "number", value: "10" }]);
+  const onFire = (features) => oracle([[PERSISTENT]], features, { effectValues: { persistent: "5 fire" } });
+  runHook("onTurnEnd.js", { token: onFire([]) });
+  assert("flat persistent damage: a DC 15 recovery check", state.messages.some((m) => m.includes("Roll_Recovery") && m.includes("{ dc: 15,")), true);
+  runHook("onTurnEnd.js", { token: onFire([charhide]) });
+  assert("Charhide Goblin, fire: DC 10", state.messages.some((m) => m.includes("{ dc: 10,")), true);
+  let rolled = null;
+  const savedRoll = ctx.api.roll;
+  ctx.api.roll = (formula, metadata) => {
+    rolled = metadata;
+  };
+  try {
+      runHook("onTurnEnd.js", { token: oracle([[PERSISTENT]], [charhide], { effectValues: { persistent: "1d6 fire" } }) });
+    assert("rolled persistent fire damage carries recoveryDC 10", rolled?.recoveryDC, 10);
+      runHook("onTurnEnd.js", { token: oracle([[PERSISTENT]], [charhide], { effectValues: { persistent: "1d6 bleed" } }) });
+    assert("... bleed carries 15", rolled?.recoveryDC, 15);
+  } finally {
+    ctx.api.roll = savedRoll;
+  }
+}
+
+section("condition gain: Bravery");
+{
+  const bravery = feature("Bravery", [{ type: "conditionGain", modifierType: "none", field: "Frightened", valueType: "number", value: "-1" }], { level: 3 });
+  const fighter = (features = [bravery]) => ({ ...oracle([], features), _id: "fighter", name: "Valeros" });
+  const gain = (token, name, value) => ctx.getConditionGainValue(token, name, value).value;
+  assert("frightened 2 gained: 1", gain(fighter(), "Frightened", 2), 1);
+  assert("frightened 1 gained: 0", gain(fighter(), "Frightened", 1), 0);
+  assert("name match ignores case", gain(fighter(), "frightened", 3), 2);
+  assert("another condition: unchanged", gain(fighter(), "Clumsy", 2), 2);
+  assert("without Bravery: unchanged", gain(fighter([]), "Frightened", 2), 2);
+  const gated = feature("Gated", [{ type: "conditionGain", modifierType: "none", field: "Frightened", valueType: "number", value: "-1", predicate: '["self:effect:rage"]' }]);
+  assert("a failing predicate: unchanged", gain(fighter([gated]), "Frightened", 2), 2);
+  const worse = feature("Worse", [{ type: "conditionGain", modifierType: "none", field: "Frightened", valueType: "number", value: "1" }]);
+  assert("a positive change raises it", gain(fighter([worse]), "Frightened", 1), 2);
+
+  // applyEffect (one call per value) and the Apply buttons go through it
+  const savedTargets = ctx.api.getSelectedOrDroppedToken;
+  try {
+    ctx.api.getSelectedOrDroppedToken = () => [fighter()];
+    calls = [];
+    state.messages = [];
+    ctx.applyEffect("Frightened", 2);
+    assert("applyEffect frightened 2 on Bravery: one stack", calls, [["add", ["Frightened"], "fighter"]]);
+    assert("and a chat line", state.messages[0], "Valeros gains frightened 1 instead of 2 (Bravery).");
+    calls = [];
+    state.messages = [];
+    ctx.applyEffect("Frightened", 1);
+    assert("applyEffect frightened 1 on Bravery: nothing added", calls, []);
+    assert("and a chat line", state.messages[0], "Valeros doesn't gain frightened (Bravery).");
+    ctx.api.getSelectedOrDroppedToken = () => [fighter([])];
+    calls = [];
+    state.messages = [];
+    ctx.applyEffect("Frightened", 2);
+    assert("without Bravery: both stacks, no chat line", [calls, state.messages], [[["add", ["Frightened", "Frightened"], "fighter"]], []]);
+  } finally {
+    ctx.api.getSelectedOrDroppedToken = savedTargets;
+  }
+  calls = [];
+  ctx.applyEffectButton("frightened-id", "Frightened", fighter(), { _id: "foe" });
+  assert("Apply button on Bravery: frightened not added", calls, []);
+  ctx.applyEffectButton("frightened-id", "Frightened", fighter([]), { _id: "foe" });
+  assert("Apply button without Bravery: added by id", calls, [["addById", "frightened-id", "fighter"]]);
+  const savedGetToken = ctx.api.getToken;
+  ctx.api.getToken = () => ({ _id: "foe", name: "Goblin" });
+  const macro = ctx.getEffectMacrosFor([JSON.stringify({ _id: "frightened-id", name: "Frightened" }), JSON.stringify({ _id: "x", name: "Ogre's Fear" })]);
+  ctx.api.getToken = savedGetToken;
+  assert("Apply buttons call applyEffectButton with the value", macro.includes("applyEffectButton('frightened-id', 'Frightened', target, ourToken, 1);"), true);
+  assert("names with quotes are escaped", macro.includes("applyEffectButton('x', 'Ogre\\'s Fear', target, ourToken, 1);"), true);
+}
+
+section("condition gain: once per gain, not per stack (Bravery, Player Core pg. 136)");
+{
+  const bravery = feature("Bravery", [{ type: "conditionGain", modifierType: "none", field: "Frightened", valueType: "number", value: "-1" }], { level: 3 });
+  const fighter = (conditions = [], features = [bravery]) => ({ ...oracle(conditions, features), _id: "fighter", name: "Valeros" });
+  // The stacks one click of an Apply button for this value adds
+  const click = (token, name, value) => {
+    calls = [];
+    state.messages = [];
+    ctx.applyEffectButton(`${name.toLowerCase()}-id`, name, token, { _id: "foe" }, value);
+    return calls;
+  };
+  assert("Bravery, frightened 1: nothing (0)", click(fighter(), "Frightened", 1), []);
+  assert("Bravery, frightened 2 (critical Demoralize): frightened 1, kept who applied it", click(fighter(), "Frightened", 2), [["addById", "frightened-id", "fighter"]]);
+  assert("and one chat line for the gain", state.messages, ["Valeros gains frightened 1 instead of 2 (Bravery)."]);
+  assert("Bravery, frightened 3: frightened 2 in one write", click(fighter(), "Frightened", 3), [["add", ["Frightened", "Frightened"], "fighter"]]);
+  assert("no Bravery, frightened 1: frightened 1", click(fighter([], []), "Frightened", 1), [["addById", "frightened-id", "fighter"]]);
+  assert("no Bravery, frightened 2: frightened 2", click(fighter([], []), "Frightened", 2), [["add", ["Frightened", "Frightened"], "fighter"]]);
+  assert("no Bravery: no chat line", state.messages, []);
+  assert("Bravery, clumsy 2: unchanged", click(fighter(), "Clumsy", 2), [["add", ["Clumsy", "Clumsy"], "fighter"]]);
+  // A gain of a condition already held: the higher value (Player Core pg. 442)
+  assert("frightened 1 already, Bravery gain of 3 (2): one more stack", click(fighter([[FRIGHTENED, 1]]), "Frightened", 3), [["addById", "frightened-id", "fighter"]]);
+  assert("frightened 2 already, gain of frightened 2: nothing added", click(fighter([[FRIGHTENED, 2]], []), "Frightened", 2), []);
+  // applyEffect takes the value as one gain too
+  const savedTargets = ctx.api.getSelectedOrDroppedToken;
+  try {
+    ctx.api.getSelectedOrDroppedToken = () => [fighter()];
+    const apply = (value) => {
+      calls = [];
+      ctx.applyEffect("Frightened", value);
+      return calls;
+    };
+    assert("applyEffect, Bravery: 1 -> 0", apply(1), []);
+    assert("applyEffect, Bravery: 2 -> 1", apply(2), [["add", ["Frightened"], "fighter"]]);
+    assert("applyEffect, Bravery: 3 -> 2", apply(3), [["add", ["Frightened", "Frightened"], "fighter"]]);
+  } finally {
+    ctx.api.getSelectedOrDroppedToken = savedTargets;
+  }
+
+  // One button per value the ability gives the condition
+  const savedGetToken = ctx.api.getToken;
+  ctx.api.getToken = () => ({ _id: "foe", name: "Goblin" });
+  const demoralize = ctx.getEffectMacrosFor(
+    [JSON.stringify({ _id: "frightened-id", name: "Frightened" })],
+    "**Critical Success** The target becomes frightened 2.\n**Success** The target becomes frightened 1.",
+  );
+  const set = ctx.getEffectMacrosFor([JSON.stringify({ _id: "frightened-id", name: "Frightened", value: 3 })], "frightened 1");
+  const plain = ctx.getEffectMacrosFor([JSON.stringify({ _id: "prone-id", name: "Prone" })], "You fall prone.");
+  ctx.api.getToken = savedGetToken;
+  assert("Demoralize: an Apply button for frightened 1", demoralize.includes("```Apply_Frightened_1\n") && demoralize.includes("ourToken, 1);"), true);
+  assert("Demoralize: and one for frightened 2", demoralize.includes("```Apply_Frightened_2\n") && demoralize.includes("ourToken, 2);"), true);
+  assert("a value on the effect wins", [set.includes("```Apply_Frightened_3\n"), set.includes("ourToken, 1);")], [true, false]);
+  assert("no value named: one button for 1, named as before", [plain.includes("```Apply_Prone\n"), plain.includes("ourToken, 1);")], [true, true]);
 }
 
 process.exitCode = summary() > 0 ? 1 : 0;

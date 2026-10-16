@@ -1,5 +1,7 @@
 // Tests for PF2e Immunities / Weaknesses / Resistances (IWR) damage application
-// Exercises rollhandlers/common.js applyDamage() end-to-end.
+// Exercises rollhandlers/common.js applyDamage() end-to-end, including where
+// the damage comes from (definitions, exceptions), physical IWR, partial
+// resistance ignore, spell damage, void healing, harmedBy and suppressIWR.
 // Run: node tests/test-iwr.js   (or via tests/run-all.js)
 
 const { createSandbox } = require("./sandbox");
@@ -251,6 +253,245 @@ section("Phantasmal Minion (reported bug): dagger 3 force + 1 precision");
   // force 1 + precision 1; force survives (1), precision removed by immunity ->
   // total 1.
   assert("half damage -> 1", damageDealt(minion, daggerRoll, { half: true }), 1);
+}
+
+// --- Where the damage comes from (engine group G2) -----------------------
+
+// A target whose feature carries these modifiers (resistance, weakness,
+// immunity, suppressIWR, harmedBy, voidHealing)
+function withMods(mods, data = {}, extra = {}) {
+  const t = makeTarget(data);
+  t.data.features = [
+    { _id: "feat", name: extra.featureName || "Feature", data: { modifiers: mods.map((m) => ({ data: { modifierType: "none", active: true, ...m } })) } },
+  ];
+  if (extra.effects) {
+    t.effects = extra.effects;
+    t.effectIds = extra.effects.map((e) => e._id);
+  }
+  return t;
+}
+// A roll with a damageSource on its metadata
+function sourced(type, value, damageSource, extra = {}) {
+  const r = roll(type, value, extra);
+  r.metadata.damageSource = damageSource;
+  if (extra.isSpell) r.metadata.isSpell = true;
+  if (extra.ignoreResistances) r.metadata.damageIgnoresResistances = extra.ignoreResistances;
+  if (extra.dual) r.metadata.isVitalityDual = true;
+  return r;
+}
+const WEAPON = { type: "weapon", category: "martial", range: "melee", originTraits: ["humanoid"] };
+const FIST = { type: "weapon", category: "unarmed", range: "melee", originTraits: ["humanoid"] };
+const NPC_CLAW = { type: "melee", range: "melee", originTraits: ["undead", "zombie"] };
+const NPC_JAWS_UNARMED = { type: "melee", category: "unarmed", range: "melee", originTraits: ["animal"] };
+const ARCANE_SPELL = { type: "spell", traditions: ["arcane"], originTraits: ["humanoid"] };
+const DIVINE_SPELL = { type: "spell", traditions: ["divine"], originTraits: ["humanoid"] };
+
+section("Physical resistance is bludgeoning, piercing and slashing");
+{
+  const t = withMods([{ type: "resistance", field: "Physical", valueType: "number", value: "5" }]);
+  assert("slashing 10 vs physical 5 -> 5", damageDealt(t, roll("slashing", 10)), 5);
+  assert("bludgeoning 10 vs physical 5 -> 5", damageDealt(t, roll("bludgeoning", 10)), 5);
+  assert("fire 10 vs physical 5 -> 10", damageDealt(t, roll("fire", 10)), 10);
+  const listed = makeTarget({ resistances: [res("physical", 4)] });
+  assert("record IWR list entry 'physical' 4: piercing 10 -> 6", damageDealt(listed, roll("piercing", 10)), 6);
+  const both = withMods([{ type: "resistance", field: "Physical", valueType: "number", value: "3" }], { resistances: [res("slashing", 6)] });
+  assert("a stronger slashing resistance is kept: slashing 10 -> 4", damageDealt(both, roll("slashing", 10)), 4);
+  assert("... and physical 3 covers piercing: 10 -> 7", damageDealt(both, roll("piercing", 10)), 7);
+  const weakT = withMods([{ type: "weakness", field: "Physical", valueType: "number", value: "2" }]);
+  assert("physical weakness 2: slashing 10 -> 12", damageDealt(weakT, roll("slashing", 10)), 12);
+  const immT = withMods([{ type: "immunity", field: "Physical", valueType: "string", value: "" }]);
+  assert("physical immunity: piercing 10 -> 0", damageDealt(immT, roll("piercing", 10)), 0);
+}
+
+section("Fury Instinct: weapon damage only, not unarmed attacks (definition)");
+{
+  const fury = withMods([
+    { type: "resistance", field: "Physical", valueType: "string", value: "{3+2}", definition: '[{"or":["item:type:weapon","item:type:melee"]},{"not":"item:category:unarmed"}]' },
+  ]);
+  assert("weapon slashing 10 -> 5", damageDealt(fury, sourced("slashing", 10, WEAPON)), 5);
+  assert("NPC Strike piercing 10 -> 5", damageDealt(fury, sourced("piercing", 10, NPC_CLAW)), 5);
+  assert("fist bludgeoning 10 -> 10 (unarmed)", damageDealt(fury, sourced("bludgeoning", 10, FIST)), 10);
+  assert("NPC unarmed jaws 10 -> 10", damageDealt(fury, sourced("piercing", 10, NPC_JAWS_UNARMED)), 10);
+  assert("spell bludgeoning 10 -> 10 (not a weapon)", damageDealt(fury, sourced("bludgeoning", 10, ARCANE_SPELL, { isSpell: true })), 10);
+  assert("unknown source (old chat card) -> 10", damageDealt(fury, roll("slashing", 10)), 10);
+  // Foundry's own spelling: exceptions with a definition
+  const foundry = withMods([
+    { type: "resistance", field: "Physical", valueType: "number", value: "5", exceptions: '[{"definition":[{"or":["item:type:melee","item:type:weapon"]},"item:category:unarmed"],"label":"Non-weapons"}]' },
+  ]);
+  assert("Foundry exceptions: weapon slashing 10 -> 5", damageDealt(foundry, sourced("slashing", 10, WEAPON)), 5);
+  assert("Foundry exceptions: fist 10 -> 10", damageDealt(foundry, sourced("bludgeoning", 10, FIST)), 10);
+}
+
+section("Spirit Instinct: all damage from undead creatures (definition origin:mode:undead)");
+{
+  const spirit = withMods([
+    { type: "resistance", field: "Void", valueType: "number", value: "6" },
+    { type: "resistance", field: "Custom", valueType: "number", value: "6", definition: '["origin:mode:undead"]' },
+  ]);
+  assert("zombie's slashing 10 -> 4", damageDealt(spirit, sourced("slashing", 10, NPC_CLAW)), 4);
+  assert("living attacker's slashing 10 -> 10", damageDealt(spirit, sourced("slashing", 10, WEAPON)), 10);
+  assert("void 10 from anyone -> 4", damageDealt(spirit, roll("void", 10)), 4);
+  assert("zombie's void 10: resisted once -> 4", damageDealt(spirit, sourced("void", 10, NPC_CLAW)), 4);
+  const traitForm = withMods([{ type: "resistance", field: "", valueType: "number", value: "6", definition: '["origin:trait:undead"]' }]);
+  assert("origin:trait:undead works too", damageDealt(traitForm, sourced("fire", 10, NPC_CLAW)), 4);
+}
+
+section("Superstition Instinct: spells of two traditions (definition)");
+{
+  const superstition = withMods([
+    { type: "resistance", field: "Custom", valueType: "number", value: "6", definition: '["item:type:spell",{"or":["item:trait:arcane","item:trait:occult"]}]' },
+  ]);
+  assert("arcane spell fire 10 -> 4", damageDealt(superstition, sourced("fire", 10, ARCANE_SPELL, { isSpell: true })), 4);
+  assert("divine spell fire 10 -> 10", damageDealt(superstition, sourced("fire", 10, DIVINE_SPELL, { isSpell: true })), 10);
+  assert("weapon slashing 10 -> 10", damageDealt(superstition, sourced("slashing", 10, WEAPON)), 10);
+  assert("spell with arcane in its traits (no tradition) -> 4", damageDealt(superstition, sourced("cold", 10, { type: "spell" }, { isSpell: true, traits: ["arcane", "cold"] })), 4);
+  // The chosen pair as a toggle option the definition reads (the barbarian's own atoms are in it)
+  const chosen = (option) => {
+    const t = withMods([
+      { type: "resistance", field: "Custom", valueType: "number", value: "6", definition: '["item:type:spell",{"or":[{"and":["superstition:arcane-occult",{"or":["item:trait:arcane","item:trait:occult"]}]},{"and":["superstition:divine-primal",{"or":["item:trait:divine","item:trait:primal"]}]}]}]' },
+    ]);
+    t.data.toggles = [{ name: "Superstition Instinct: pair", data: { predicateValue: option, toggled: true } }];
+    return t;
+  };
+  assert("toggle arcane-occult: arcane spell resisted", damageDealt(chosen("superstition:arcane-occult"), sourced("fire", 10, ARCANE_SPELL, { isSpell: true })), 4);
+  assert("toggle divine-primal: arcane spell not resisted", damageDealt(chosen("superstition:divine-primal"), sourced("fire", 10, ARCANE_SPELL, { isSpell: true })), 10);
+  assert("toggle divine-primal: divine spell resisted", damageDealt(chosen("superstition:divine-primal"), sourced("fire", 10, DIVINE_SPELL, { isSpell: true })), 4);
+}
+
+section("Word exceptions on a modifier work like the IWR list's");
+{
+  const t = withMods([{ type: "resistance", field: "all damage", valueType: "number", value: "5", exceptions: "force, ghost-touch" }]);
+  assert("force excepted -> 10", damageDealt(t, roll("force", 10)), 10);
+  assert("ghost-touch category excepted -> 10", damageDealt(t, roll("slashing", 10, { categories: ["ghost-touch"] })), 10);
+  assert("fire resisted -> 5", damageDealt(t, roll("fire", 10)), 5);
+}
+
+section("Devastator: ignore up to 10 resistance");
+{
+  assert("modifier text 'ignore physical resistance 10'", ctx.getDamageIgnoreList([{ valueType: "string", value: "ignore physical resistance 10" }], "resistance"), "physical:10");
+  assert("modifier text 'ignore up to 10 physical resistance'", ctx.getDamageIgnoreList([{ valueType: "string", value: "ignore up to 10 physical resistance" }], "resistance"), "physical:10");
+  assert("whole ignore unchanged: 'ignore fire resistance'", ctx.getDamageIgnoreList([{ valueType: "string", value: "ignore fire resistance" }], "resistance"), "fire");
+  assert("immunity list unchanged", ctx.getDamageIgnoreList([{ valueType: "string", value: "ignore fire immunity" }], "immunity"), "fire");
+  assert("inactive modifier ignored", ctx.getDamageIgnoreList([{ valueType: "string", value: "ignore physical resistance 10", active: false }], "resistance"), "");
+  const big = makeTarget({ resistances: [res("slashing", 15)] });
+  assert("slashing 20 vs resist 15, ignore up to 10 -> 15", damageDealt(big, sourced("slashing", 20, WEAPON, { ignoreResistances: "physical:10" })), 15);
+  const small = makeTarget({ resistances: [res("slashing", 5)] });
+  assert("slashing 20 vs resist 5, ignore up to 10 -> 20", damageDealt(small, sourced("slashing", 20, WEAPON, { ignoreResistances: "physical:10" })), 20);
+  const fire = makeTarget({ resistances: [res("fire", 15)] });
+  assert("fire is not physical: fire 20 vs 15 -> 5", damageDealt(fire, sourced("fire", 20, WEAPON, { ignoreResistances: "physical:10" })), 5);
+  const all = makeTarget({ resistances: [res("all damage", 12)] });
+  assert("all-damage resistance to physical: 20 - (12 - 10) -> 18", damageDealt(all, sourced("piercing", 20, WEAPON, { ignoreResistances: "physical:10" })), 18);
+  assert("whole ignore still ignores it all", damageDealt(big, sourced("slashing", 20, WEAPON, { ignoreResistances: "slashing" })), 20);
+}
+
+section("Spell damage is of the 'spells' category (Curse of the Mortal Warrior)");
+{
+  const curse = withMods([{ type: "weakness", field: "Spells", valueType: "number", value: "3" }]);
+  const spellRoll = roll("fire", 10);
+  spellRoll.metadata.isSpell = true;
+  assert("spell fire 10 (isSpell) -> 13", damageDealt(curse, spellRoll), 13);
+  assert("the roll itself is not changed", spellRoll.metadata.damageCategories, []);
+  assert("spell damageSource without isSpell -> 13", damageDealt(curse, sourced("cold", 10, ARCANE_SPELL)), 13);
+  assert("weapon fire 10 -> 10", damageDealt(curse, sourced("fire", 10, WEAPON)), 10);
+  const listed = makeTarget({ resistances: [res("spells", 4)] });
+  assert("record resistance to spells: spell 10 -> 6", damageDealt(listed, sourced("fire", 10, ARCANE_SPELL, { isSpell: true })), 6);
+}
+
+// Vitality and void: the target is at half HP so healing shows
+const HALF = { curhp: 500, hitpoints: 1000 };
+function hpChange(target, r, options) {
+  ctx.__state.lastSet = null;
+  ctx.applyDamage(target, r, false, null, false, options);
+  const set = ctx.__state.lastSet || {};
+  return ("data.curhp" in set ? set["data.curhp"] : 500) - 500;
+}
+const VITALITY = (dual = false) => {
+  const r = roll("vitality", 10, { traits: ["vitality", "healing"] });
+  if (dual) r.metadata.isVitalityDual = true;
+  return r;
+};
+const VOID = (dual = false) => {
+  const r = roll("void", 10, { traits: ["void"] });
+  if (dual) r.metadata.isVitalityDual = true;
+  return r;
+};
+
+section("Void healing (Dhampir)");
+{
+  const living = withMods([], HALF);
+  assert("living: vitality heals (unchanged)", hpChange(living, VITALITY()), 10);
+  assert("living: void harms (unchanged)", hpChange(living, VOID()), -10);
+  const dhampir = withMods([{ type: "voidHealing", valueType: "string", value: "" }], HALF);
+  assert("void healing: vitality harms", hpChange(dhampir, VITALITY()), -10);
+  assert("void healing: void heals", hpChange(dhampir, VOID()), 10);
+  const gated = withMods([{ type: "voidHealing", valueType: "string", value: "", predicate: '["self:effect:never"]' }], HALF);
+  assert("failed predicate: living again", hpChange(gated, VITALITY()), 10);
+}
+
+section("harmedBy (Curse of the Living Death)");
+{
+  const CURSEBOUND = { _id: "cursebound", name: "Cursebound", stackable: true, rules: [] };
+  const oracle = (cursebound) =>
+    withMods(
+      [
+        { type: "harmedBy", valueType: "string", value: "vitality", predicate: '["self:condition:cursebound"]' },
+        { type: "harmedBy", valueType: "string", value: "void", predicate: '["self:condition:cursebound"]' },
+      ],
+      HALF,
+      { effects: cursebound ? [CURSEBOUND] : [] },
+    );
+  assert("cursebound: vitality damage harms", hpChange(oracle(true), VITALITY()), -10);
+  assert("not cursebound: vitality heals", hpChange(oracle(false), VITALITY()), 10);
+  assert("cursebound: void harms (as for any living creature)", hpChange(oracle(true), VOID()), -10);
+  // heal's Damage or Healing card: whoever applies it picks
+  let prompted = null;
+  const savedPrompt = ctx.api.showPrompt;
+  ctx.api.showPrompt = (title, text, placeholder, options, query, cb) => {
+    prompted = { title, options: options.map((o) => o.value), cb };
+  };
+  try {
+    ctx.__state.lastSet = null;
+    ctx.applyDamage(oracle(true), VITALITY(true), false, null, false);
+    assert("dual card on a harmedBy target: asks Heal or Harm", prompted && prompted.options, ["heal", "harm"]);
+    assert("... and changes nothing yet", ctx.__state.lastSet, null);
+    ctx.__state.lastSet = null;
+    prompted.cb(["harm"]);
+    assert("Harm: 10 damage", ctx.__state.lastSet["data.curhp"], 490);
+    ctx.__state.lastSet = null;
+    prompted.cb("heal");
+    assert("Heal: healed 10", ctx.__state.lastSet["data.curhp"], 510);
+    prompted = null;
+    assert("dual card without harmedBy: heals, no prompt", [hpChange(oracle(false), VITALITY(true)), prompted], [10, null]);
+  } finally {
+    ctx.api.showPrompt = savedPrompt;
+  }
+}
+
+section("suppressIWR (Curse of the Living Death, Inclement Headwinds)");
+{
+  const CURSEBOUND = { _id: "cursebound", name: "Cursebound", stackable: true, rules: [] };
+  const living = (cursebound) =>
+    withMods(
+      [{ type: "suppressIWR", field: "", valueType: "string", value: "vitality,void", predicate: '["self:condition:cursebound"]' }],
+      { resistances: [res("void", 5)], immunities: [imm("vitality")] },
+      { effects: cursebound ? [CURSEBOUND] : [] },
+    );
+  assert("cursebound: void resistance suppressed", damageDealt(living(true), roll("void", 10)), 10);
+  assert("cursebound: vitality immunity suppressed", damageDealt(living(true), roll("vitality", 10)), 10);
+  assert("not cursebound: void resisted", damageDealt(living(false), roll("void", 10)), 5);
+  assert("not cursebound: vitality immunity", damageDealt(living(false), roll("vitality", 10)), 0);
+  const headwinds = withMods(
+    [{ type: "suppressIWR", field: "", valueType: "string", value: "electricity", predicate: '["item:type:spell","item:trait:electricity"]' }],
+    { resistances: [res("electricity", 5)] },
+  );
+  assert("electricity spell: resistance suppressed", damageDealt(headwinds, sourced("electricity", 10, ARCANE_SPELL, { isSpell: true, traits: ["electricity"] })), 10);
+  assert("electricity weapon: still resisted", damageDealt(headwinds, sourced("electricity", 10, WEAPON)), 5);
+  const weakOnly = withMods(
+    [{ type: "suppressIWR", field: "weakness", valueType: "string", value: "fire" }],
+    { weaknesses: [weak("fire", 5)], resistances: [res("cold", 5)] },
+  );
+  assert("field weakness: fire weakness suppressed", damageDealt(weakOnly, roll("fire", 10)), 10);
+  assert("field weakness: cold resistance kept", damageDealt(weakOnly, roll("cold", 10)), 5);
 }
 
 process.exit(summary());

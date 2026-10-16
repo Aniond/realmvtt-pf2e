@@ -5,6 +5,9 @@
 // as modifier fields, situational opt-in modifiers, weapon die and trait
 // alterations, weapon dice tokens, other movement Speeds, senses, Dex caps,
 // dying maximum and recovery DC modifiers, and save macro source traits.
+// Engine group G2: flat persistent damage, damage source atoms, persistent
+// recovery DC, Nine Lives recovery DC, rest healing, magical item healing,
+// maximized healing dice, roll notes and Devastator's partial ignore.
 // Run: node tests/test-feat-automation.js   (or via tests/run-all.js)
 
 const fs = require("fs");
@@ -767,6 +770,232 @@ section("raised shield: atom and the raised-shield slug");
   assertIncludes("self:shield:raised", traits, "self:shield:raised");
   assertIncludes("self:shield:base:buckler", traits, "self:shield:base:buckler");
   assertNotIncludes("not raised: no atom", traitsFor(pc({ inventory: [buckler], shieldRaised: "false" })), "self:shield:raised");
+}
+
+// --- engine group G2: damage, IWR, healing, recovery ---------------------------
+
+// Runs a roll handler file the way Realm does, with `data` in scope
+function runHandler(file, data) {
+  ctx.__state.messages = [];
+  ctx.data = data;
+  const code = fs.readFileSync(`${__dirname}/../rollhandlers/${file}`, "utf8");
+  new vm.Script(`(function () {\n${code}\n})();`, { filename: file }).runInContext(ctx);
+  return ctx.__state.messages.join("\n");
+}
+
+section("flat persistent damage (Relentless Reaction)");
+{
+  const split = (values, existing = "") =>
+    ctx.processDamageModifierCategories(values.map((value) => ({ name: "M", value, active: true })), existing);
+  const flat = split(["4 spirit-persistent"]);
+  assert("'4 spirit-persistent' is persistent damage", [flat.persistentDamage, flat.modifiers.length], ["4 spirit", 0]);
+  assert("arithmetic is worked out", split(["2+3 fire-persistent"]).persistentDamage, "5 fire");
+  const none = split(["0 spirit-persistent"]);
+  assert("0 deals nothing and isn't a modifier either", [none.persistentDamage, none.modifiers.length], ["", 0]);
+  assert("dice persistent unchanged", split(["1d6 fire-persistent"]).persistentDamage, "1d6 fire");
+  assert("joins the weapon's own persistent damage", split(["4 spirit-persistent"], "1d6 bleed").persistentDamage, "1d6 bleed, 4 spirit");
+  assert("a plain number stays an ordinary modifier", split(["4"]).modifiers.length, 1);
+  const splash = split(["3 fire-splash"]);
+  assert("flat splash too", splash.splashDamage, "3 fire");
+  // The feature as the record has it: a formula that becomes a number
+  const relentless = feat("Relentless Reaction", [
+    { type: "damageBonus", modifierType: "", field: "strike-damage", valueType: "string", value: "@actor.abilities.cha.mod spirit-persistent" },
+  ]);
+  const champion = pc({ cha: 4, feats: [relentless] });
+  const mods = lookup(champion, ["damageBonus"], "strike-damage");
+  assert("Relentless Reaction: cha 4 -> 4 spirit persistent", ctx.processDamageModifierCategories(mods).persistentDamage, "4 spirit");
+  assert("cha 0 -> nothing", ctx.processDamageModifierCategories(lookup(pc({ cha: 0, feats: [relentless] }), ["damageBonus"], "strike-damage")).persistentDamage, "");
+  assert("a critical hit doubles flat persistent damage too", ctx.doublePersistentDamage("1d6 fire, 4 spirit"), "2d6 fire, 8 spirit");
+  assert("dice only, as before", ctx.doublePersistentDamage("2d4 bleed"), "4d4 bleed");
+}
+
+section("damage source (damageSource metadata and atoms)");
+{
+  const sword = weapon("Longsword");
+  const source = ctx.getDamageSource(pc({ traits: ["Human", "Humanoid"] }), sword);
+  assert("a weapon: type, category, range, slug, origin traits", [source.type, source.category, source.range, source.slug, source.originTraits], ["weapon", "martial", "melee", "longsword", ["human", "humanoid"]]);
+  const fist = ctx.getDamageSource(null, weapon("Fist", { itemCategory: "unarmed" }));
+  assert("unarmed category, no creature", [fist.category, fist.originTraits], ["unarmed", undefined]);
+  const claw = ctx.getDamageSource({ data: { traits: ["Undead"] } }, { name: "Claw", recordType: "npc_attacks", data: { weaponType: "melee", traits: ["unarmed"] } });
+  assert("an NPC Strike is a melee item; unarmed by trait", [claw.type, claw.category], ["melee", "unarmed"]);
+  const fireball = ctx.getDamageSource(null, { name: "Fireball", recordType: "spells", data: { traits: ["Fire"], traditions: ["arcane", "primal"] } }, "Arcane");
+  assert("a spell: its casting tradition", [fireball.type, fireball.traditions], ["spell", ["arcane"]]);
+  const potion = ctx.getDamageSource(null, { name: "Minor Healing Potion", recordType: "items", data: { type: "consumable", traits: ["Consumable", "Healing", "Magical", "Potion"] } });
+  assert("a potion is magical", potion.magical, true);
+  const elixir = ctx.getDamageSource(null, { name: "Elixir of Life (Minor)", recordType: "items", data: { type: "consumable", traits: ["Alchemical", "Elixir", "Healing"] } });
+  assert("an alchemical elixir is not", elixir.magical, undefined);
+  const atoms = [...ctx.getDamageSourceAtoms({ types: [{ type: "slashing" }], metadata: { traits: ["Versatile P"], damageSource: claw } })];
+  ["item:type:melee", "item:category:unarmed", "item:unarmed", "item:melee", "item:slug:claw", "item:trait:unarmed", "item:damage:type:slashing", "origin:trait:undead", "origin:mode:undead"].forEach((atom) =>
+    assertIncludes(`atom ${atom}`, atoms, atom),
+  );
+  assertIncludes("a spell roll without a source is still item:type:spell", [...ctx.getDamageSourceAtoms({ metadata: { isSpell: true } })], "item:type:spell");
+  assertIncludes("a living creature: origin:mode:living", [...ctx.getDamageSourceAtoms({ metadata: { damageSource: source } })], "origin:mode:living");
+  assertNotIncludes("no creature: no origin mode", [...ctx.getDamageSourceAtoms({ metadata: { damageSource: fist } })], "origin:mode:living");
+  // The weapon Strike and its damage carry the source
+  const attack = capturePrompt(() => ctx.performDamageRoll(pc({ inventory: [sword] }), sword, "data.inventory.0", false));
+  assert("weapon damage roll metadata carries damageSource", attack.metadata.damageSource?.type, "weapon");
+  // Devastator: melee Strikes ignore up to 10 physical resistance
+  const devastator = feat("Devastator", [{ type: "damageBonus", modifierType: "none", field: "melee", valueType: "string", value: "ignore up to 10 physical resistance" }]);
+  const melee = capturePrompt(() => ctx.performDamageRoll(pc({ feats: [devastator], inventory: [sword] }), sword, "data.inventory.0", false));
+  assert("Devastator: a melee Strike's damage carries physical:10", melee.metadata.damageIgnoresResistances, "physical:10");
+  assert("... and it isn't a damage modifier", melee.modifiers.some((m) => String(m.value).includes("ignore")), false);
+  const bow = weapon("Longbow", { range: 100, group: "bow" });
+  const ranged = capturePrompt(() => ctx.performDamageRoll(pc({ feats: [devastator], inventory: [bow] }), bow, "data.inventory.0", false));
+  assert("... a ranged Strike's doesn't", ranged.metadata.damageIgnoresResistances, "");
+}
+
+section("persistent damage recovery DC (Charhide Goblin)");
+{
+  const charhide = (mods) => pc({ feats: [feat("Charhide Goblin", mods)] });
+  assert("no modifiers: DC 15", ctx.getPersistentRecoveryDC(pc(), "1d6 fire"), 15);
+  const byField = charhide([{ type: "persistentRecoveryDC", modifierType: "none", field: "Fire", valueType: "number", value: "10" }]);
+  assert("field Fire, value 10: fire DC 10", ctx.getPersistentRecoveryDC(byField, "1d6 fire"), 10);
+  assert("... cold still DC 15", ctx.getPersistentRecoveryDC(byField, "2 cold"), 15);
+  const byPredicate = charhide([{ type: "persistentRecoveryDC", modifierType: "none", field: "", valueType: "number", value: "10", predicate: '["item:damage:type:fire"]' }]);
+  assert("Foundry predicate item:damage:type:fire: fire DC 10", ctx.getPersistentRecoveryDC(byPredicate, "3 fire"), 10);
+  assert("... bleed DC 15", ctx.getPersistentRecoveryDC(byPredicate, "1d4 bleed"), 15);
+  const lower = charhide([{ type: "persistentRecoveryDC", modifierType: "none", field: "", valueType: "string", value: "-5" }]);
+  assert("a signed value changes the DC: 15 - 5", ctx.getPersistentRecoveryDC(lower, "1d6 acid"), 10);
+  const both = charhide([
+    { type: "persistentRecoveryDC", modifierType: "none", field: "fire", valueType: "number", value: "10" },
+    { type: "persistentRecoveryDC", modifierType: "none", field: "fire", valueType: "number", value: "12" },
+  ]);
+  assert("two DCs: the lowest", ctx.getPersistentRecoveryDC(both, "1d6 fire"), 10);
+  assertIncludes("the button rolls against that DC", [ctx.getPersistentRecoveryButton(10, 1)], ctx.getPersistentRecoveryButton(10, 1));
+  assert("button text", ctx.getPersistentRecoveryButton(10, 1).includes('{ dc: 10, rollName: "Persistent Damage Flat Check"') && ctx.getPersistentRecoveryButton(10, 1).includes("persistentPartIndex: 1 }"), true);
+  assert("no DC given: 15", ctx.getPersistentRecoveryButton(undefined, 0).includes("{ dc: 15,"), true);
+  const card = runHandler("damage.js", { roll: { types: [{ type: "fire", value: 3 }], dice: [], total: 3, metadata: { isPersistant: true, persistentPartIndex: 0, recoveryDC: 10 } } });
+  assert("damage.js: the persistent damage card's recovery check uses it", card.includes("{ dc: 10, rollName"), true);
+  const oldCard = runHandler("damage.js", { roll: { types: [{ type: "fire", value: 3 }], dice: [], total: 3, metadata: { isPersistant: true, persistentPartIndex: 0 } } });
+  assert("damage.js: without one, DC 15 as before", oldCard.includes("{ dc: 15, rollName"), true);
+  const crit = runHandler("damage.js", { roll: { types: [{ type: "slashing", value: 8 }], dice: [], total: 8, metadata: { critical: true, persistentDamage: "4 spirit" } } });
+  assert("damage.js: a critical hit doubles flat persistent damage", crit.includes('applyPersistentDamage("8 spirit"'), true);
+}
+
+section("recovery DC without the dying value (Nine Lives Catfolk)");
+{
+  const nineLives = feat("Nine Lives Catfolk", [{ type: "recoveryDC", modifierType: "none", field: "", valueType: "string", value: "-@actor.conditions.dying.value" }]);
+  const dying = (value, feats) => ({ ...pc({ feats }), data: { ...pc({ feats }).data, dying: value } });
+  assert("@actor.conditions.dying.value reads the sheet's dying", ctx.checkForReplacements("@actor.conditions.dying.value", {}, dying(3, [])), "3");
+  assert("dying 2 without it: DC 12", ctx.getRecoveryCheckDC(dying(2, [])), 12);
+  assert("Nine Lives, dying 2: DC 10", ctx.getRecoveryCheckDC(dying(2, [nineLives])), 10);
+  assert("Nine Lives, dying 3: DC 10", ctx.getRecoveryCheckDC(dying(3, [nineLives])), 10);
+  assert("... worked out at the dying value asked for", ctx.getRecoveryCheckDC(dying(1, [nineLives]), 3), 10);
+  assert("with Toughness too: DC 9 (they add up, as in Foundry)", ctx.getRecoveryCheckDC(dying(2, [nineLives, feat("Toughness", [])])), 9);
+  assertIncludes("self:condition:dying from the sheet", traitsFor(dying(2, [])), "self:condition:dying:2");
+  assertNotIncludes("not dying: no atom", traitsFor(dying(0, [])), "self:condition:dying");
+  const gated = feat("Nine Lives Catfolk", [{ type: "recoveryDC", modifierType: "none", field: "", valueType: "string", value: "-@actor.conditions.dying.value", predicate: '["self:condition:dying"]' }]);
+  assert("Foundry's self:condition:dying predicate passes while dying", ctx.getRecoveryCheckDC(dying(2, [gated])), 10);
+}
+
+section("overnight rest healing (Hillock Halfling)");
+{
+  const hillock = feat("Hillock Halfling", [{ type: "restHealing", modifierType: "none", field: "", valueType: "string", value: "@actor.level" }]);
+  assert("Con 1 x level 5", ctx.getRestHealing(pc()).amount, 5);
+  assert("Con 0 counts as 1", ctx.getRestHealing(pc({ con: 0 })).amount, 5);
+  const halfling = ctx.getRestHealing(pc({ feats: [hillock] }));
+  assert("Hillock Halfling adds the level: 10", [halfling.amount, halfling.names], [10, ["+5 Hillock Halfling"]]);
+  const gated = feat("Gated", [{ type: "restHealing", modifierType: "none", field: "", valueType: "number", value: "3", predicate: '["self:effect:never"]' }]);
+  assert("a failing predicate adds nothing", ctx.getRestHealing(pc({ feats: [gated] })).amount, 5);
+}
+
+section("healing received from a magical item (Curse of Outpouring Life)");
+{
+  const CURSEBOUND = { _id: "cursebound", name: "Cursebound", stackable: true, rules: [] };
+  const outpouring = feat("Curse of Outpouring Life", [
+    { type: "healingReceivedBonus", modifierType: "status", field: "", valueType: "number", value: "-@actor.level*@actor.conditions.cursebound.value", predicate: '["self:condition:cursebound","item:magical"]' },
+  ]);
+  const oracle = { ...pc({ curhp: 10, hitpoints: 100, feats: [outpouring] }), effects: [CURSEBOUND], effectIds: ["cursebound", "cursebound"] };
+  const heal = (options) => {
+    ctx.__state.lastSet = null;
+    ctx.applyHealingToToken(oracle, 30, options);
+    return ctx.__state.lastSet?.["data.curhp"];
+  };
+  const potion = ctx.getDamageSource(null, { name: "Moderate Healing Potion", recordType: "items", data: { type: "consumable", traits: ["Consumable", "Healing", "Magical", "Potion"] } });
+  const elixir = ctx.getDamageSource(null, { name: "Elixir of Life (Minor)", recordType: "items", data: { type: "consumable", traits: ["Alchemical", "Elixir", "Healing"] } });
+  assert("a healing potion: 30 - level 5 x cursebound 2", heal({ damageSource: potion }), 30);
+  assert("an alchemical elixir isn't magical: 30", heal({ damageSource: elixir }), 40);
+  assert("a spell still counts as magical", heal({ isSpell: true }), 30);
+  assert("unknown source: no penalty", heal({}), 40);
+  const bare = feat("Bare", [{ type: "healingReceivedBonus", modifierType: "status", field: "", valueType: "number", value: "-3", predicate: '["magical"]' }]);
+  ctx.__state.lastSet = null;
+  ctx.applyHealingToToken(pc({ curhp: 10, hitpoints: 100, feats: [bare] }), 30, { damageSource: potion });
+  assert("the bare 'magical' atom works too", ctx.__state.lastSet?.["data.curhp"], 37);
+  const healCard = runHandler("healing.js", { roll: { types: [{ type: "healing", value: 7 }], total: 7, metadata: { rollName: "Potion", damageSource: potion } } });
+  assert("healing.js passes the source to applyHealingToToken", healCard.includes('"magical":true'), true);
+}
+
+section("maximized healing dice (Greater Field Discovery)");
+{
+  const discovery = feat("Greater Field Discovery (Chirurgeon)", [
+    { type: "maximizeHealing", modifierType: "none", field: "", valueType: "string", value: "", predicate: '[{"or":["item:slug:elixir-of-life-minor","item:slug:elixir-of-life-lesser"]}]' },
+  ]);
+  const alchemist = pc({ feats: [discovery] });
+  const minor = { _id: "eol", name: "Elixir of Life (Minor)", recordType: "items", data: { type: "consumable", level: 1, traits: ["Alchemical", "Elixir", "Healing"], description: "" } };
+  const potion = { _id: "pot", name: "Minor Healing Potion", recordType: "items", data: { type: "consumable", level: 1, traits: ["Magical"] } };
+  assert("maximizeDice", ctx.maximizeDice("3d6+6"), "18+6");
+  assert("an elixir of life: maximized", ctx.hasMaximizeHealing(alchemist, minor), true);
+  assert("another item: not", ctx.hasMaximizeHealing(alchemist, potion), false);
+  assert("without the feature: not", ctx.hasMaximizeHealing(pc(), minor), false);
+  const text = "Heals replaceWithDamageMacro('1d6', 'healing')";
+  const rendered = ctx.updateDamageMacros(text, { item: minor, creature: alchemist });
+  assert("the item's healing button carries maximizeHealing", rendered.includes('"maximizeHealing":true'), true);
+  assert("... and where it comes from", rendered.includes('"damageSource":{'), true);
+  assert("another creature's button doesn't", ctx.updateDamageMacros(text, { item: minor, creature: pc() }).includes("maximizeHealing"), false);
+  const rolled = capturePrompt(() => ctx.executeDamageMacro("1d6", "healing", null, { _id: "eol", recordType: "items", maximizeHealing: true }));
+  assert("executeDamageMacro: 1d6 healing rolls 6", rolled.dice, "6");
+  const normal = capturePrompt(() => ctx.executeDamageMacro("1d6", "healing", null, { _id: "eol", recordType: "items" }));
+  assert("without it: 1d6", normal.dice, "1d6");
+  const damage = capturePrompt(() => ctx.executeDamageMacro("1d6 fire", "standard", null, { _id: "eol", recordType: "items", maximizeHealing: true }));
+  assert("damage is never maximized", damage.dice, "1d6 fire");
+}
+
+section("roll notes (Third Path to Perfection)");
+{
+  const note = (field, outcome, predicate) => ({
+    type: "rollNote", modifierType: "none", field, valueType: "string",
+    value: "You take half damage from this effect. Use Apply Half Damage.",
+    ...(outcome !== undefined ? { outcome } : {}),
+    ...(predicate ? { predicate } : {}),
+  });
+  const monk = (mods, extra = {}) => pc({ feats: [feat("Third Path to Perfection", mods)], ...extra });
+  const notes = ctx.getRollNotes(monk([note("reflex", "failure")]), ["reflex", "dex", "saving-throw"]);
+  assert("collected with its outcome", [notes.length, notes[0]?.name, notes[0]?.outcome], [1, "Third Path to Perfection", [0]]);
+  assert("text kept as written (no level replacement)", ctx.getRollNotes(monk([{ ...note("will"), value: "Add your level." }]), ["will"])[0]?.text, "Add your level.");
+  assert("another save: none", ctx.getRollNotes(monk([note("reflex", "failure")]), ["will", "wis", "saving-throw"]).length, 0);
+  assert("array outcomes", ctx.getRollNotes(monk([note("reflex", ["failure", "criticalFailure"])]), ["reflex"])[0]?.outcome, [0, -1]);
+  assert("predicate gate off: none", ctx.getRollNotes(monk([note("reflex", "failure", '["third-path-to-perfection:reflex"]')]), ["reflex"]).length, 0);
+  const toggled = monk([note("reflex", "failure", '["third-path-to-perfection:reflex"]')], { toggles: [{ name: "Third Path", data: { predicateValue: "third-path-to-perfection:reflex", toggled: true } }] });
+  assert("predicate gate on: shown", ctx.getRollNotes(toggled, ["reflex"]).length, 1);
+  assert("a rollNote's 'failure' outcome doesn't make it a miss-only damage rider", lookup(monk([note("reflex", "failure")]), ["rollNote"], "reflex")[0]?.failureOnly, undefined);
+  const text = (degree) => ctx.getRollNotesText(notes, degree);
+  assert("failure: shown", text(0), "\n\n**Third Path to Perfection:** You take half damage from this effect. Use Apply Half Damage.");
+  assert("success: not shown", text(1), "");
+  assert("no DC: shown", text(null), text(0));
+  // rollSave passes them, save.js shows them on the final degree
+  const save = capturePrompt(() => ctx.rollSave(monk([note("reflex", "failure")], { reflexMod: 5 }), "reflex", 20));
+  assert("rollSave puts the notes in the metadata", save.metadata.notes?.length, 1);
+  const saveRoll = (d20, metadata) => runHandler("save.js", { roll: { dice: [{ type: 20, value: d20 }], total: d20 + 5, metadata: { dc: 20, ...metadata } } });
+  assert("save.js: failure shows the note", saveRoll(8, save.metadata).includes("**Third Path to Perfection:**"), true);
+  assert("save.js: success doesn't", saveRoll(16, save.metadata).includes("Third Path"), false);
+  // Third Path also turns a critical failure into a failure: the note reads the final degree
+  const adjusted = capturePrompt(() => ctx.rollSave(monk([note("reflex", "failure"), { type: "adjustDegreeOfSuccess", field: "reflex", adjustment: { criticalFailure: "one-degree-better" } }], { reflexMod: 5 }), "reflex", 20));
+  const critFail = saveRoll(2, adjusted.metadata);
+  assert("save.js: critical failure made a failure shows the note", [critFail.includes("FAILURE"), critFail.includes("CRITICAL FAILURE"), critFail.includes("Third Path")], [true, false, true]);
+  assert("save.js: without notes, unchanged", saveRoll(8, {}).includes("**"), true);
+  const skill = capturePrompt(() => ctx.rollSkill(monk([note("athletics", "")], { athleticsMod: 5 }), "athletics"));
+  assert("rollSkill collects notes too", skill.metadata.notes?.length, 1);
+  const skillCard = runHandler("skill.js", { roll: { dice: [{ type: 20, value: 10 }], total: 15, metadata: { dc: 10, ...skill.metadata } } });
+  assert("skill.js: a note with no outcome shows on any result", skillCard.includes("**Third Path to Perfection:**"), true);
+  // Strikes: the attack card shows them, and passes damageSource on to the damage roll
+  ctx.assetUrl = "";
+  const strike = (d20) => runHandler("attack.js", { roll: { dice: [{ type: 20, value: d20 }], total: d20 + 5, metadata: { dc: 18, attack: "Longsword", traits: [], damage: "1d8 slashing", damageSource: { type: "weapon" }, notes: [{ name: "Note Feat", text: "On a hit, push.", outcome: [1, 2] }] } } });
+  assert("attack.js: a hit shows the note", strike(15).includes("**Note Feat:** On a hit, push."), true);
+  assert("attack.js: a miss doesn't", strike(5).includes("Note Feat"), false);
+  assert("attack.js: the damage button carries damageSource", strike(15).includes('"damageSource":{"type":"weapon"}'), true);
+  const sword = weapon("Longsword");
+  const attackPrompt = capturePrompt(() => ctx.performAttackRoll(monk([note("attack-roll", "success")], { inventory: [sword] }), sword, "data.inventory.0"));
+  assert("performAttackRoll collects attack-roll notes", attackPrompt.metadata.notes?.length, 1);
 }
 
 process.exitCode = summary();

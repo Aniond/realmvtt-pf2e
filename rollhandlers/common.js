@@ -396,6 +396,25 @@ function checkForReplacements(
     value = value.replaceAll("@effect.count", String(count));
   }
 
+  // A value with @ tokens is a Foundry formula: arithmetic left once they are
+  // replaced ("-3*2", "5+7") is worked out at the end
+  const hadTokens = value.includes("@");
+
+  // @actor.conditions.<slug>.value: the creature's own value of that condition
+  // (Curse of Ancestral Meddling: clumsy equal to
+  // @actor.conditions.cursebound.value); 0 without it. Also Foundry's
+  // .badge.value spelling and @self.condition.<slug>, the mirror of
+  // @target.condition.<slug> below.
+  value = value.replace(
+    /@actor\.conditions\.([a-z-]+)\.(?:badge\.)?value/g,
+    "@self.condition.$1",
+  );
+  if (value.includes("@self.condition.")) {
+    value = value.replace(/@self\.condition\.([a-z-]+)/g, (_m, slug) =>
+      String(getCreatureConditionValue(thisRecord, slug)),
+    );
+  }
+
   // Replace @actor.level with actual level
   const actorLevel = parseInt(thisRecord?.data?.level || "1", 10);
   value = value.replaceAll("@actor.level", String(actorLevel));
@@ -444,12 +463,9 @@ function checkForReplacements(
     const targets = Array.isArray(context?.targets) ? context.targets : [];
     const target = context?.target || (targets.length === 1 ? targets[0] : null);
     const targetToken = target?.token || target;
-    value = value.replace(/@target\.condition\.([a-z-]+)/g, (_m, slug) => {
-      const condition = targetToken
-        ? getTokenCondition(targetToken, slug.replace(/-/g, " "))
-        : null;
-      return String(condition?.value || 0);
-    });
+    value = value.replace(/@target\.condition\.([a-z-]+)/g, (_m, slug) =>
+      String(targetToken ? getTokenConditionValue(targetToken, slug) : 0),
+    );
   }
 
   // Weapon damage tokens (Foundry's @weapon.system.damage.*): the number of
@@ -542,6 +558,22 @@ function checkForReplacements(
     const result = evaluateMath(expression);
     return String(result);
   });
+
+  // Plain arithmetic left from a formula, as in Foundry's
+  // "-@actor.level*@actor.conditions.cursebound.value" or the "5+@actor.level"
+  // a ternary picked
+  const trimmed = value.trim();
+  if (
+    hadTokens &&
+    /^[\d\s+\-*/().]+$/.test(trimmed) &&
+    /\d/.test(trimmed) &&
+    /[+\-*/]/.test(trimmed.replace(/^\s*-/, ""))
+  ) {
+    const result = evaluateMath(trimmed);
+    if (typeof result === "number" && isFinite(result)) {
+      value = String(result);
+    }
+  }
 
   return value;
 }
@@ -830,9 +862,22 @@ function collectTraitsAndProperties(
         const conditionName = toSlug(effectName);
         traits.add(`self:condition:${conditionName}`);
         traits.add(`self:effect:${conditionName}`);
+        // The condition's value (cursebound 2 -> self:condition:cursebound:2),
+        // so {"gte":["self:condition:cursebound",2]} works
+        const value = getTokenConditionValue(token, conditionName) || 1;
+        traits.add(`self:condition:${conditionName}:${value}`);
       }
     });
   }
+  // Dying and wounded from the sheet (self:condition:dying,
+  // self:condition:dying:2)
+  Object.keys(SHEET_CONDITION_FIELDS).forEach((slug) => {
+    const value = getCreatureConditionValue(token, slug);
+    if (value > 0) {
+      traits.add(`self:condition:${slug}`);
+      traits.add(`self:condition:${slug}:${value}`);
+    }
+  });
 
   // Collect class names (e.g., "Barbarian" becomes "class:barbarian")
   if (token?.data?.classes) {
@@ -1498,7 +1543,7 @@ function getTargetAtoms(token, context) {
       atoms.push(`target:effect:${slug}`);
       // The condition's value (frightened 2 -> target:condition:frightened:2),
       // so {"gte":["target:condition:frightened",2]} works
-      const value = getTokenCondition(targetToken, effect.name)?.value || 1;
+      const value = findTokenConditionBySlug(targetToken, slug)?.value || 1;
       atoms.push(`target:condition:${slug}:${value}`);
     }
   });
@@ -1970,19 +2015,23 @@ function resolvePredicateValue(value, target, context, traits) {
     return 0;
   }
 
-  // Check if it's a trait key with a numeric value (e.g., "item:proficiency:rank:3")
+  // Check if it's a trait key with a numeric value (e.g., "item:proficiency:rank:3").
+  // The numeric one wins over a bare match of the same key, as conditions add
+  // both "self:condition:cursebound" and "self:condition:cursebound:2".
+  let present = false;
   for (const trait of traits) {
     if (trait.startsWith(value + ":")) {
       const numValue = trait.substring(value.length + 1);
-      return parseFloat(numValue) || 0;
+      if (/^-?\d+(\.\d+)?$/.test(numValue)) {
+        return parseFloat(numValue) || 0;
+      }
     } else if (trait === value) {
-      // If exact match exists, treat as 1 (present)
-      return 1;
+      present = true;
     }
   }
 
-  // Not found, treat as 0
-  return 0;
+  // If exact match exists, treat as 1 (present); not found, treat as 0
+  return present ? 1 : 0;
 }
 
 // Modifier types that appear in a roll prompt, where an opt-in can be ticked
@@ -1993,7 +2042,11 @@ const SITUATIONAL_MODIFIER_TYPES = new Set([
   "damagePenalty", "spellAttackBonus", "spellAttackPenalty",
   "spellDamageBonus", "spellDamagePenalty", "cantripDamageBonus",
   "cantripDamagePenalty", "healingBonus", "healingPenalty", "rollTwice",
+  "rollNote",
 ]);
+
+// Modifier types that take no value: kept even when their value is empty
+const VALUELESS_MODIFIER_TYPES = new Set(["voidHealing", "maximizeHealing"]);
 
 // Traits of the effect being resisted that a save/skill roll only knows when
 // the macro passes the source's traits (options.traits)
@@ -2374,13 +2427,24 @@ function processDamageModifierCategories(
     const isInactive = mod.active === false;
 
     // Check if this modifier has dice and a damage type with a category suffix
-    // Pattern: "{dice} {damageType}-{category}" e.g., "1d6 poison-persistent"
+    // Pattern: "{dice} {damageType}-{category}" e.g., "1d6 poison-persistent",
+    // or a flat amount: "4 spirit-persistent" (Relentless Reaction's
+    // "@actor.abilities.cha.mod spirit-persistent" once replaced)
     const match = value.match(
-      /^([0-9]+d[0-9]+(?:\s*[+\-]\s*[0-9]+)?)\s+([a-z]+)-(persistent|splash|precision)$/i,
+      /^([0-9]+d[0-9]+(?:\s*[+\-]\s*[0-9]+)?|[0-9]+(?:\s*[+\-*]\s*[0-9]+)*)\s+([a-z]+)-(persistent|splash|precision)$/i,
     );
+    // A flat amount is worked out ("2+3" -> "5"); 0 or less deals nothing
+    let flatAmount = null;
+    if (match && !/d/i.test(match[1])) {
+      flatAmount = Math.floor(evaluateMath(match[1]));
+      if (!(flatAmount > 0)) {
+        return;
+      }
+    }
 
     if (match) {
-      const diceFormula = match[1].trim();
+      const diceFormula =
+        flatAmount !== null ? String(flatAmount) : match[1].trim();
       const damageType = match[2].toLowerCase();
       const category = match[3].toLowerCase();
 
@@ -2512,9 +2576,13 @@ function getEffectsAndModifiersForToken(
       // Override valueType to string if the value contains non-numerical content that needs replacements
       let valueType = rule.valueType;
       if (valueType === "number" && typeof value === "string") {
-        // Check if value starts with a non-numerical character (excluding minus sign and whitespace)
+        // Check if value starts with a non-numerical character (excluding minus sign and whitespace),
+        // or holds an @ token after a sign or number ("-@actor.conditions.cursebound.value")
         const trimmedValue = value.trim();
-        if (trimmedValue && /^[^0-9\-\s]/.test(trimmedValue)) {
+        if (
+          trimmedValue &&
+          (/^[^0-9\-\s]/.test(trimmedValue) || trimmedValue.includes("@"))
+        ) {
           valueType = "string";
         }
       }
@@ -2803,8 +2871,11 @@ function getEffectsAndModifiersForToken(
       // "failure" or a check:outcome:failure predicate
       const predicateText =
         typeof predicate === "string" ? predicate : JSON.stringify(predicate || "");
+      // (a rollNote's outcome is the degrees its note shows on instead)
       const failureFlag =
-        modifier.data?.outcome === "failure" || modifier.data?.failureOnly === true;
+        ruleType !== "rollNote" &&
+        (modifier.data?.outcome === "failure" ||
+          modifier.data?.failureOnly === true);
       const failureOnly =
         failureFlag || predicateText.includes("check:outcome:failure");
       if (failureFlag && context.outcome !== "failure") {
@@ -2814,9 +2885,13 @@ function getEffectsAndModifiersForToken(
       // Override valueType to string if the value contains non-numerical content that needs replacements
       let valueType = modifier.data?.valueType;
       if (valueType === "number" && typeof value === "string") {
-        // Check if value starts with a non-numerical character (excluding minus sign and whitespace)
+        // Check if value starts with a non-numerical character (excluding minus sign and whitespace),
+        // or holds an @ token after a sign or number ("-@actor.conditions.cursebound.value")
         const trimmedValue = value.trim();
-        if (trimmedValue && /^[^0-9\-\s]/.test(trimmedValue)) {
+        if (
+          trimmedValue &&
+          (/^[^0-9\-\s]/.test(trimmedValue) || trimmedValue.includes("@"))
+        ) {
           valueType = "string";
         }
       }
@@ -2872,11 +2947,19 @@ function getEffectsAndModifiersForToken(
         value = modifier.data?.option || "";
       }
 
-      // Only relevant if it has a value (activeEffect and rollOption can have empty string values, so allow those)
+      // A rollNote's value is its text, as written
+      if (ruleType === "rollNote") {
+        value = String(modifier.data?.value ?? "");
+      }
+
+      // Only relevant if it has a value (activeEffect and rollOption can have
+      // empty string values, so allow those, and voidHealing and
+      // maximizeHealing take no value)
       if (
         value !== 0 ||
         ruleType === "activeEffect" ||
-        ruleType === "rollOption"
+        ruleType === "rollOption" ||
+        VALUELESS_MODIFIER_TYPES.has(ruleType)
       ) {
         // Check if this only applies to equipped item and mark it with ID if so
         const itemOnly = modifier.data?.itemOnly || false;
@@ -2902,6 +2985,24 @@ function getEffectsAndModifiersForToken(
         }
         if (failureOnly) {
           resultObj.failureOnly = true;
+        }
+        // Resistance, weakness and immunity: Foundry's exceptions and
+        // definition (applyDamage reads them against the damage's source)
+        if (modifier.data?.exceptions) {
+          resultObj.exceptions = modifier.data.exceptions;
+        }
+        if (modifier.data?.definition) {
+          resultObj.definition = modifier.data.definition;
+        }
+        // A rollNote's outcomes (criticalSuccess, success, failure,
+        // criticalFailure; none = every outcome)
+        if (ruleType === "rollNote" && modifier.data?.outcome) {
+          resultObj.outcome = modifier.data.outcome;
+        }
+        // The value as written when it was a formula, for consumers that
+        // treat a formula differently (recoveryDC from the dying value)
+        if (typeof modifier.data?.value === "string" && modifier.data.value.includes("@")) {
+          resultObj.rawValue = modifier.data.value;
         }
 
         // A roll-prompt modifier whose predicate fails only on atoms this
@@ -3539,16 +3640,21 @@ function applyEffect(
 ) {
   let targets = api.getSelectedOrDroppedToken();
   targets.forEach((target) => {
-    const effects = [];
-    for (let i = 0; i < times; i++) {
-      effects.push(effectName);
-    }
-    api.addEffects(effects, target, duration, value);
+    // The value gained, after the target's conditionGain modifiers (Bravery)
+    addConditionGain(target, effectName, times, (gained) => {
+      const effects = [];
+      for (let i = 0; i < Math.min(gained, 4); i++) {
+        effects.push(effectName);
+      }
+      api.addEffects(effects, target, duration, value);
+    });
   });
 }
 
-// Gets macros for all effects that an ability can apply
-function getEffectMacrosFor(effects = []) {
+// Gets macros for all effects that an ability can apply: one Apply button
+// per value the ability gives the effect (Apply_Frightened_1,
+// Apply_Frightened_2), each applying that value in one click
+function getEffectMacrosFor(effects = [], description = "") {
   let effectButtons = "";
   const ourToken = api.getToken();
   const ourTokenId = ourToken?._id || "";
@@ -3562,17 +3668,25 @@ function getEffectMacrosFor(effects = []) {
     const effect = JSON.parse(effectJson);
     const effectName = effect?.name || "";
     const effectID = effect?._id || "";
-    const effectTitle = `Apply_${effectName.replace(/ /g, "_")}`;
-    if (effectButtons !== "") {
-      effectButtons += "\n";
-    }
-    effectButtons += `\`\`\`${effectTitle}
+    const escapedEffectName = effectName.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+    const values = getEffectButtonValues(effect, description);
+    values.forEach((value) => {
+      const effectTitle = `Apply_${effectName.replace(/ /g, "_")}${
+        values.length > 1 || value > 1 ? `_${value}` : ""
+      }`;
+      if (effectButtons !== "") {
+        effectButtons += "\n";
+      }
+      // applyEffectButton applies the value as one gain, lowered by the
+      // target's conditionGain modifiers (Bravery)
+      effectButtons += `\`\`\`${effectTitle}
 let targets = api.getSelectedOrDroppedToken();
 targets.forEach(target => {
 const ourToken = '${ourTokenId}' ? {_id: '${ourTokenId}', name: '${ourTokenName}'} : undefined;
-api.addEffectById('${effectID}', target, undefined, ourToken);
+applyEffectButton('${effectID}', '${escapedEffectName}', target, ourToken, ${value});
 });
 \`\`\``;
+    });
   });
   return effectButtons;
 }
@@ -3609,9 +3723,11 @@ function useInventoryItem(itemDataPath) {
     ? `![${itemName}](${assetUrl}${portrait}?width=40&height=40) `
     : "";
 
+  // The sheet's character uses the item (its maximizeHealing modifiers, and
+  // where the damage or healing comes from)
   const itemDescription = updateDamageMacros(
     api.richTextToMarkdown(description || ""),
-    { item },
+    { item, creature: typeof record !== "undefined" ? record : undefined },
   );
   let markdownDescription = `
 #### ${itemIcon}${itemName}
@@ -4389,8 +4505,14 @@ function getArmorClassForToken(token, targetIsOffGuardDueToFlanking = false) {
   // (already returns highest of each type)
   acModifiers.forEach((mod) => {
     // Only if it's from an effect, because features/feats adjust it directly if it's a character
-    // and if the modifier was active
-    if ((mod.isEffect || !isCharacter) && mod.active) {
+    // and if the modifier was active. A feature's modifier to all Dex-based
+    // checks and DCs (a curse's clumsy: allPenalty status dex) isn't in
+    // data.ac, which holds armorClass modifiers only, so it counts here too.
+    const inSheetAc =
+      isCharacter &&
+      !mod.isEffect &&
+      !/^all(Bonus|Penalty)/.test(mod.modifierType || "");
+    if (!inSheetAc && mod.active) {
       const value = parseInt(mod.value || 0, 10);
       ac += value;
       if (isCharacter && ["circumstance", "item", "status"].includes(mod.type)) {
@@ -4568,7 +4690,11 @@ function updateAttribute({
   // data.ac holds features and items only, looked up without effects so an
   // effect of the same type can't knock a feature's bonus out of it;
   // getArmorClassForToken stacks a character's effects on top
-  const sheetAcSource = { ...record, effects: [], effectIds: [] };
+  const sheetAcSource = {
+    ...record,
+    effects: [],
+    effectIds: [],
+  };
   const acBonus = getEffectsAndModifiersForToken(
     sheetAcSource,
     ["armorClassBonus", "armorClassPenalty"],
@@ -7702,6 +7828,13 @@ function rollSave(
     tooltip: `${saveDisplay} Saving Throw`,
     saveType: saveType,
     degreeOfSuccessAdjustments: degreeOfSuccessAdjustments,
+    // Notes shown with the result (Third Path to Perfection)
+    notes: getRollNotes(
+      record,
+      [saveType, attribute, "saving-throw", ...(isSpell ? ["spell"] : [])],
+      undefined,
+      context,
+    ),
   };
 
   // Add DC if provided
@@ -7731,6 +7864,60 @@ function rollSave(
   } else {
     api.promptRoll(`${saveDisplay} Save`, "1d20", modifiers, metadata, "save");
   }
+}
+
+// Foundry's Note: text a roll shows with its result. rollNote modifiers:
+// field the roll's selector (as saveBonus, skillBonus and attackBonus fields
+// take: "will", "saving-throw", "athletics", "skill-check", "attack-roll"...),
+// value the text, outcome the degrees of success it shows on
+// (criticalSuccess, success, failure, criticalFailure; none = all). A note
+// whose predicate fails only on what the roll can't know is shown too, with
+// the reason in its name. [{ name, text, outcome: [-1..2] }]
+function getRollNotes(record, fields, itemId = undefined, context = {}) {
+  const degrees = {
+    criticalsuccess: 2,
+    success: 1,
+    failure: 0,
+    criticalfailure: -1,
+  };
+  return getEffectsAndModifiersForToken(
+    record,
+    ["rollNote"],
+    fields,
+    itemId,
+    undefined,
+    context,
+  )
+    .filter((mod) => mod.active !== false || mod.situational)
+    .map((mod) => {
+      const outcomes = Array.isArray(mod.outcome)
+        ? mod.outcome
+        : String(mod.outcome || "").split(",");
+      return {
+        name: mod.name,
+        text: String(mod.value ?? "").trim(),
+        outcome: outcomes
+          .map((o) => degrees[String(o).toLowerCase().replace(/[\s_-]/g, "")])
+          .filter((d) => d !== undefined),
+      };
+    })
+    .filter((note) => note.text);
+}
+
+// The chat lines for a roll's notes at the degree of success it got (2
+// critical success .. -1 critical failure), or every note when the degree
+// isn't known (no DC). "" without any.
+function getRollNotesText(notes, degree = null) {
+  const shown = (Array.isArray(notes) ? notes : []).filter(
+    (note) =>
+      degree === null ||
+      degree === undefined ||
+      !Array.isArray(note.outcome) ||
+      note.outcome.length === 0 ||
+      note.outcome.includes(degree),
+  );
+  if (shown.length === 0) return "";
+  return `\n\n${shown.map((note) => `**${note.name}:** ${note.text}`).join("\n")}`;
 }
 
 /**
@@ -8141,6 +8328,13 @@ function rollSkill(
     skillName: skill,
     group: initiativeGroup,
     degreeOfSuccessAdjustments: degreeOfSuccessAdjustments,
+    // Notes shown with the result
+    notes: getRollNotes(
+      record,
+      [...skillSelectors, attribute].filter(Boolean),
+      undefined,
+      context,
+    ),
     ...metadataExtras,
   };
 
@@ -9292,7 +9486,10 @@ function useAction(action) {
     portrait = "";
   }
 
-  const effectMacros = getEffectMacrosFor(action?.data?.effects || []);
+  const effectMacros = getEffectMacrosFor(
+    action?.data?.effects || [],
+    actionDescription,
+  );
 
   const message = `
 #### ${portrait}${actionName}${actionIcon ? "&nbsp;" : ""}${actionIcon}
@@ -11393,40 +11590,18 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber = 1) {
   });
 
   // Determine if we are making a damage roll that ignores resistances / immunities
-  const damageIgnoresResistances = damageModifiers
-    .filter(
-      (mod) =>
-        mod.active !== false &&
-        mod.valueType === "string" &&
-        typeof mod.value === "string" &&
-        mod.value.trim().toLowerCase().startsWith("ignore") &&
-        mod.value.trim().toLowerCase().includes("resistance"),
-    )
-    ?.map((mod) => mod.value.split(" ")[1])
-    .join(",");
-  const damageIgnoresImmunities = damageModifiers
-    .filter(
-      (mod) =>
-        mod.active !== false &&
-        mod.valueType === "string" &&
-        typeof mod.value === "string" &&
-        mod.value.trim().toLowerCase().startsWith("ignore") &&
-        (mod.value.trim().toLowerCase().includes("immunities") ||
-          mod.value.trim().toLowerCase().includes("immunity")),
-    )
-    ?.map((mod) => mod.value.split(" ")[1])
-    .join(",");
-  const damageIgnoresWeaknesses = damageModifiers
-    .filter(
-      (mod) =>
-        mod.active !== false &&
-        mod.valueType === "string" &&
-        typeof mod.value === "string" &&
-        mod.value.trim().toLowerCase().startsWith("ignore") &&
-        mod.value.trim().toLowerCase().includes("weakness"),
-    )
-    ?.map((mod) => mod.value.split(" ")[1])
-    .join(",");
+  const damageIgnoresResistances = getDamageIgnoreList(
+    damageModifiers,
+    "resistance",
+  );
+  const damageIgnoresImmunities = getDamageIgnoreList(
+    damageModifiers,
+    "immunity",
+  );
+  const damageIgnoresWeaknesses = getDamageIgnoreList(
+    damageModifiers,
+    "weakness",
+  );
   // Filter these out of the modifiers array, we don't need them to be toggleable
   const filteredDamageModifiers = damageModifiers.filter(
     (m) => !m?.value?.toString()?.toLowerCase()?.includes("ignore"),
@@ -11675,7 +11850,16 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber = 1) {
         fatalDie: fatalDie,
         animation,
         precisionModifierIndices: precisionModifierIndices, // Track which modifiers are precision damage
+        // Where the damage comes from, for resistances that depend on it
+        damageSource: getDamageSource(record, weapon),
         degreeOfSuccessAdjustments: degreeOfSuccessAdjustments,
+        // Notes shown with the result
+        notes: getRollNotes(
+          record,
+          [attackField, abilityScore, "attack-roll", "strike-attack-roll"],
+          weapon._id,
+          { weapon, targets: [target] },
+        ),
       };
 
       if (targetIsOffGuardDueToFlanking) {
@@ -11752,7 +11936,16 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber = 1) {
       fatalDie: fatalDie,
       animation,
       precisionModifierIndices: precisionModifierIndices, // Track which modifiers are precision damage
+      // Where the damage comes from, for resistances that depend on it
+      damageSource: getDamageSource(record, weapon),
       degreeOfSuccessAdjustments: degreeOfSuccessAdjustments,
+      // Notes shown with the result
+      notes: getRollNotes(
+        record,
+        [attackField, abilityScore, "attack-roll", "strike-attack-roll"],
+        weapon._id,
+        { weapon },
+      ),
     };
 
     api.promptRoll(
@@ -11803,6 +11996,11 @@ function performDamageRoll(record, weapon, weaponDataPath, isCritical) {
   let splashDamage = weaponDamageInfo.splashDamage;
   let splashDamageType = weaponDamageInfo.splashDamageType || damageType;
   let damage = weaponDamageInfo.damageString;
+  // Healing dice the creature maximizes for this item (Greater Field
+  // Discovery: an elixir of life's)
+  if (damageKind === "healing" && hasMaximizeHealing(record, weapon)) {
+    damage = maximizeDice(damage);
+  }
 
   // Don't add splash to damage yet - will do after processing modifiers
   // so we can include modifier splash damage too
@@ -12267,40 +12465,18 @@ function performDamageRoll(record, weapon, weaponDataPath, isCritical) {
   }
 
   // Determine if we are making a damage roll that ignores resistances / immunities
-  const damageIgnoresResistances = damageModifiers
-    .filter(
-      (mod) =>
-        mod.active !== false &&
-        mod.valueType === "string" &&
-        typeof mod.value === "string" &&
-        mod.value.trim().toLowerCase().startsWith("ignore") &&
-        mod.value.trim().toLowerCase().includes("resistance"),
-    )
-    ?.map((mod) => mod.value.split(" ")[1])
-    .join(",");
-  const damageIgnoresImmunities = damageModifiers
-    .filter(
-      (mod) =>
-        mod.active !== false &&
-        mod.valueType === "string" &&
-        typeof mod.value === "string" &&
-        mod.value.trim().toLowerCase().startsWith("ignore") &&
-        (mod.value.trim().toLowerCase().includes("immunities") ||
-          mod.value.trim().toLowerCase().includes("immunity")),
-    )
-    ?.map((mod) => mod.value.split(" ")[1])
-    .join(",");
-  const damageIgnoresWeaknesses = damageModifiers
-    .filter(
-      (mod) =>
-        mod.active !== false &&
-        mod.valueType === "string" &&
-        typeof mod.value === "string" &&
-        mod.value.trim().toLowerCase().startsWith("ignore") &&
-        mod.value.trim().toLowerCase().includes("weakness"),
-    )
-    ?.map((mod) => mod.value.split(" ")[1])
-    .join(",");
+  const damageIgnoresResistances = getDamageIgnoreList(
+    damageModifiers,
+    "resistance",
+  );
+  const damageIgnoresImmunities = getDamageIgnoreList(
+    damageModifiers,
+    "immunity",
+  );
+  const damageIgnoresWeaknesses = getDamageIgnoreList(
+    damageModifiers,
+    "weakness",
+  );
   // Filter these out of the modifiers array, we don't need them to be toggleable
   const filteredDamageModifiers = damageModifiers.filter(
     (m) => !m?.value?.toString()?.toLowerCase()?.includes("ignore"),
@@ -12399,6 +12575,8 @@ function performDamageRoll(record, weapon, weaponDataPath, isCritical) {
     hasDeathTrait: hasDeathTrait,
     criticalOnlyDice: criticalOnlyDice,
     precisionModifierIndices: precisionModifierIndices, // Track which modifiers are precision damage
+    // Where the damage comes from, for resistances that depend on it
+    damageSource: getDamageSource(record, weapon),
   };
 
   api.promptRoll(
@@ -12455,8 +12633,190 @@ function rollMatchesCondition(roll, conditionsArray, damageType) {
   });
 }
 
-// Helper function to get Immunities, Weaknesses, and Resistances for PF2e
-function getIWR(target, armorSpecDetails = null) {
+// Lowercase trait names from a traits list of strings or { name } objects
+function getTraitNameList(traits) {
+  return (Array.isArray(traits) ? traits : [])
+    .map((t) => String(typeof t === "string" ? t : t?.name || "").toLowerCase().trim())
+    .filter(Boolean);
+}
+
+// Where damage or healing comes from, carried on the roll's metadata as
+// damageSource so resistances and weaknesses can depend on it (Foundry's IWR
+// definition and exceptions) and healing received can see a magical item:
+// the item (type weapon, melee for an NPC Strike, spell, consumable...; its
+// category, range, slug, traits and a spell's casting tradition) and the
+// traits of the creature it comes from. Fury Instinct resists weapons but not
+// unarmed attacks, Spirit Instinct the attacks of undead creatures,
+// Superstition Instinct spells of two traditions.
+function getDamageSource(creature, item = null, tradition = "") {
+  const source = {};
+  if (item && typeof item === "object") {
+    const traits = getTraitNameList(item.data?.traits);
+    const slug = toSlug(String(item.name || ""));
+    if (slug) source.slug = slug;
+    if (item.recordType === "spells") {
+      source.type = "spell";
+      // The tradition it was cast with, or the spell's traditions
+      const traditions = tradition
+        ? [tradition]
+        : item.data?.traditions || item.data?.spellLists || [];
+      const list = getTraitNameList(Array.isArray(traditions) ? traditions : [traditions]);
+      if (list.length > 0) source.traditions = list;
+    } else if (item.recordType === "npc_attacks") {
+      // Foundry's NPC Strikes are melee items, ranged ones too
+      source.type = "melee";
+      const weaponType = String(item.data?.weaponType || "melee").toLowerCase();
+      if (weaponType === "unarmed" || traits.includes("unarmed")) {
+        source.category = "unarmed";
+      }
+      source.range = weaponType === "ranged" ? "ranged" : "melee";
+    } else if (item.recordType === "items") {
+      source.type = String(item.data?.type || "equipment").toLowerCase();
+      const category = String(item.data?.itemCategory || "").toLowerCase();
+      if (category) source.category = category;
+      if (source.type === "weapon") {
+        source.range = (parseInt(item.data?.range, 10) || 0) > 0 ? "ranged" : "melee";
+      }
+      // Foundry's item:magical: the magical trait or a rune
+      const runes = item.data?.runes || {};
+      if (
+        traits.includes("magical") ||
+        (parseInt(runes.potency, 10) || 0) > 0 ||
+        (Array.isArray(runes.property) && runes.property.length > 0)
+      ) {
+        source.magical = true;
+      }
+    } else if (item.recordType) {
+      // actions -> action, feats -> feat
+      source.type = String(item.recordType).replace(/s$/, "");
+    }
+    if (traits.length > 0) source.traits = traits;
+  }
+  if (creature) {
+    const data = creature.data || creature.record?.data || {};
+    source.originTraits = getTraitNameList(data.traits);
+  }
+  return source;
+}
+
+// Predicate atoms for where a damage or healing roll comes from (its
+// metadata.damageSource, traits and damage types): item:type:<weapon|melee|
+// spell|...>, item:category:<c>, item:unarmed, item:melee|ranged,
+// item:slug:<s>, item:trait:<t> and the bare trait, a spell's tradition as
+// item:trait:<tradition>, item:magical, item:damage:type:<t>, and the
+// creature it comes from as origin:trait:<t> and Foundry's
+// origin:mode:<living|undead|construct>
+function getDamageSourceAtoms(roll) {
+  const meta = roll?.metadata || {};
+  const source = meta.damageSource || {};
+  const atoms = new Set();
+  const isSpell = meta.isSpell === true || source.type === "spell";
+  const type = source.type || (isSpell ? "spell" : "");
+  if (type) atoms.add(`item:type:${type}`);
+  if (source.category) {
+    atoms.add(`item:category:${source.category}`);
+    if (source.category === "unarmed") atoms.add("item:unarmed");
+  }
+  if (source.range) atoms.add(`item:${source.range}`);
+  if (source.slug) atoms.add(`item:slug:${source.slug}`);
+  [
+    ...getTraitNameList(meta.traits),
+    ...getTraitNameList(source.traits),
+    ...getTraitNameList(source.traditions),
+  ].forEach((trait) => {
+    atoms.add(`item:trait:${trait}`);
+    atoms.add(trait);
+  });
+  if (source.magical || isSpell) {
+    atoms.add("item:magical");
+    atoms.add("magical");
+  }
+  const damageTypes = (Array.isArray(roll?.types) ? roll.types : []).map((t) => t?.type);
+  [...damageTypes, meta.damageType].forEach((t) => {
+    const damageType = String(t || "").toLowerCase().trim();
+    if (damageType && damageType !== "untyped") atoms.add(`item:damage:type:${damageType}`);
+  });
+  if (Array.isArray(source.originTraits)) {
+    source.originTraits.forEach((trait) => atoms.add(`origin:trait:${trait}`));
+    const mode = source.originTraits.includes("undead")
+      ? "undead"
+      : source.originTraits.includes("construct")
+        ? "construct"
+        : "living";
+    atoms.add(`origin:mode:${mode}`);
+  }
+  return atoms;
+}
+
+// The target's predicate atoms plus where the damage comes from, for its
+// resistance, weakness and immunity modifiers and their definitions
+function getDamageContextTraits(target, roll) {
+  const traits = collectTraitsAndProperties(target, {});
+  if (roll) {
+    getDamageSourceAtoms(roll).forEach((atom) => traits.add(atom));
+  }
+  return traits;
+}
+
+// A modifier's IWR exceptions (Foundry's exceptions): a list, as JSON or
+// comma-separated, of words (a damage type, trait or category, as the
+// record's IWR list uses) and { definition: <predicate> } objects.
+// { words, predicates }
+function parseIWRExceptions(raw) {
+  const words = [];
+  const predicates = [];
+  let list = raw;
+  if (typeof raw === "string") {
+    const text = raw.trim();
+    if (text.startsWith("[") || text.startsWith("{")) {
+      try {
+        list = JSON.parse(text);
+      } catch (e) {
+        list = [];
+      }
+    } else {
+      list = text.split(",");
+    }
+  }
+  (Array.isArray(list) ? list : [list]).forEach((entry) => {
+    if (typeof entry === "string") {
+      const word = entry.trim().toLowerCase();
+      if (word) words.push(word);
+    } else if (entry && typeof entry === "object") {
+      const definition = entry.definition ?? entry.predicate;
+      if (definition) predicates.push(parseModifierPredicate(definition));
+    }
+  });
+  return { words, predicates };
+}
+
+// Physical resistance, weakness or immunity is to bludgeoning, piercing and
+// slashing (Fury Instinct): the "physical" entry becomes those three, each
+// keeping the stronger of it and an entry already there
+const PHYSICAL_DAMAGE_TYPES = ["bludgeoning", "piercing", "slashing"];
+
+function expandPhysicalIWR(map, keepHigher = true) {
+  const physical = map["physical"];
+  if (!physical) return;
+  delete map["physical"];
+  PHYSICAL_DAMAGE_TYPES.forEach((type) => {
+    const existing = map[type];
+    if (
+      !existing ||
+      (keepHigher && (physical.value || 0) > (existing.value || 0))
+    ) {
+      map[type] = { ...physical, type };
+    }
+  });
+}
+
+// Helper function to get Immunities, Weaknesses, and Resistances for PF2e.
+// With the damage roll, modifiers can depend on where the damage comes from
+// (their predicate, Foundry's definition and exceptions); suppressIWR
+// modifiers take entries away (Curse of the Living Death). Also returns the
+// damage types the creature is harmed by instead of healed (harmedBy) and
+// whether it has void healing (voidHealing, Dhampir).
+function getIWR(target, armorSpecDetails = null, roll = null) {
   const immunitiesMap = {};
   const weaknessesMap = {};
   const resistancesMap = {};
@@ -12606,12 +12966,21 @@ function getIWR(target, armorSpecDetails = null) {
     }
   }
 
-  // Get dynamic IWR from effects and modifiers
-  const iwrModifiers = getEffectsAndModifiersForToken(target, [
-    "immunity",
-    "weakness",
-    "resistance",
-  ]);
+  // Get dynamic IWR from effects and modifiers. With the damage roll, their
+  // predicates and definitions also see where the damage comes from.
+  const damageTraits = roll ? getDamageContextTraits(target, roll) : null;
+  const iwrModifiers = getEffectsAndModifiersForToken(
+    target,
+    ["immunity", "weakness", "resistance", "suppressIWR", "harmedBy", "voidHealing"],
+    "",
+    undefined,
+    undefined,
+    {},
+    damageTraits,
+  );
+  const suppressions = [];
+  const harmedBy = new Set();
+  let voidHealing = false;
 
   iwrModifiers.forEach((modifier) => {
     // Skip modifiers that aren't active (predicate didn't pass)
@@ -12620,6 +12989,25 @@ function getIWR(target, armorSpecDetails = null) {
     }
 
     const modifierType = modifier.modifierType || "";
+
+    // Suppressed IWR, damage types that harm instead of heal, and void
+    // healing are read after the maps are built
+    if (modifierType === "suppressIWR") {
+      suppressions.push(modifier);
+      return;
+    }
+    if (modifierType === "harmedBy") {
+      String(modifier.value ?? "")
+        .split(",")
+        .map((t) => t.trim().toLowerCase())
+        .filter(Boolean)
+        .forEach((t) => harmedBy.add(t));
+      return;
+    }
+    if (modifierType === "voidHealing") {
+      voidHealing = true;
+      return;
+    }
     // A number-only value (valueType "number", e.g. 5 with field "fire") takes
     // its damage type from the field below
     const value =
@@ -12663,6 +13051,42 @@ function getIWR(target, armorSpecDetails = null) {
       damageType = modifier.field.toLowerCase().trim();
     }
 
+    // Foundry's definition: the entry only covers damage that matches it,
+    // and with no damage type (or Foundry's "custom") it covers all such
+    // damage (Spirit Instinct: all damage from undead creatures). Unknown
+    // without the damage roll.
+    const definition = modifier.definition
+      ? parseModifierPredicate(modifier.definition)
+      : null;
+    if (definition && isNonEmptyPredicate(definition)) {
+      if (
+        !damageTraits ||
+        !evaluateEffectPredicate(definition, damageTraits, target, {})
+      ) {
+        return;
+      }
+      if (["", "custom", "all"].includes(damageType)) {
+        damageType = "all damage";
+      }
+    }
+
+    // Foundry's exceptions: { definition } entries the damage matches drop
+    // the entry; words (a damage type, trait or category) work as they do on
+    // the record's IWR list
+    const exceptions = modifier.exceptions
+      ? parseIWRExceptions(modifier.exceptions)
+      : null;
+    if (
+      damageTraits &&
+      exceptions?.predicates.some((predicate) =>
+        evaluateEffectPredicate(predicate, damageTraits, target, {}),
+      )
+    ) {
+      return;
+    }
+    const exceptionWords =
+      exceptions && exceptions.words.length > 0 ? exceptions.words : null;
+
     if (!damageType) {
       return; // Skip empty values
     }
@@ -12674,7 +13098,7 @@ function getIWR(target, armorSpecDetails = null) {
         immunitiesMap[damageType] = {
           type: damageType,
           doubleVs: null,
-          exceptions: null,
+          exceptions: exceptionWords,
         };
       }
     } else if (modifierType === "weakness") {
@@ -12687,7 +13111,7 @@ function getIWR(target, armorSpecDetails = null) {
           type: damageType,
           value: numericValue,
           doubleVs: null,
-          exceptions: null,
+          exceptions: exceptionWords,
         };
       }
     } else if (modifierType === "resistance") {
@@ -12700,7 +13124,7 @@ function getIWR(target, armorSpecDetails = null) {
           type: damageType,
           value: numericValue,
           doubleVs: null,
-          exceptions: null,
+          exceptions: exceptionWords,
         };
       }
     }
@@ -12754,11 +13178,174 @@ function getIWR(target, armorSpecDetails = null) {
     });
   }
 
+  // Physical means bludgeoning, piercing and slashing
+  expandPhysicalIWR(immunitiesMap);
+  expandPhysicalIWR(weaknessesMap);
+  expandPhysicalIWR(resistancesMap);
+
+  // suppressIWR: field immunity, resistance, weakness, "all" (all three) or
+  // empty (immunity and resistance, the usual case); value the damage types
+  // or categories, comma-separated ("vitality,void", "spells", "physical")
+  suppressions.forEach((modifier) => {
+    const field = String(modifier.field || "").toLowerCase().trim();
+    const maps = [];
+    if (["", "all", "immunity", "immunities", "immunity-resistance"].includes(field)) {
+      maps.push(immunitiesMap);
+    }
+    if (["", "all", "resistance", "resistances", "immunity-resistance"].includes(field)) {
+      maps.push(resistancesMap);
+    }
+    if (["all", "weakness", "weaknesses"].includes(field)) {
+      maps.push(weaknessesMap);
+    }
+    const normalize = (text) => String(text || "").toLowerCase().replace(/[\s-]/g, "");
+    const types = new Set();
+    String(modifier.value ?? "")
+      .split(",")
+      .map(normalize)
+      .filter(Boolean)
+      .forEach((type) => {
+        if (type === "physical") {
+          PHYSICAL_DAMAGE_TYPES.forEach((t) => types.add(t));
+        } else {
+          types.add(type);
+        }
+      });
+    maps.forEach((map) => {
+      Object.keys(map).forEach((key) => {
+        if (types.has(normalize(key))) delete map[key];
+      });
+    });
+  });
+
   return {
     immunities: immunitiesMap,
     weaknesses: weaknessesMap,
     resistances: resistancesMap,
+    harmedBy,
+    voidHealing,
   };
+}
+
+// A damage roll whose damage comes from a spell (metadata.isSpell, or a
+// spell damageSource) with "spells" added to its damage categories, so a
+// weakness or resistance to spells applies to it (Foundry's "spells" IWR
+// type). Other rolls come back as they are.
+function withSpellDamageCategory(roll) {
+  const meta = roll?.metadata || {};
+  const isSpell = meta.isSpell === true || meta.damageSource?.type === "spell";
+  const categories = Array.isArray(meta.damageCategories) ? meta.damageCategories : [];
+  if (!isSpell || categories.includes("spells")) return roll;
+  return {
+    ...roll,
+    metadata: { ...meta, damageCategories: [...categories, "spells"] },
+  };
+}
+
+// The "ignore ..." damage modifiers of one kind (resistance, immunity,
+// weakness) as the comma-separated list a damage roll's metadata carries.
+// "ignore fire resistance" -> "fire". A resistance can be ignored only up to
+// an amount: "ignore physical resistance 10" or "ignore up to 10 physical
+// resistance" -> "physical:10" (Devastator).
+function getDamageIgnoreList(modifiers, kind) {
+  const kindWords = {
+    resistance: ["resistance"],
+    immunity: ["immunities", "immunity"],
+    weakness: ["weakness"],
+  }[kind] || [kind];
+  return (modifiers || [])
+    .filter(
+      (mod) =>
+        mod.active !== false &&
+        mod.valueType === "string" &&
+        typeof mod.value === "string" &&
+        mod.value.trim().toLowerCase().startsWith("ignore") &&
+        kindWords.some((word) => mod.value.trim().toLowerCase().includes(word)),
+    )
+    .map((mod) => {
+      const text = mod.value.trim().toLowerCase();
+      if (kind === "resistance") {
+        const partial = text.match(
+          /^ignore\s+(?:up\s+to\s+(\d+)\s+)?([a-z-]+)\s+resistances?(?:\s+(\d+))?\s*$/,
+        );
+        const amount = partial ? parseInt(partial[1] || partial[3], 10) : NaN;
+        if (partial && amount > 0) return `${partial[2]}:${amount}`;
+      }
+      return mod.value.split(" ")[1];
+    })
+    .filter(Boolean)
+    .join(",");
+}
+
+// Reads a metadata ignore list: { types: damage types ignored entirely,
+// amounts: { type: how much of its resistance is ignored } }. "physical" is
+// bludgeoning, piercing and slashing.
+function parseDamageIgnoreList(text) {
+  const types = [];
+  const amounts = {};
+  String(text || "")
+    .split(",")
+    .map((entry) => entry.toLowerCase().trim())
+    .filter((entry) => entry.length > 0)
+    .forEach((entry) => {
+      const [type, amountText] = entry.split(":");
+      const amount = parseInt(amountText, 10);
+      const expanded = type === "physical" ? PHYSICAL_DAMAGE_TYPES : [type];
+      expanded.forEach((t) => {
+        if (amount > 0) {
+          amounts[t] = Math.max(amounts[t] || 0, amount);
+        } else if (!types.includes(t)) {
+          types.push(t);
+        }
+      });
+      if (type === "physical" && !(amount > 0) && !types.includes(type)) {
+        types.push(type);
+      }
+    });
+  return { types, amounts };
+}
+
+// A heal-or-harm card (heal, harm) applied to a creature harmed by that
+// energy (harmedBy, Curse of the Living Death): whoever applies it picks
+// whether it heals or harms, then the damage is applied with that choice
+function promptHealOrHarm(target, roll, halfDamage, shieldDamage) {
+  api.showPrompt(
+    "Heal or Harm",
+    `${getCreatureName(target)} can be healed or harmed by this. Does it heal or harm?`,
+    "Select...",
+    [
+      { label: "Heal", value: "heal" },
+      { label: "Harm", value: "harm" },
+    ],
+    null,
+    (choice) => {
+      const value = Array.isArray(choice) ? choice[0] : choice;
+      if (value !== "heal" && value !== "harm") return;
+      applyDamage(target, roll, halfDamage, null, shieldDamage, {
+        harmChoice: value,
+      });
+    },
+    "OK",
+    "Cancel",
+    1,
+  );
+}
+
+// Doubles persistent damage for a critical hit: its dice and its flat amounts
+// ("1d6 fire, 4 spirit" -> "2d6 fire, 8 spirit")
+function doublePersistentDamage(persistentDamage) {
+  if (!persistentDamage || typeof persistentDamage !== "string") {
+    return persistentDamage;
+  }
+  return persistentDamage
+    .split(",")
+    .map((part) => {
+      const text = part.trim();
+      const flat = text.match(/^(\d+)(\s+[a-z].*)?$/i);
+      if (flat) return `${parseInt(flat[1], 10) * 2}${flat[2] || ""}`;
+      return doubleDamageDice(text);
+    })
+    .join(", ");
 }
 
 // Doubles the dice in the damage string
@@ -12869,12 +13456,20 @@ function applyDamage(
   halfDamage = false,
   splashDamage = null,
   shieldDamage = false,
+  options = {},
 ) {
   // If splashDamage is provided, we're applying splash damage directly
   // splashDamage should be an object like: { type: "fire", value: 3 }
   // We still use the roll object for metadata (traits, ignore resistances, etc.)
   const isApplyingSplash = splashDamage !== null;
+  // Spell damage is also of the "spells" category, so weakness or resistance
+  // to spells applies (Curse of the Mortal Warrior)
+  roll = withSpellDamageCategory(roll);
   const traits = roll.metadata?.traits || [];
+  const hasVitalityTrait = traits.some(
+    (trait) => trait?.toLowerCase() === "vitality",
+  );
+  const hasVoidTrait = traits.some((trait) => trait?.toLowerCase() === "void");
 
   // Extract values from metadata
   // Splash damage is never a critical hit and never has death trait
@@ -12882,21 +13477,20 @@ function applyDamage(
   const hasDeathTrait =
     !isApplyingSplash && roll.metadata?.hasDeathTrait === true;
 
-  // Parse damage ignore lists from metadata (comma-separated strings)
-  const damageIgnoresResistances = (
-    roll.metadata?.damageIgnoresResistances || ""
-  )
-    .split(",")
-    .map((s) => s.toLowerCase().trim())
-    .filter((s) => s.length > 0);
-  const damageIgnoresImmunities = (roll.metadata?.damageIgnoresImmunities || "")
-    .split(",")
-    .map((s) => s.toLowerCase().trim())
-    .filter((s) => s.length > 0);
-  const damageIgnoresWeaknesses = (roll.metadata?.damageIgnoresWeaknesses || "")
-    .split(",")
-    .map((s) => s.toLowerCase().trim())
-    .filter((s) => s.length > 0);
+  // Parse damage ignore lists from metadata (comma-separated strings).
+  // "physical" is bludgeoning, piercing and slashing; a resistance entry
+  // "<type>:<n>" ignores up to n of that resistance (Devastator)
+  const resistanceIgnores = parseDamageIgnoreList(
+    roll.metadata?.damageIgnoresResistances,
+  );
+  const damageIgnoresResistances = resistanceIgnores.types;
+  const resistanceIgnoreAmounts = resistanceIgnores.amounts;
+  const damageIgnoresImmunities = parseDamageIgnoreList(
+    roll.metadata?.damageIgnoresImmunities,
+  ).types;
+  const damageIgnoresWeaknesses = parseDamageIgnoreList(
+    roll.metadata?.damageIgnoresWeaknesses,
+  ).types;
 
   let targets = api.getSelectedOrDroppedToken();
 
@@ -12958,7 +13552,35 @@ function applyDamage(
         }
       }
 
-      const IWR = getIWR(target, armorSpecDetails);
+      const IWR = getIWR(target, armorSpecDetails, roll);
+
+      // Vitality damage heals the living and void damage heals the undead
+      // (with the vitality or void trait). Void healing (Dhampir) counts as
+      // undead here. A type the target is harmed by (harmedBy, Curse of the
+      // Living Death) harms it instead, unless whoever applies a heal-or-harm
+      // card (heal, harm) chooses to heal.
+      const targetTraits = target.data?.traits || [];
+      const hasUndeadTrait = targetTraits.some(
+        (trait) => trait?.toLowerCase() === "undead",
+      );
+      const healsLikeUndead = hasUndeadTrait || IWR.voidHealing === true;
+      const healsTarget = (lowerType) =>
+        (hasVoidTrait && lowerType === "void" && healsLikeUndead) ||
+        (hasVitalityTrait && lowerType === "vitality" && !healsLikeUndead);
+      const isHarmedBy = (lowerType) =>
+        IWR.harmedBy instanceof Set && IWR.harmedBy.has(lowerType);
+      if (
+        roll.metadata?.isVitalityDual &&
+        !isApplyingSplash &&
+        !options.harmChoice &&
+        (roll.types || []).some((type) => {
+          const lowerType = String(type?.type || "").toLowerCase();
+          return healsTarget(lowerType) && isHarmedBy(lowerType);
+        })
+      ) {
+        promptHealOrHarm(target, roll, halfDamage, shieldDamage);
+        return;
+      }
 
       // Check if target is immune to critical hits
       const immuneToCritical = Object.keys(IWR.immunities).some(
@@ -13200,35 +13822,18 @@ function applyDamage(
 
       // Check for vitality/void trait healing conversion
       // This must be done before we calculate baseDamage
-      const targetTraits = target.data?.traits || [];
-      const hasUndeadTrait = targetTraits.some(
-        (trait) => trait?.toLowerCase() === "undead",
-      );
-      const hasVitalityTrait = traits.some(
-        (trait) => trait?.toLowerCase() === "vitality",
-      );
-      const hasVoidTrait = traits.some(
-        (trait) => trait?.toLowerCase() === "void",
-      );
-
-      // Convert damage to healing based on vitality/void traits
+      // Convert damage to healing based on vitality/void traits (see
+      // healsTarget above)
       let healingAmount = 0;
       const damageTypesToRemove = [];
 
       Object.keys(damageByType).forEach((type) => {
         const lowerType = type.toLowerCase();
-
-        // Void damage heals undead
-        if (hasVoidTrait && lowerType === "void" && hasUndeadTrait) {
-          healingAmount += damageByType[type];
-          damageTypesToRemove.push(type);
-        }
-
-        // Vitality damage heals living (non-undead)
-        if (hasVitalityTrait && lowerType === "vitality" && !hasUndeadTrait) {
-          healingAmount += damageByType[type];
-          damageTypesToRemove.push(type);
-        }
+        if (!healsTarget(lowerType)) return;
+        // Harmed by this type: it stays damage unless "heal" was chosen
+        if (isHarmedBy(lowerType) && options.harmChoice !== "heal") return;
+        healingAmount += damageByType[type];
+        damageTypesToRemove.push(type);
       });
 
       // Apply half damage to healing if halfDamage is true
@@ -13509,6 +14114,14 @@ function applyDamage(
         if (!damageIgnoresResistances.includes(lowerType)) {
           // Track which resistances we've applied to avoid duplicates
           const appliedResistances = new Set();
+          // Up to this much of the resistances to this type is ignored
+          // (Devastator: up to 10 of the resistance to physical damage)
+          let ignoreLeft = resistanceIgnoreAmounts[lowerType] || 0;
+          const afterIgnore = (resistanceValue) => {
+            const ignored = Math.min(ignoreLeft, Math.max(0, resistanceValue));
+            ignoreLeft -= ignored;
+            return resistanceValue - ignored;
+          };
 
           // Check for specific type resistance
           const resistance = IWR.resistances[lowerType];
@@ -13534,7 +14147,7 @@ function applyDamage(
               ) {
                 resistanceValue = resistanceValue * 2;
               }
-              damageOfThisType -= resistanceValue;
+              damageOfThisType -= afterIgnore(resistanceValue);
               // Mark this resistance as applied
               if (resistance) appliedResistances.add(lowerType);
               if (allDamageResistance) appliedResistances.add("all damage");
@@ -13590,7 +14203,7 @@ function applyDamage(
                 ) {
                   resistanceValue = resistanceValue * 2;
                 }
-                damageOfThisType -= resistanceValue;
+                damageOfThisType -= afterIgnore(resistanceValue);
                 appliedResistances.add(matchingResistanceNormalized);
               }
             }
@@ -14093,6 +14706,11 @@ function executeDamageMacro(
     damageType: damageType,
     traits,
   };
+  // Where it comes from (updateDamageMacros), for resistances that depend
+  // on it and for healing received from a magical item
+  if (context.damageSource) {
+    metadata.damageSource = context.damageSource;
+  }
 
   // Add persistent damage to metadata if it exists
   if (persistentDamage) {
@@ -14162,12 +14780,39 @@ function executeDamageMacro(
     mainDamage = cleanFormula;
   }
 
+  // Healing the user maximizes (Greater Field Discovery: an elixir of life)
+  if (category === "healing" && context.maximizeHealing) {
+    mainDamage = maximizeDice(mainDamage);
+  }
+
   api.promptRoll(
     macroName,
     mainDamage,
     modifiers,
     metadata,
     category === "healing" ? "healing" : "damage",
+  );
+}
+
+// Whether a creature's maximizeHealing modifiers apply to the healing from
+// this item (Greater Field Discovery (Chirurgeon): an elixir of life's
+// healing dice are maximized). The predicate sees the item (item:slug:*).
+function hasMaximizeHealing(creature, item) {
+  if (!creature || !item) return false;
+  return getEffectsAndModifiersForToken(
+    creature,
+    ["maximizeHealing"],
+    "",
+    undefined,
+    undefined,
+    { item },
+  ).some((mod) => mod.active !== false && !mod.situational);
+}
+
+// A formula with each die at its highest result ("3d6+6" -> "18+6")
+function maximizeDice(formula) {
+  return String(formula || "").replace(/(\d*)d(\d+)/gi, (_m, count, faces) =>
+    String((parseInt(count, 10) || 1) * parseInt(faces, 10)),
   );
 }
 
@@ -14201,12 +14846,23 @@ function updateDamageMacros(description, context = {}) {
   const level =
     context.level !== undefined ? context.level : item.data?.level || 1;
 
+  // The creature using the item: the caller's (the sheet's character), or
+  // the current token
+  const creature = context.creature || token;
+  // Healing from the item at its maximum (maximizeHealing)
+  const maximize =
+    description.includes("replaceWithDamageMacro") &&
+    hasMaximizeHealing(creature, item);
+
   const minimalContext = JSON.stringify({
     _id: item._id,
     recordType: item.recordType,
     level: level,
     originTokenId: tokenId,
     originTokenName: tokenName,
+    // Where the damage or healing comes from (item, its traits, the creature)
+    damageSource: getDamageSource(creature, item, context.tradition || ""),
+    ...(maximize ? { maximizeHealing: true } : {}),
   });
 
   // Find all instances of replaceWithDamageMacro(...) and replace them
@@ -17155,6 +17811,212 @@ function getTokenCondition(token, name) {
 
 function isTokenDead(token) {
   return !!getTokenCondition(token, "dead");
+}
+
+// The effect on a token whose name, as a slug, is this one (cursebound,
+// persistent-damage), and its value, as getTokenCondition finds them
+function findTokenConditionBySlug(token, slug) {
+  const wanted = toSlug(String(slug || ""));
+  if (!wanted) return null;
+  const effectIds = token?.effectIds || [];
+  let found = null;
+  for (const effect of token?.effects || []) {
+    if (toSlug(String(effect?.name || "")) !== wanted) continue;
+    const value = effectIds.filter((id) => id === effect._id).length || 1;
+    if (!found || value > found.value) found = { effect, value };
+  }
+  return found;
+}
+
+// A token's value of the condition with this slug, 0 without it: the
+// self:condition:<slug>:<n> atom and @actor.conditions.<slug>.value
+function getTokenConditionValue(token, slug) {
+  return findTokenConditionBySlug(token, slug)?.value || 0;
+}
+
+// Dying and wounded are kept on the sheet (data.dying, data.wounded), not as
+// effects (dying.js)
+const SHEET_CONDITION_FIELDS = { dying: "dying", wounded: "wounded" };
+
+// A creature's value of a condition: its effect's value, or for dying and
+// wounded the sheet's value (Nine Lives Catfolk:
+// @actor.conditions.dying.value)
+function getCreatureConditionValue(token, slug) {
+  const value = getTokenConditionValue(token, slug);
+  const field = SHEET_CONDITION_FIELDS[slug];
+  if (!field) return value;
+  const data = token?.data || token?.record?.data || {};
+  return Math.max(value, parseInt(data[field] || "0", 10) || 0);
+}
+
+// The instances of a Persistent Damage effect, read as the turn-end hook
+// reads them: one string or { value, _id, name } per source
+function getPersistentDamageInstances(token, effect) {
+  if (!effect) return [];
+  const stored = token?.effectValues?.[effect._id];
+  if (stored === undefined || stored === null || stored === "") return [];
+  const value =
+    typeof stored === "object" && !Array.isArray(stored) && stored.value !== undefined
+      ? stored.value
+      : stored;
+  if (Array.isArray(value)) return value;
+  return [typeof stored === "object" ? stored : value];
+}
+
+// The persistent damage a creature takes at the end of its turn, one
+// { value, partIndex } per instance of its persistent damage effects
+function getTurnEndPersistentDamage(token) {
+  const parts = [];
+  (token?.effects || [])
+    .filter((effect) =>
+      (effect?.rules || []).some((rule) => rule.type === "persistentDamage"),
+    )
+    .forEach((effect) => {
+      getPersistentDamageInstances(token, effect).forEach((instance, index) => {
+        const value =
+          instance && typeof instance === "object" ? instance.value : instance;
+        if (value) parts.push({ value, partIndex: index });
+      });
+    });
+  return parts;
+}
+
+// The DC of the flat check to recover from persistent damage (Player Core
+// pg. 450): 15, changed by the creature's persistentRecoveryDC modifiers for
+// that damage type (Foundry's pd-recovery-dc item alteration). Field: the
+// damage type ("fire"), or empty for all, and the predicate sees the damage
+// type as item:damage:type:<type>. A plain value is the new DC and the lowest
+// applies (Charhide Goblin: 10 for fire); a signed value ("-5", "+2") changes
+// the DC instead, and those add up.
+const PERSISTENT_RECOVERY_DC = 15;
+
+function getPersistentRecoveryDC(creature, persistentValue) {
+  const parts = String(persistentValue || "").trim().split(/\s+/);
+  const damageType = parts.length > 1 ? parts.slice(1).join(" ").toLowerCase() : "";
+  if (!creature) return PERSISTENT_RECOVERY_DC;
+  const context = damageType
+    ? { item: { name: "Persistent Damage", data: { damageType } } }
+    : {};
+  let dc = PERSISTENT_RECOVERY_DC;
+  let change = 0;
+  getEffectsAndModifiersForToken(
+    creature,
+    ["persistentRecoveryDC"],
+    "",
+    undefined,
+    undefined,
+    context,
+  ).forEach((mod) => {
+    if (mod.active === false) return;
+    // Another damage type's modifier ("Fire" for cold damage)
+    const field = String(mod.field || "").toLowerCase().trim();
+    if (field && field !== "all" && field !== damageType) return;
+    const text = String(mod.value ?? "").trim();
+    const value = parseInt(text, 10);
+    if (isNaN(value)) return;
+    if (/^[+-]/.test(text)) {
+      change += value;
+    } else if (value < dc) {
+      dc = value;
+    }
+  });
+  return dc + change;
+}
+
+// The Roll_Recovery chat button for persistent damage: a flat check against
+// the recovery DC that ends that instance on a success (flatCheck.js)
+function getPersistentRecoveryButton(dc, partIndex) {
+  const recoveryDC = parseInt(dc, 10) || PERSISTENT_RECOVERY_DC;
+  const fence = "```";
+  return `${fence}Roll_Recovery\napi.promptRoll("Recovery", "1d20", [], { dc: ${recoveryDC}, rollName: "Persistent Damage Flat Check", tooltip: "Flat Check to Recover from Persistent Damage", isPersistent: true, persistentPartIndex: ${partIndex} }, "flatCheck");\n${fence}`;
+}
+
+// The value of a condition a creature gains after its conditionGain
+// modifiers for that condition (field: the condition's name, value: the
+// change), never below 0. Bravery: frightened you gain is reduced by 1. The
+// names of the modifiers that changed it come back too.
+function getConditionGainValue(token, conditionName, value, context = {}) {
+  const slug = toSlug(String(conditionName || ""));
+  const gained = parseInt(value, 10);
+  let total = isNaN(gained) ? 1 : gained;
+  const sources = [];
+  if (token && slug) {
+    getEffectsAndModifiersForToken(
+      token,
+      ["conditionGain"],
+      "",
+      undefined,
+      undefined,
+      context,
+    ).forEach((mod) => {
+      if (!mod.active || toSlug(String(mod.field || "")) !== slug) return;
+      const change = parseInt(mod.value, 10);
+      if (isNaN(change) || change === 0) return;
+      total += change;
+      sources.push(mod.name);
+    });
+  }
+  return { value: Math.max(0, total), sources };
+}
+
+// Gives a token a condition at a value, as one gain: the value after the
+// token's conditionGain modifiers (Bravery takes 1 off the frightened you
+// gain, once per gain, not per point), and the token ends at the higher of
+// that and the value it already has (Player Core pg. 442), so addStacks gets
+// the stacks to add, if any. A gain the modifiers change says so in chat.
+// Returns the value gained after the modifiers.
+function addConditionGain(target, effectName, times = 1, addStacks) {
+  const gained = Math.max(0, parseInt(times, 10) || 0);
+  const gain = getConditionGainValue(target, effectName, gained);
+  if (gain.sources.length > 0 && gain.value !== gained) {
+    const name = getTokenDisplayName(target);
+    const condition = String(effectName || "").toLowerCase();
+    api.sendMessage(
+      gain.value > 0
+        ? `${name} gains ${condition} ${gain.value} instead of ${gained} (${gain.sources.join(", ")}).`
+        : `${name} doesn't gain ${condition} (${gain.sources.join(", ")}).`,
+      undefined,
+      [],
+      [],
+      target,
+    );
+  }
+  const current = getTokenCondition(target, effectName)?.value || 0;
+  const stacks = gain.value - current;
+  if (stacks > 0) addStacks(stacks);
+  return gain.value;
+}
+
+// The Apply button for an effect an ability applies: the effect at a value
+// on the target as one gain (frightened 2 from a critical Demoralize is one
+// gain of 2), after the target's conditionGain modifiers. A single stack keeps
+// who applied it; more go on in one write.
+function applyEffectButton(effectId, effectName, target, appliedBy, value = 1) {
+  addConditionGain(target, effectName, value, (stacks) => {
+    if (stacks === 1) {
+      api.addEffectById(effectId, target, undefined, appliedBy);
+    } else {
+      api.addEffects(Array(stacks).fill(effectName), target);
+    }
+  });
+}
+
+// The values an ability gives an effect: the effect's own value if it has
+// one, else each "<name> <n>" its description names (Demoralize: frightened
+// 1, and frightened 2 on a critical success), else 1
+function getEffectButtonValues(effect, description = "") {
+  const own = parseInt(effect?.value, 10);
+  if (own > 0) return [own];
+  const name = String(effect?.name || "").trim();
+  if (!name) return [1];
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const values = new Set();
+  const pattern = new RegExp(`\\b${escaped}\\s+(\\d+)\\b`, "gi");
+  for (const match of String(description || "").matchAll(pattern)) {
+    const value = parseInt(match[1], 10);
+    if (value > 0) values.add(value);
+  }
+  return values.size > 0 ? [...values].sort((a, b) => a - b) : [1];
 }
 
 // Whether an effect on a token runs for a duration rather than a value, as in

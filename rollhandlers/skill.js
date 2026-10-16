@@ -40,6 +40,9 @@ if (isNaN(dc)) {
   dc = 0;
 }
 
+// The degree of success the roll's notes are shown for (null: no DC)
+let noteDegree = null;
+
 if (dc > 0) {
   const total = roll.total || 0;
 
@@ -85,6 +88,7 @@ if (dc > 0) {
     degreeOfSuccessAdjustments
   );
   degreeOfSuccess = adjustmentResult.degree;
+  noteDegree = degreeOfSuccess;
   const adjustmentModifierName = adjustmentResult.modifierName;
 
   // Calculate margin of success/failure
@@ -231,6 +235,9 @@ if (targets.length === 0) {
     );
   }
 }
+
+// Notes from the creature's features for this result (rollNote)
+message += getRollNotesText(data?.roll?.metadata?.notes, noteDegree);
 
 api.sendMessage(
   message,

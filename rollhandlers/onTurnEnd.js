@@ -9,6 +9,9 @@ const hasDiceRoll = (value) => {
 // Helper to process a single persistent damage value
 const processPersistentDamage = (value, partIndex = 0) => {
   if (!value) return;
+  // The recovery flat check's DC for this damage type (Charhide Goblin: 10
+  // for fire)
+  const recoveryDC = getPersistentRecoveryDC(token, value);
 
   if (hasDiceRoll(value)) {
     // Has dice - roll it
@@ -18,6 +21,7 @@ const processPersistentDamage = (value, partIndex = 0) => {
         isPersistant: true,
         persistentPartIndex: partIndex,
         tokenId: token?._id,
+        recoveryDC,
       },
       "damage"
     );
@@ -44,61 +48,21 @@ const roll = {
 };
 applyDamage(null, roll, false);
 \`\`\``;
-    api.sendMessage(macro, undefined, undefined, undefined, token);
+    // The recovery flat check, as damage.js offers for rolled persistent
+    // damage
+    const recovery =
+      partIndex >= 0 ? `\n${getPersistentRecoveryButton(recoveryDC, partIndex)}` : "";
+    api.sendMessage(`${macro}${recovery}`, undefined, undefined, undefined, token);
   }
 };
 
-// Check for persistant damage effects like On Fire
-const modifiers = getEffectsAndModifiersForToken(
-  token,
-  ["persistentDamage"],
-  ""
-);
-
-// This gets rolled immediately
-if (modifiers.length > 0) {
-  const effects = token?.effects || [];
-  const effectValues = token?.effectValues || {};
-
-  // Find all persistent damage effects
-  const persistentDamageEffects = effects.filter((effect) => {
-    const rules = effect?.rules || [];
-    return rules.some((rule) => rule.type === "persistentDamage");
-  });
-
-  // Process each persistent damage effect
-  persistentDamageEffects.forEach((effect) => {
-    const existingValue = effectValues[effect?._id];
-
-    if (!existingValue) {
-      return;
-    }
-
-    // Get the value of the persistent damage effect
-    // Handle both object with .value property and direct values
-    const persistentDamageValue =
-      typeof existingValue === "object" && existingValue.value !== undefined
-        ? existingValue.value
-        : existingValue;
-
-    if (!persistentDamageValue) {
-      return;
-    }
-
-    // Handle string or array values
-    if (typeof persistentDamageValue === "string") {
-      // String: process once with index 0
-      processPersistentDamage(persistentDamageValue, 0);
-    } else if (Array.isArray(persistentDamageValue)) {
-      // Array: process each value with index as partIndex
-      // Each element is an object with a value property
-      persistentDamageValue.forEach((item, index) => {
-        const value = item?.value || item;
-        processPersistentDamage(value, index);
-      });
-    }
-  });
-}
+// Persistent damage (On Fire and the like) gets rolled now: each instance of
+// the creature's persistent damage effects
+getTurnEndPersistentDamage(token).forEach(({ value, partIndex }) => {
+  if (typeof value === "string") {
+    processPersistentDamage(value, partIndex);
+  }
+});
 
 // Condition upkeep: frightened goes down by 1 at the end of each of the
 // creature's turns, but not again when Next after Previous ends the same turn

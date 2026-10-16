@@ -109,6 +109,8 @@ if (isNaN(dc)) {
 let isCritical = false;
 // A failed Strike (not a critical failure): miss-only damage riders apply
 let isFailure = false;
+// The degree of success the roll's notes are shown for (null: no DC)
+let noteDegree = null;
 
 if (dc > 0) {
   const total = modifiedRoll.total || 0;
@@ -157,6 +159,7 @@ if (dc > 0) {
     degreeOfSuccessAdjustments
   );
   degreeOfSuccess = adjustmentResult.degree;
+  noteDegree = degreeOfSuccess;
   const adjustmentModifierName = adjustmentResult.modifierName;
 
   // Calculate margin of success/failure
@@ -212,6 +215,9 @@ if (dc > 0) {
     targetName ? ` :IconTargetArrow: ${targetName}` : ""
   }[/center]`;
 }
+
+// Notes from the creature's features for this result (rollNote)
+message += getRollNotesText(data?.roll?.metadata?.notes, noteDegree);
 
 // Only add "Attack" tag if there is no "Attack" trait
 const hasAttackTrait = traits.some(
@@ -450,6 +456,8 @@ const damageMetadata = {
   precisionModifierIndices: precisionModifierIndices, // Track which modifiers are precision damage
   isVitalityDual: isVitalityDual,
   damageType: damageType,
+  // Where the damage comes from, for resistances that depend on it
+  damageSource: data?.roll?.metadata?.damageSource,
 };
 
 // Add damage button to message

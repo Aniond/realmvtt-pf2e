@@ -3250,6 +3250,37 @@
         "fields": []
       },
       {
+        "label": "Suppress Immunity, Resistance or Weakness",
+        "type": "suppressIWR",
+        "fields": [
+          {
+            "label": "Immunity and Resistance",
+            "field": "immunity-resistance"
+          },
+          {
+            "label": "Immunity",
+            "field": "immunity"
+          },
+          {
+            "label": "Resistance",
+            "field": "resistance"
+          },
+          {
+            "label": "Weakness",
+            "field": "weakness"
+          },
+          {
+            "label": "All",
+            "field": "all"
+          }
+        ]
+      },
+      {
+        "label": "Harmed By (Vitality or Void)",
+        "type": "harmedBy",
+        "fields": []
+      },
+      {
         "label": "All Checks and DCs Bonus (Untyped)",
         "type": "allBonus",
         "fields": [

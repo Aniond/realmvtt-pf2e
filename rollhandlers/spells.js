@@ -810,7 +810,7 @@ function isVitalityDualKindSpell(spell) {
   return hasDualKind;
 }
 
-function getSpellDamageMacro(record, spell, dataPathToSpell) {
+function getSpellDamageMacro(record, spell, dataPathToSpell, tradition = "") {
   const spellName = spell?.name || "Unknown Spell";
   const spellDamage = calculateSpellDamage(record, spell, dataPathToSpell);
 
@@ -943,6 +943,8 @@ api.getRecord('${record.recordType}', '${record._id}', (record) => {
       attack: "${spellName}",
       icon: "IconWand",
       portrait: ${JSON.stringify(spell?.portrait || "")},
+      // The spell and its casting tradition, for resistances to spells
+      damageSource: getDamageSource(record, spell, ${JSON.stringify(tradition)}),
     },
     "damage"
   );
@@ -1212,6 +1214,7 @@ api.getRecord('${record.recordType}', '${record._id}', (record) => {
       animation: ${JSON.stringify(animation)},
       isVitalityDual: ${isVitalityDual},
       criticalOnlyDice: criticalOnlyDice,
+      damageSource: getDamageSource(record, spell, ${JSON.stringify(spellCastingEntry?.data?.tradition || "")}),
     };
   
     api.promptRoll(
@@ -1289,6 +1292,7 @@ api.getRecord('${record.recordType}', '${record._id}', (record) => {
         animation: ${JSON.stringify(animation)},
         isVitalityDual: ${isVitalityDual},
         criticalOnlyDice: criticalOnlyDice,
+        damageSource: getDamageSource(record, spell, ${JSON.stringify(spellCastingEntry?.data?.tradition || "")}),
       };
   
       api.promptRoll(
@@ -1497,7 +1501,12 @@ function castSpell(record, spell, dataPathToSpell, isOverlay = false) {
 
   const spellDescription = updateDamageMacros(
     api.richTextToMarkdown(spell?.data?.description || ""),
-    { item: spell, level: castingRank }
+    {
+      item: spell,
+      level: castingRank,
+      creature: record,
+      tradition: spellCastingEntry?.data?.tradition || "",
+    }
   );
 
   let portrait = spell?.portrait
@@ -1573,7 +1582,12 @@ function castSpell(record, spell, dataPathToSpell, isOverlay = false) {
       macros.push(saveMacro);
 
       // Add damage macro for saving throw spells
-      const damageMacro = getSpellDamageMacro(record, spell, dataPathToSpell);
+      const damageMacro = getSpellDamageMacro(
+        record,
+        spell,
+        dataPathToSpell,
+        spellCastingEntry?.data?.tradition || ""
+      );
       if (damageMacro) {
         macros.push(damageMacro);
       }
@@ -1582,7 +1596,12 @@ function castSpell(record, spell, dataPathToSpell, isOverlay = false) {
 
   // Add damage/healing macros even if no defense (for spells that just do damage/healing)
   if (!defense || (!defense.passive && !defense.save)) {
-    const damageMacro = getSpellDamageMacro(record, spell, dataPathToSpell);
+    const damageMacro = getSpellDamageMacro(
+      record,
+      spell,
+      dataPathToSpell,
+      spellCastingEntry?.data?.tradition || ""
+    );
     if (damageMacro) {
       macros.push(damageMacro);
     }
