@@ -2314,12 +2314,27 @@ ${getLevelUpSummary(gains)}`,
           style="
             display: flex;
             flex-direction: column;
-            gap: 2px;
-            justify-content: center;
-            align-items: center;
+            align-items: flex-start;
           "
         >
-          <label class="rvtt-sheet-label" label="Raise"></label>
+          <!-- Styled like the sheet's input field labels (HP, Max, AC) -->
+          <div
+            style="
+              font-family: var(--sheet-label-font, var(--mantine-font-family));
+              font-size: 10px;
+              font-weight: 600;
+              letter-spacing: 0.14em;
+              text-transform: uppercase;
+              line-height: 1.55;
+              color: color-mix(
+                in srgb,
+                var(--fg-dim, var(--mantine-color-dimmed)) 55%,
+                var(--fg, var(--mantine-color-text))
+              );
+            "
+          >
+            Raise
+          </div>
           <iconbutton
             size="md"
             variant="default"
