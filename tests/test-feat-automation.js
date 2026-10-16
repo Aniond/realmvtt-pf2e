@@ -632,4 +632,119 @@ section("imported Foundry data for the closed gaps works as-is");
   ctx.api.getOtherTokens = realOther;
 }
 
+section("roll twice: fortune and misfortune");
+{
+  const lucky = pc({ feats: [feat("Incredible Luck", [{ type: "rollTwice", field: "saving-throw", value: "keep-higher", active: true }])] });
+  const save = capturePrompt(() => ctx.rollSave(lucky, "will")).modifiers.find((m) => m.name.startsWith("Incredible Luck"));
+  assert("a fortune save offers advantage, ticked", `${save?.value}|${save?.active}`, "advantage|true");
+  const cursed = pc({ feats: [feat("Hexed", [{ type: "rollTwice", field: "", value: "keep-lower", active: true }])], inventory: [weapon("Longsword")] });
+  const strike = capturePrompt(() => ctx.performAttackRoll(cursed, cursed.data.inventory[0], "data.inventory.0", 1)).modifiers.find((m) => m.name.startsWith("Hexed"));
+  assert("misfortune on a Strike", strike?.value, "disadvantage");
+  const daring = pc({ feats: [feat("Derring-Do", [{ type: "rollTwice", field: "acrobatics", value: "keep-higher", predicate: '["action:tumble-through"]' }])] });
+  const opt = capturePrompt(() => ctx.rollSkill(daring, "acrobatics")).modifiers.find((m) => m.name.startsWith("Derring-Do"));
+  assert("a situational fortune is offered unticked", `${opt?.name}|${opt?.active}`, "Derring-Do (Tumble Through) (Fortune)|false");
+}
+
+section("skill actions: roll as an action");
+{
+  const realTargets = ctx.api.getTargets;
+  const glare = feat("Intimidating Glare", [{ type: "skillBonus", modifierType: "circumstance", field: "intimidation", valueType: "number", value: "1", predicate: '["action:demoralize"]' }]);
+  const record = pc({ intimidation: "2", feats: [glare] });
+  ctx.api.getTargets = () => [{ token: { _id: "t", recordType: "npcs", effects: [], data: { level: 2, willMod: 6, traits: [] } } }];
+  const rolled = capturePrompt(() => ctx.performSkillAction(record, "intimidation", "Demoralize"));
+  assert("the bonus applies when rolled as Demoralize", rolled.modifiers.find((m) => m.name === "Intimidating Glare")?.active, true);
+  assert("rolled against the target's Will DC", rolled.metadata.dc, 16);
+  assert("the roll is named after the action", rolled.metadata.rollName, "Intimidation: Demoralize");
+  const trip = capturePrompt(() => ctx.performSkillAction(pc(), "athletics", "Trip"));
+  assert("an attack-trait action offers MAP opt-ins", trip.modifiers.filter((m) => m.name.startsWith("Multiple Attack Penalty") && m.active === false).length, 2);
+  ctx.api.getTargets = () => [];
+  assert("no target: no DC", capturePrompt(() => ctx.performSkillAction(record, "intimidation", "Demoralize")).metadata.dc, undefined);
+  ctx.api.getTargets = realTargets;
+  assert("an action card gets a roll button", ctx.getSkillActionMacros({ name: "Demoralize" }).includes('performSkillActionForSelected("intimidation", "Demoralize")'), true);
+  assert("Recall Knowledge lists every knowledge skill", ctx.getSkillsForAction("Recall Knowledge").length, 7);
+  assert("non-skill actions get no button", ctx.getSkillActionMacros({ name: "Stride" }), "");
+}
+
+section("defense DCs and healing received");
+{
+  const stance = feat("Disarming Stance", [{ type: "saveDCBonus", modifierType: "circumstance", field: "reflex", valueType: "number", value: "2", predicate: '["action:disarm"]' }]);
+  const defender = pc({ reflexMod: 9, feats: [stance] });
+  assert("Reflex DC 19 normally", ctx.getDefenseDCForToken(defender, "reflex", {}), 19);
+  assert("Reflex DC 21 against Disarm", ctx.getDefenseDCForToken(defender, "reflex", { action: { name: "Disarm" } }), 21);
+  const detector = pc({ perceptionMod: 8, feats: [feat("Lie Detector", [{ type: "saveDCBonus", modifierType: "circumstance", field: "perception", valueType: "number", value: "1", predicate: '["action:lie"]' }])] });
+  assert("Perception DC 18", ctx.getDefenseDCForToken(detector, "perception", {}), 18);
+  assert("Perception DC 19 against Lie", ctx.getDefenseDCForToken(detector, "perception", { action: { name: "Lie" } }), 19);
+
+  const robust = pc({ curhp: 10, hitpoints: 100, feats: [feat("Robust Health", [{ type: "healingReceivedBonus", modifierType: "none", field: "", valueType: "string", value: "@actor.level", predicate: '["action:treat-wounds"]' }])] });
+  ctx.__state.lastSet = null;
+  ctx.applyHealingToToken(robust, 8, { treatWounds: true });
+  assert("Treat Wounds heals 8 + level 5", ctx.__state.lastSet?.["data.curhp"], 23);
+  ctx.__state.lastSet = null;
+  ctx.applyHealingToToken(robust, 8, {});
+  assert("other healing is unchanged", ctx.__state.lastSet?.["data.curhp"], 18);
+}
+
+section("more than one toggle per feat");
+{
+  const punch = { ...feat("One-Inch Punch", []), data: { type: "class", level: 1, toggleable: true, predicateValue: "one-inch-punch", toggleOptions: [
+    { name: "Two Actions", data: { predicateValue: "one-inch-punch:two", group: "actions" } },
+    { name: "Three Actions", data: { predicateValue: "one-inch-punch:three", group: "actions" } },
+  ] } };
+  const written = {};
+  ctx.updateTogglesList(pc({ feats: [punch] }), written);
+  const toggles = written["data.toggles"] || [];
+  assert("the main toggle and both options are listed", toggles.map((t) => t.name).join(" | "), "One-Inch Punch | One-Inch Punch: Two Actions | One-Inch Punch: Three Actions");
+  assert("options carry their group", toggles[1]?.data?.group, "One-Inch Punch|actions");
+  const on = pc({ feats: [punch], toggles: [{ name: "One-Inch Punch: Three Actions", data: { predicateValue: "one-inch-punch:three", toggled: true } }] });
+  assertIncludes("a toggled option is a predicate atom", traitsFor(on), "one-inch-punch:three");
+
+  // The sheet's toggle checkbox turns off the rest of its group, then recalculates
+  const listCtx = createSandbox();
+  const html = fs.readFileSync(`${__dirname}/../toggle-list.html`, "utf8");
+  new vm.Script(html.match(/<script>([\s\S]*?)<\/script>/)[1]).runInContext(listCtx);
+  let set = null;
+  let recalculated = false;
+  listCtx.dataPath = "data.toggles.1.data.toggled";
+  listCtx.getNearestParentDataPath = () => "data.toggles.1";
+  listCtx.record = { _id: "pc", recordType: "characters", data: { toggles: [
+    { _id: "a", name: "A", data: { group: "g", toggled: true } },
+    { _id: "b", name: "B", data: { group: "g", toggled: false } },
+    { _id: "c", name: "C", data: { group: "", toggled: true } },
+  ] } };
+  listCtx.api.getValue = () => listCtx.record.data.toggles[1];
+  listCtx.api.setValues = (values, cb) => { set = values; if (cb) cb(); };
+  listCtx.api.getRecord = (type, id, cb) => cb(listCtx.record);
+  listCtx.onAddEditFeature = () => { recalculated = true; };
+  listCtx.onToggleChanged(true);
+  assert("turning B on turns A off, leaves C", JSON.stringify(set), JSON.stringify({ "data.toggles.1.data.toggled": true, "data.toggles.0.data.toggled": false }));
+  assert("and the sheet recalculates", recalculated, true);
+}
+
+section("bulk limit, check penalty, spell dice, damage on a miss");
+{
+  const hauler = pc({ str: 3, feats: [feat("Hefty Hauler", [{ type: "bulkLimit", value: "2", active: true }])] });
+  const written = {};
+  ctx.updateAttribute({ record: hauler, attribute: "str", value: 3, moreValuesToSet: written });
+  assert("Hefty Hauler: 5 + 3 + 2", written["data.bulk"], 10);
+
+  const plate = { _id: "a", name: "Full Plate", data: { type: "armor", carried: "equipped", acBonus: 6, checkPenalty: -3, strength: 4, itemCategory: "Heavy" } };
+  const sneaky = pc({ str: 1, inventory: [plate], feats: [feat("Armored Stealth", [{ type: "adjustModifier", targetSlug: "armor-check-penalty", adjustMode: "add", value: "1", valueType: "number", active: true, field: "", predicate: '["check:statistic:stealth"]' }])] });
+  const penalty = (skill) => capturePrompt(() => ctx.rollSkill(sneaky, skill)).modifiers.find((m) => m.name === "Check Penalty")?.value;
+  assert("Armored Stealth: Stealth check penalty -2", penalty("stealth"), -2);
+  assert("other skills keep -3", penalty("athletics"), -3);
+
+  const heal = { _id: "s", name: "Heal", recordType: "spells", data: { level: 1, traits: ["Healing", "Vitality"], damage: [] } };
+  const healer = pc({ feats: [feat("Healing Hands", [{ type: "spellDieSize", value: "d10", predicate: '["item:slug:heal"]' }])] });
+  assert("Healing Hands: heal rolls d10s", ctx.applySpellDieSize(healer, heal, "2d8", "healing"), "2d10");
+  assert("other spells keep their dice", ctx.applySpellDieSize(healer, { ...heal, name: "Harm" }, "2d8", "damage"), "2d8");
+
+  const sword = weapon("Longsword");
+  const finisher = pc({ feats: [feat("Brutal Finish", [{ type: "damageBonus", modifierType: "none", field: "", valueType: "string", value: "1d@weaponDie", failureOnly: true }])], inventory: [sword] });
+  const meta = capturePrompt(() => ctx.performAttackRoll(finisher, sword, "data.inventory.0", 1)).metadata;
+  assert("miss damage is carried for the miss button", meta.failureDamage, "1d8 slashing");
+  assert("and kept out of the normal damage", (meta.damageModifiers || []).some((m) => m.name === "Brutal Finish"), false);
+  const outcomePredicate = pc({ feats: [feat("Glancing", [{ type: "damageBonus", modifierType: "none", field: "", valueType: "string", value: "2", predicate: '["check:outcome:failure"]' }])], inventory: [sword] });
+  assert("a check:outcome:failure predicate works too", capturePrompt(() => ctx.performAttackRoll(outcomePredicate, sword, "data.inventory.0", 1)).metadata.failureDamage, "2 slashing");
+}
+
 process.exitCode = summary();

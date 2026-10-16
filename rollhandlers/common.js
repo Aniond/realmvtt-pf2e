@@ -2770,10 +2770,11 @@ function getEffectsAndModifiersForToken(
       // "failure" or a check:outcome:failure predicate
       const predicateText =
         typeof predicate === "string" ? predicate : JSON.stringify(predicate || "");
+      const failureFlag =
+        modifier.data?.outcome === "failure" || modifier.data?.failureOnly === true;
       const failureOnly =
-        modifier.data?.outcome === "failure" ||
-        predicateText.includes("check:outcome:failure");
-      if (modifier.data?.outcome === "failure" && context.outcome !== "failure") {
+        failureFlag || predicateText.includes("check:outcome:failure");
+      if (failureFlag && context.outcome !== "failure") {
         active = false;
       }
 

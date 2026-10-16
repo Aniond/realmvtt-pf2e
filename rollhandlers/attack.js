@@ -107,6 +107,8 @@ if (isNaN(dc)) {
 }
 
 let isCritical = false;
+// A failed Strike (not a critical failure): miss-only damage riders apply
+let isFailure = false;
 
 if (dc > 0) {
   const total = modifiedRoll.total || 0;
@@ -194,6 +196,7 @@ if (dc > 0) {
       }[/center]\n\n**[center][color=${degreeColor}]${degreeName}${modifierText}[/color] [gm]vs ${dcName} ${dc} (${marginText})[/gm][/center]**`;
       break;
     case 0:
+      isFailure = true;
       message = `[center]${iconStr} ${attack} ${
         targetName ? ` :IconTargetArrow: ${targetName}` : ""
       }[/center]\n\n**[center][color=${degreeColor}]${degreeName}${modifierText}[/color] [gm]vs ${dcName} ${dc} (${marginText})[/gm][/center]**`;
@@ -470,6 +473,23 @@ const damageButton =
   \`\`\``
     : "";
 
+// Damage dealt even on a failed Strike (Brutal Finish): its own button
+const failureDamage = data?.roll?.metadata?.failureDamage || "";
+const failureDamageButton =
+  isFailure && failureDamage
+    ? `\`\`\`Roll_Damage_on_a_Miss
+  api.promptRoll(\`${attack} Damage (miss)\`, '${failureDamage}', [], ${JSON.stringify({
+        ...damageMetadata,
+        critical: false,
+        criticalOnlyDice: [],
+        criticalPersistentDamage: "",
+        persistentDamage: "",
+        splashDamage: 0,
+        precisionModifierIndices: [],
+      })}, 'damage')
+  \`\`\``
+    : "";
+
 // If not damage but there is persistent damage, show a macro that applies the persistent damage directly
 const persistentDamageMacroName = persistentDamage
   ? persistentDamage
@@ -522,6 +542,7 @@ message = `
   ${critSpecMessage}
 
   ${damageButton}
+  ${failureDamageButton}
   ${precisionDamageMacro}
   ${macros}
   ${effectMacros}

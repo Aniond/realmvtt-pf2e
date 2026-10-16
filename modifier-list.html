@@ -99,6 +99,12 @@
       typeValue === "offGuardTarget"
     ) {
       showFieldField = false;
+    } else if (typeValue === "rollTwice") {
+      // Value: keep-higher (fortune) or keep-lower (misfortune). Field: the
+      // roll (skill, save, attack-roll...), or empty for every roll
+      showFieldField = true;
+    } else if (typeValue === "bulkLimit") {
+      showFieldField = false;
     } else if (typeValue === "weaponProficiency") {
       // Weapon proficiency uses predicate to match weapons, value is the rank (1=trained, 2=expert, etc.)
       showFieldField = false;
@@ -115,6 +121,9 @@
       typeValue === "damageBonus" || typeValue === "damagePenalty";
     if (modifier.fields?.critical?.hidden !== !showCriticalField) {
       valuesToSet[`${modPath}.fields.critical.hidden`] = !showCriticalField;
+    }
+    if (modifier.fields?.failureOnly?.hidden !== !showCriticalField) {
+      valuesToSet[`${modPath}.fields.failureOnly.hidden`] = !showCriticalField;
     }
 
     if (modifier.fields?.value?.hidden !== !showValueField) {
@@ -236,6 +245,13 @@
       {"label": "Add Weapon Property Rune", "value": "weaponRune"},
       {"label": "Range Increment Penalty", "value": "rangeIncrementPenalty"},
       {"label": "Target Is Off-Guard To You", "value": "offGuardTarget"},
+      {"label": "Roll Twice (Fortune / Misfortune)", "value": "rollTwice"},
+      {"label": "Defense DC Bonus", "value": "saveDCBonus"},
+      {"label": "Defense DC Penalty", "value": "saveDCPenalty"},
+      {"label": "Healing Received Bonus", "value": "healingReceivedBonus"},
+      {"label": "Healing Received Penalty", "value": "healingReceivedPenalty"},
+      {"label": "Bulk Limit", "value": "bulkLimit"},
+      {"label": "Spell Die Size", "value": "spellDieSize"},
       {"label": "Add Resistance", "value": "resistance"},
       {"label": "Add Weakness", "value": "weakness"},
       {"label": "Add Immunity", "value": "immunity"},
@@ -396,6 +412,13 @@
       width="175px"
       field="critical"
       label="Critical Hit Only"
+    ></checkbox>
+    <checkbox
+      size="xs"
+      hidden="true"
+      width="175px"
+      field="failureOnly"
+      label="Damage on a Miss Only"
     ></checkbox>
     <checkbox
       size="xs"
