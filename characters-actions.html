@@ -13,8 +13,24 @@
   function onRestoreSpellcastingEntries() {
     api.closeOpenedPopovers();
     const oldSpells = record.data?.spells || [];
+    const dismissed = record.data?.spellcastingDismissed || [];
+    const sources = record.data?.spellcastingSources;
     api.setValues(
-      { "data.spellcastingDismissed": [], "data.autoSpellcasting": true },
+      {
+        "data.spellcastingDismissed": [],
+        // The class's entries are made from now on when one of them was
+        // restored, and a restored archetype entry is made as new
+        "data.autoSpellcasting":
+          !!record.data?.autoSpellcasting ||
+          dismissed.some((source) => source.startsWith("class:")),
+        ...(Array.isArray(sources)
+          ? {
+              "data.spellcastingSources": sources.filter(
+                (source) => !dismissed.includes(source)
+              ),
+            }
+          : {}),
+      },
       (updatedRecord) => {
         onAddEditFeature(
           updatedRecord,

@@ -16,7 +16,8 @@
     // An entry the class made is remembered, so it isn't made again
     const source =
       isManagedSpellcastingEntry(spellcastingEntry) &&
-      record.data?.autoSpellcasting
+      (record.data?.autoSpellcasting ||
+        `${spellcastingEntry.data.auto.source}`.startsWith("archetype:"))
         ? spellcastingEntry.data.auto.source
         : "";
 

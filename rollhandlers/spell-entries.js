@@ -124,9 +124,11 @@ function setChangedValues(before, after, path, valuesToSet) {
 // data.autoSlots (the "Set slots from level" checkbox) turns the counts and
 // rows off for one entry, or opts in an entry the player made.
 // data.autoSpellcasting is set when the class is added: the class's entries
-// are made only on those characters. Deleting one of them adds its source to
-// data.spellcastingDismissed so it isn't made again until the player clicks
-// Restore Automatic Entries.
+// are made only on those characters. A spellcasting archetype's entry is made
+// when its dedication is taken: data.spellcastingSources keeps the sources
+// the character had at the last sync. Deleting an entry the sheet made adds
+// its source to data.spellcastingDismissed so it isn't made again until the
+// player clicks Restore Automatic Entries.
 // ---------------------------------------------------------------------------
 
 // The version of the sync that last wrote a managed entry (data.auto.version)
@@ -745,21 +747,26 @@ function getDivineFontSpec(record, casting, level, valuesToSet) {
   };
 }
 
-// The spellcasting entries a character's class gives at a level, as specs:
-// { source, name, level, type, tradition (null while the choice that sets it
-// is unmade), attribute, counts, repertoire, training, bonus ("school" or
-// "studious" when the counts hold those bonus slots), and fontRank and
-// spellFilter for the Divine Font }. Empty for NPCs, level 0 characters and
-// classes without spell slots.
+// The spellcasting entries a character's class and spellcasting archetypes
+// give at a level, as specs: { source, name, level, type, tradition (null
+// while the choice that sets it is unmade), attribute, counts, repertoire,
+// training, bonus ("school" or "studious" when the counts hold those bonus
+// slots), fontRank and spellFilter for the Divine Font, and archetype for an
+// archetype's }. Empty for NPCs and level 0 characters.
 function getWantedSpellcastingEntries(record, level, valuesToSet = {}) {
   level = Math.min(20, parseInt(level, 10) || 0);
   if (record?.recordType !== "characters" || isLevelZeroCharacter(record) || level < 1) {
     return [];
   }
-  let casting = getClassSpellcasting(record.data?.classes?.[0]);
-  if (!casting) {
-    return [];
-  }
+  const casting = getClassSpellcasting(record.data?.classes?.[0]);
+  const specs = casting ? getClassSpellcastingSpecs(record, casting, level, valuesToSet) : [];
+  specs.push(...getArchetypeSpellcastingSpecs(record, level, valuesToSet, casting?.slug));
+  return specs.map((spec) => ({ ...spec, level }));
+}
+
+// The entries a caster class gives at a level (see getWantedSpellcastingEntries)
+function getClassSpellcastingSpecs(record, classCasting, level, valuesToSet) {
+  let casting = classCasting;
   if (
     casting.type === "prepared" &&
     casting.table === "FULL3" &&
@@ -803,7 +810,140 @@ function getWantedSpellcastingEntries(record, level, valuesToSet = {}) {
   if (casting.font) {
     specs.push(getDivineFontSpec(record, casting, level, valuesToSet));
   }
-  return specs.map((spec) => ({ ...spec, level }));
+  return specs;
+}
+
+// Spellcasting archetypes (Player Core pg. 215, Core Rulebook pg. 219): the
+// dedication gives cantrips, the basic, expert and master spellcasting feats
+// give slots as the character levels up, and a breadth feat 1 more of each
+// rank but the two highest. Each casts like its class (type, tradition and
+// attribute in CLASS_SPELLCASTING), with these differences:
+//   cantrips    the dedication's: 2, the witch's 1 (prepared from their
+//               familiar) and the psychic's 1 psi cantrip
+//   breadth     the breadth feat
+//   startsWith  the feat that gives the spellcasting when the dedication
+//               doesn't (the summoner's basic spellcasting)
+//   attribute   "intOrCha": the psychic casts with the attribute they
+//               qualified with, taken as the higher of the two
+const ARCHETYPE_SPELLCASTING = {
+  animist: {},
+  bard: { breadth: "Occult Breadth" },
+  cleric: { breadth: "Divine Breadth" },
+  druid: { breadth: "Primal Breadth" },
+  magus: {},
+  necromancer: {},
+  oracle: { breadth: "Mysterious Breadth" },
+  psychic: { cantrips: 1, attribute: "intOrCha" },
+  sorcerer: { breadth: "Bloodline Breadth" },
+  summoner: { startsWith: "Basic Summoner Spellcasting" },
+  witch: { cantrips: 1, breadth: "Patron's Breadth" },
+  wizard: { breadth: "Arcane Breadth" },
+};
+
+// The ranks archetype spellcasting feats give a slot of at a level: basic
+// 1st at 4th level, 2nd at 6th and 3rd at 8th; expert 4th at 12th, 5th at
+// 14th and 6th at 16th; master 7th at 18th and 8th at 20th
+function getArchetypeSlotRanks(level, { basic = false, expert = false, master = false }) {
+  const ranks = [];
+  const add = (granted, steps) => {
+    if (!granted) return;
+    for (const [rank, at] of steps) {
+      if (level >= at) ranks.push(rank);
+    }
+  };
+  add(basic, [[1, 4], [2, 6], [3, 8]]);
+  add(expert, [[4, 12], [5, 14], [6, 16]]);
+  add(master, [[7, 18], [8, 20]]);
+  return ranks;
+}
+
+// The feat or feature a character has under a name, or null (hasFeatNamed)
+function findFeatNamed(record, featName) {
+  const baseName = (name) =>
+    `${name || ""}`.toLowerCase().replace(/\s*\([^)]*\)\s*$/, "").trim();
+  const wanted = baseName(featName);
+  const features = [
+    ...(record.data?.classes || []),
+    ...(record.data?.ancestries || []),
+    ...(record.data?.heritages || []),
+  ].flatMap((source) => source?.data?.features || []);
+  return (
+    [...(record.data?.feats || []), ...(record.data?.bonusFeats || []), ...features].find(
+      (entry) => entry?.data?.type !== "slot" && baseName(entry?.name) === wanted,
+    ) || null
+  );
+}
+
+// The entries a character's spellcasting archetypes give at a level, as specs
+// with the source "archetype:wizard": none for the character's own class
+function getArchetypeSpellcastingSpecs(record, level, valuesToSet = {}, classSlug = null) {
+  const specs = [];
+  for (const [slug, archetype] of Object.entries(ARCHETYPE_SPELLCASTING)) {
+    const name = capitalize(slug);
+    const start = slug !== classSlug && findFeatNamed(record, archetype.startsWith || `${name} Dedication`);
+    if (!start) continue;
+    const casting = CLASS_SPELLCASTING[slug];
+    const has = (feat) => hasFeatNamed(record, feat);
+    const ranks = getArchetypeSlotRanks(level, {
+      basic: has(`Basic ${name} Spellcasting`),
+      expert: has(`Expert ${name} Spellcasting`),
+      master: has(`Master ${name} Spellcasting`),
+    });
+    const breadth = !!archetype.breadth && has(archetype.breadth);
+    const cantrips = archetype.cantrips ?? 2;
+    const counts = {};
+    if (casting.type === "prepared") {
+      counts.numCantrips = cantrips;
+    }
+    for (let rank = 1; rank <= 10; rank++) {
+      counts[`numSpells${rank}`] = 0;
+    }
+    ranks.forEach((rank, index) => {
+      counts[`numSpells${rank}`] = breadth && index < ranks.length - 2 ? 2 : 1;
+    });
+    // A spontaneous archetype learns a spell for each slot
+    let repertoire = null;
+    if (casting.type === "spontaneous") {
+      repertoire = { repCantrips: cantrips };
+      for (let rank = 1; rank <= 10; rank++) {
+        repertoire[`rep${rank}`] = counts[`numSpells${rank}`];
+      }
+    }
+    const tradition =
+      typeof casting.tradition === "string"
+        ? casting.tradition
+        : getSubclassTradition(
+            record,
+            casting.tradition.flag,
+            casting.tradition.nested,
+            getSpellcastingEdition(start),
+          );
+    const score = (attribute) =>
+      parseInt(valuesToSet[`data.${attribute}`] ?? record.data?.[attribute] ?? 0, 10) || 0;
+    const attribute =
+      archetype.attribute === "intOrCha"
+        ? score("cha") > score("int")
+          ? "cha"
+          : "int"
+        : casting.attribute;
+    specs.push({
+      source: `archetype:${slug}`,
+      name: `${name} Archetype Spells`,
+      type: casting.type,
+      tradition,
+      attribute,
+      counts,
+      repertoire,
+      training: has(`Master ${name} Spellcasting`)
+        ? 3
+        : has(`Expert ${name} Spellcasting`)
+          ? 2
+          : 1,
+      bonus: null,
+      archetype: true,
+    });
+  }
+  return specs;
 }
 
 function isManagedSpellcastingEntry(spellcastingEntry) {
@@ -1196,11 +1336,20 @@ function syncSpellcastingEntries(record, valuesToSet) {
 
   const specs = getWantedSpellcastingEntries(record, level, valuesToSet);
   const makeEntries = !!(valuesToSet["data.autoSpellcasting"] ?? record.data?.autoSpellcasting);
+  // The sources the character had at the last sync: an archetype's entry is
+  // made when its spellcasting first appears (a dedication taken), not for
+  // one the character had before this came in, whose entry the player made
+  const seenBefore = Array.isArray(record.data?.spellcastingSources)
+    ? record.data.spellcastingSources
+    : null;
   for (const spec of specs) {
     if (dismissed.includes(spec.source)) continue;
     let entry = entries.find((e) => e.data?.auto?.source === spec.source);
     if (!entry) {
-      if (!makeEntries) continue;
+      const make = spec.archetype
+        ? !!seenBefore && !seenBefore.includes(spec.source)
+        : makeEntries;
+      if (!make) continue;
       entry = buildSpellcastingEntry({
         name: spec.name,
         type: spec.type,
@@ -1221,6 +1370,11 @@ function syncSpellcastingEntries(record, valuesToSet) {
       entries.push(entry);
     }
     applySpellcastingSpec(entry, spec);
+  }
+
+  const sources = specs.map((spec) => spec.source);
+  if (JSON.stringify(sources) !== JSON.stringify(seenBefore)) {
+    valuesToSet["data.spellcastingSources"] = sources;
   }
 
   // Entries whose class or feature is gone: removed while they hold no
