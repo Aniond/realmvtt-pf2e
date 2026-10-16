@@ -92,7 +92,11 @@
       typeValue === "weaponTrait" ||
       typeValue === "dexCap" ||
       typeValue === "dyingMax" ||
-      typeValue === "recoveryDC"
+      typeValue === "recoveryDC" ||
+      typeValue === "weaponRange" ||
+      typeValue === "weaponRune" ||
+      typeValue === "rangeIncrementPenalty" ||
+      typeValue === "offGuardTarget"
     ) {
       showFieldField = false;
     } else if (typeValue === "weaponProficiency") {
@@ -228,6 +232,10 @@
       {"label": "Dexterity Modifier Cap", "value": "dexCap"},
       {"label": "Dying Maximum", "value": "dyingMax"},
       {"label": "Recovery Check DC", "value": "recoveryDC"},
+      {"label": "Weapon Range Increment", "value": "weaponRange"},
+      {"label": "Add Weapon Property Rune", "value": "weaponRune"},
+      {"label": "Range Increment Penalty", "value": "rangeIncrementPenalty"},
+      {"label": "Target Is Off-Guard To You", "value": "offGuardTarget"},
       {"label": "Add Resistance", "value": "resistance"},
       {"label": "Add Weakness", "value": "weakness"},
       {"label": "Add Immunity", "value": "immunity"},

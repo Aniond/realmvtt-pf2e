@@ -392,6 +392,25 @@ function checkForReplacements(
     }
   }
 
+  // @target.condition.<slug>: the single target's value of that condition
+  // (Fearsome Brute: {2*@target.condition.frightened}); 0 without one
+  // Foundry spelling: @target.conditions.frightened.badge.value
+  value = value.replace(
+    /@target\.conditions\.([a-z-]+)\.badge\.value/g,
+    "@target.condition.$1",
+  );
+  if (value.includes("@target.condition.")) {
+    const targets = Array.isArray(context?.targets) ? context.targets : [];
+    const target = context?.target || (targets.length === 1 ? targets[0] : null);
+    const targetToken = target?.token || target;
+    value = value.replace(/@target\.condition\.([a-z-]+)/g, (_m, slug) => {
+      const condition = targetToken
+        ? getTokenCondition(targetToken, slug.replace(/-/g, " "))
+        : null;
+      return String(condition?.value || 0);
+    });
+  }
+
   // Weapon damage tokens (Foundry's @weapon.system.damage.*): the number of
   // damage dice including striking runes, the die ("d8") and the weapon level
   if (context?.weapon && value.includes("@weapon")) {
@@ -1403,6 +1422,10 @@ function getTargetAtoms(token, context) {
     if (slug) {
       atoms.push(`target:condition:${slug}`);
       atoms.push(`target:effect:${slug}`);
+      // The condition's value (frightened 2 -> target:condition:frightened:2),
+      // so {"gte":["target:condition:frightened",2]} works
+      const value = getTokenCondition(targetToken, effect.name)?.value || 1;
+      atoms.push(`target:condition:${slug}:${value}`);
     }
   });
   const level = parseInt(targetData.level, 10);
@@ -1480,13 +1503,14 @@ const WEAPON_DIE_STEPS = [4, 6, 8, 10, 12];
  */
 function getAlteredWeapon(record, weapon) {
   if (!record || !weapon?.data) return weapon;
+  const targets = (typeof api.getTargets === "function" && api.getTargets()) || [];
   const mods = getEffectsAndModifiersForToken(
     record,
-    ["weaponDieSize", "weaponTrait"],
+    ["weaponDieSize", "weaponTrait", "weaponRange", "weaponRune"],
     "",
     undefined,
     undefined,
-    { weapon },
+    { weapon, targets },
   ).filter((mod) => mod.active);
   if (mods.length === 0) return weapon;
 
@@ -1539,6 +1563,41 @@ function getAlteredWeapon(record, weapon) {
       }
     });
 
+  // weaponRange: "x2" multiplies the range increment (Far Shot), "+10" adds,
+  // a plain number sets it (Far Lobber: 30). Melee weapons are unchanged.
+  const baseRange = parseInt(altered.data.range, 10) || 0;
+  if (baseRange > 0) {
+    let range = baseRange;
+    mods
+      .filter((mod) => mod.modifierType === "weaponRange")
+      .forEach((mod) => {
+        const raw = String(mod.value ?? "").trim().toLowerCase();
+        const multiply = raw.match(/^x\s*(\d+(?:\.\d+)?)$/);
+        if (multiply) range = Math.round(range * parseFloat(multiply[1]));
+        else if (/^\+\d+$/.test(raw)) range += parseInt(raw, 10);
+        else if (/^\d+$/.test(raw)) range = Math.max(range, parseInt(raw, 10));
+      });
+    altered.data.range = range;
+  }
+
+  // weaponRune: adds a property rune for this Strike (Ghost Hunter: Ghost Touch)
+  const runeMods = mods.filter((mod) => mod.modifierType === "weaponRune");
+  if (runeMods.length > 0) {
+    const runes = { ...(altered.data.runes || {}) };
+    const property = [...(Array.isArray(runes.property) ? runes.property : [])];
+    runeMods.forEach((mod) => {
+      const rune = String(mod.value || "").trim();
+      const has = property.some(
+        (r) =>
+          String(typeof r === "string" ? r : r?.name || "").toLowerCase() ===
+          rune.toLowerCase(),
+      );
+      if (rune && !has) property.push(rune);
+    });
+    runes.property = property;
+    altered.data.runes = runes;
+  }
+
   return altered;
 }
 
@@ -1561,10 +1620,13 @@ function getOtherSpeeds(record, speedMods, landSpeed, isLandSpeedField) {
     const type = typeOf(mod.field);
     if (!type) return;
     const raw = String(mod.value ?? "").trim().toLowerCase();
+    // "half" = half the land Speed, rounded down to 5 feet
     const feet =
-      raw === "land" || raw.includes("speed.value") || raw === ""
-        ? landSpeed
-        : parseInt(raw, 10) || 0;
+      raw === "half" || raw === "half land"
+        ? Math.floor(landSpeed / 2 / 5) * 5
+        : raw === "land" || raw.includes("speed.value") || raw === ""
+          ? landSpeed
+          : parseInt(raw, 10) || 0;
     if (feet > (speeds[type] || 0)) speeds[type] = feet;
   });
   speedMods.forEach((mod) => {
@@ -9369,6 +9431,22 @@ function countWeaponDamageDice(weapon, strikingRune) {
  * @param {boolean} targetIsOffGuard - Whether the target has the off-guard condition
  * @returns {Array} - Modified array with sneak attack modifiers activated if conditions met
  */
+/**
+ * Whether an offGuardTarget modifier (predicated against this weapon and
+ * target) makes the target off-guard to this creature's attacks.
+ */
+function isTargetOffGuardToUs(record, weapon, target) {
+  if (!record || !target) return false;
+  return getEffectsAndModifiersForToken(
+    record,
+    ["offGuardTarget"],
+    undefined,
+    weapon?._id,
+    undefined,
+    { weapon, targets: [target] },
+  ).some((mod) => mod.active);
+}
+
 function activateSneakAttackIfConditionsMet(
   modifiers,
   weapon,
@@ -9454,11 +9532,20 @@ function applyTargetOffGuardDamage(record, modifiers, weapon, target, targetIsOf
   );
   if (weaponTraits.includes("backstabber")) {
     const potency = parseInt(weapon?.data?.runes?.potency || "0", 10) || 0;
+    // adjustModifier with targetSlug "backstabber" changes it (Expert
+    // Backstabber: 2, or 4 with a +3 weapon)
+    const backstabber = applyAdjustModifiers(
+      record,
+      potency >= 3 ? 2 : 1,
+      "backstabber",
+      weapon,
+    );
     result = [
       ...result,
       {
         name: "Backstabber",
-        value: `${potency >= 3 ? 2 : 1}`,
+        slug: "backstabber",
+        value: `${backstabber}`,
         valueType: "string",
         active: true,
         type: "",
@@ -11005,8 +11092,30 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber = 1) {
             continue;
           }
 
-          // -2 penalty for each increment beyond the first
-          rangePenalty = -(increment - 1) * 2;
+          // -2 penalty for each increment beyond the first; a
+          // rangeIncrementPenalty modifier lowers it (Far Throw: -1 with
+          // thrown weapons)
+          let perIncrement = 2;
+          getEffectsAndModifiersForToken(
+            record,
+            ["rangeIncrementPenalty"],
+            undefined,
+            weapon._id,
+            undefined,
+            { weapon, targets: [target] },
+          ).forEach((mod) => {
+            const penalty = Math.abs(parseFloat(mod.value));
+            if (mod.active && !isNaN(penalty) && penalty < perIncrement) {
+              perIncrement = penalty;
+            }
+          });
+          // Foundry's AdjustModifier on the "range-penalty" slug (Far Throw
+          // adds 1: -2 becomes -1 per increment)
+          perIncrement = Math.max(
+            0,
+            -applyAdjustModifiers(record, -perIncrement, "range-penalty", weapon),
+          );
+          rangePenalty = -(increment - 1) * perIncrement;
         }
 
         // Add penalties based on range increment
@@ -11080,6 +11189,13 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber = 1) {
           target: target,
         });
         targetIsOffGuard = targetIsOffGuardDueToFlanking;
+      }
+      // offGuardTarget modifiers make a target off-guard to your attacks
+      // (Dread Striker: ["target:condition:frightened"]); like flanking, the
+      // -2 is applied to its AC here
+      if (!targetIsOffGuard && isTargetOffGuardToUs(record, weapon, target)) {
+        targetIsOffGuard = true;
+        targetIsOffGuardDueToFlanking = true;
       }
 
       // Activate sneak attack modifiers if conditions are met
@@ -11808,7 +11924,9 @@ function performDamageRoll(record, weapon, weaponDataPath, isCritical) {
         targetShieldRaised = true;
       }
       // Check if target is off-guard
-      targetIsOffGuard = isOffGuard(target?.token);
+      targetIsOffGuard =
+        isOffGuard(target?.token) ||
+        isTargetOffGuardToUs(record, weapon, target);
 
       let targetIsOffGuardDueToFlanking = false;
       if (isMelee && !isThrown && !targetIsOffGuard) {

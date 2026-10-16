@@ -546,4 +546,90 @@ section("lore ranks and resolved labels");
   assert("the label shows the chosen terrain", mod?.name, "Terrain Expertise (aquatic terrain)");
 }
 
-summary();
+section("engine gaps closed: backstabber slug, half Speed, condition values, range, off-guard, runes");
+{
+  const realTargets = ctx.api.getTargets;
+  const realOther = ctx.api.getOtherTokens;
+  ctx.api.getOtherTokens = () => [];
+  const frightened2 = { _id: "f", name: "Frightened", rules: [] };
+  const scaredTarget = { token: { _id: "t", recordType: "npcs", effects: [frightened2], effectIds: ["f", "f"], data: { ac: 15, level: 1, traits: ["Incorporeal"] } }, distance: 5 };
+
+  // Expert Backstabber: adjustModifier on the backstabber slug
+  const dagger = weapon("Dagger", { traits: ["agile", "finesse", "backstabber"], group: "knife", damage: { dice: 1, die: "d4", damageType: "piercing" } });
+  const expert = pc({ feats: [feat("Expert Backstabber", [{ type: "adjustModifier", targetSlug: "backstabber", adjustMode: "override", value: "2", valueType: "number", active: true, field: "" }])], inventory: [dagger] });
+  ctx.api.getTargets = () => [{ token: { _id: "t", recordType: "npcs", effects: [{ _id: "og", name: "Off-Guard", rules: [] }], effectIds: ["og"], data: { ac: 15, level: 1, traits: [] } }, distance: 5 }];
+  const stab = (capturePrompt(() => ctx.performAttackRoll(expert, dagger, "data.inventory.0", 1)).metadata.damageModifiers || []).find((m) => m.name === "Backstabber");
+  assert("Expert Backstabber raises backstabber to 2", stab?.value, "2");
+
+  // Fearsome Brute: double the target's frightened value
+  ctx.api.getTargets = () => [scaredTarget];
+  const brute = pc({ feats: [feat("Fearsome Brute", [{ type: "damageBonus", modifierType: "circumstance", field: "strike-damage", valueType: "string", value: "{2*@target.condition.frightened}", predicate: '["target:condition:frightened"]' }])], inventory: [weapon("Longsword")] });
+  const fb = (capturePrompt(() => ctx.performAttackRoll(brute, brute.data.inventory[0], "data.inventory.0", 1)).metadata.damageModifiers || []).find((m) => m.name === "Fearsome Brute");
+  assert("Fearsome Brute: 2 x frightened 2 = 4", `${fb?.value}|${fb?.active}`, "4|true");
+  assertIncludes("frightened value atom", traitsFor(brute, { targets: [scaredTarget] }), "target:condition:frightened:2");
+
+  // Dread Striker: a frightened target is off-guard to you (AC -2)
+  const striker = pc({ feats: [feat("Dread Striker", [{ type: "offGuardTarget", active: true, predicate: '["target:condition:frightened"]' }])], inventory: [weapon("Longsword")] });
+  const dread = capturePrompt(() => ctx.performAttackRoll(striker, striker.data.inventory[0], "data.inventory.0", 1)).metadata;
+  const plain = capturePrompt(() => ctx.performAttackRoll(pc({ inventory: [weapon("Longsword")] }), weapon("Longsword"), "data.inventory.0", 1)).metadata;
+  assert("Dread Striker: the target is off-guard", dread.isOffGuard, true);
+  assert("and its AC is 2 lower", plain.dc - dread.dc, 2);
+
+  // Ghost Hunter: ghost touch vs an incorporeal target
+  const hunter = pc({ feats: [feat("Ghost Hunter", [{ type: "weaponRune", value: "Ghost Touch", predicate: '["target:trait:incorporeal","item:magical"]' }])] });
+  const magicSword = weapon("+1 Longsword", { runes: { potency: 1, striking: 0, property: [] } });
+  assertIncludes("Ghost Hunter adds ghost touch vs incorporeal", ctx.getAlteredWeapon(hunter, magicSword).data.runes.property, "Ghost Touch");
+  ctx.api.getTargets = () => [];
+  assertNotIncludes("not without that target", ctx.getAlteredWeapon(hunter, magicSword).data.runes.property, "Ghost Touch");
+
+  // Far Shot / Far Lobber: range increments
+  const bow = weapon("Longbow", { range: 100, group: "bow" });
+  const farShot = pc({ feats: [feat("Far Shot", [{ type: "weaponRange", value: "x2" }])] });
+  assert("Far Shot doubles the range increment", ctx.getAlteredWeapon(farShot, bow).data.range, 200);
+  const bomb = weapon("Alchemist's Fire", { range: 20, traits: ["bomb", "alchemical"] });
+  const lobber = pc({ feats: [feat("Far Lobber", [{ type: "weaponRange", value: "30", predicate: '["item:trait:bomb"]' }])] });
+  assert("Far Lobber sets bombs to 30", ctx.getAlteredWeapon(lobber, bomb).data.range, 30);
+  assert("melee weapons keep range 0", ctx.getAlteredWeapon(farShot, weapon("Longsword")).data.range, 0);
+
+  // Far Throw: -1 per extra increment with thrown weapons
+  const javelin = weapon("Javelin", { range: 30, traits: ["Thrown"], group: "dart", reload: "-", ammo: 5 });
+  const thrower = pc({ feats: [feat("Far Throw", [{ type: "rangeIncrementPenalty", value: "1", active: true, predicate: '["item:trait:thrown"]' }])], inventory: [javelin] });
+  ctx.api.getTargets = () => [{ token: { _id: "t", recordType: "npcs", effects: [], data: { ac: 15, level: 1, traits: [] } }, distance: 90 }];
+  const rangeMod = capturePrompt(() => ctx.performAttackRoll(thrower, javelin, "data.inventory.0", 1)).modifiers.find((m) => m.name.startsWith("Range Increment"));
+  assert("Far Throw: third increment is -2, not -4", rangeMod?.value, -2);
+
+  // Flamboyant Athlete: climb and swim equal to half land Speed
+  const athlete = pc({ speed: "30 feet", ancestries: [{ name: "Elf", data: { speed: "30 feet", hp: 6 } }], feats: [feat("Flamboyant Athlete", [{ type: "speed", field: "climb", value: "half" }, { type: "speed", field: "swim", value: "half" }])] });
+  const written = {};
+  ctx.updateAttribute({ record: athlete, attribute: "str", value: 2, moreValuesToSet: written });
+  assert("half land Speed (30 -> 15)", written["data.speed"], "30 feet, climb 15 feet, swim 15 feet");
+
+  ctx.api.getTargets = realTargets;
+  ctx.api.getOtherTokens = realOther;
+}
+
+section("imported Foundry data for the closed gaps works as-is");
+{
+  const realTargets = ctx.api.getTargets;
+  const realOther = ctx.api.getOtherTokens;
+  ctx.api.getOtherTokens = () => [];
+  // Expert Backstabber as imported: adjustModifier multiply 2 on backstabber
+  const dagger = weapon("+3 Dagger", { traits: ["agile", "finesse", "backstabber"], group: "knife", damage: { dice: 1, die: "d4", damageType: "piercing" }, runes: { potency: 3, striking: 0, property: [] } });
+  const expert = pc({ feats: [feat("Expert Backstabber", [{ type: "adjustModifier", targetSlug: "backstabber", value: "2", valueType: "number", adjustMode: "multiply", active: true, field: "" }])], inventory: [dagger] });
+  ctx.api.getTargets = () => [{ token: { _id: "t", recordType: "npcs", effects: [{ _id: "og", name: "Off-Guard", rules: [] }], effectIds: ["og"], data: { ac: 15, level: 1, traits: [] } }, distance: 5 }];
+  const stab = (capturePrompt(() => ctx.performAttackRoll(expert, dagger, "data.inventory.0", 1)).metadata.damageModifiers || []).find((m) => m.name === "Backstabber");
+  assert("imported Expert Backstabber: 4 with a +3 weapon", stab?.value, "4");
+  // Far Throw as imported: adjustModifier add 1 on range-penalty
+  const javelin = weapon("Javelin", { range: 30, traits: ["Thrown"], group: "dart", reload: "-", ammo: 5 });
+  const thrower = pc({ feats: [feat("Far Throw", [{ type: "adjustModifier", targetSlug: "range-penalty", value: "1", valueType: "number", adjustMode: "add", active: true, field: "", predicate: '["item:trait:thrown"]' }])], inventory: [javelin] });
+  ctx.api.getTargets = () => [{ token: { _id: "t", recordType: "npcs", effects: [], data: { ac: 15, level: 1, traits: [] } }, distance: 90 }];
+  const rangeMod = capturePrompt(() => ctx.performAttackRoll(thrower, javelin, "data.inventory.0", 1)).modifiers.find((m) => m.name.startsWith("Range Increment"));
+  assert("imported Far Throw: third increment is -2", rangeMod?.value, -2);
+  // Fearsome Brute's Foundry token
+  const scared = { token: { _id: "t", recordType: "npcs", effects: [{ _id: "f", name: "Frightened", rules: [] }], effectIds: ["f", "f", "f"], data: { ac: 15, level: 1, traits: [] } }, distance: 5 };
+  assert("@target.conditions.frightened.badge.value", ctx.checkForReplacements("{2*@target.conditions.frightened.badge.value}", {}, pc(), null, { targets: [scared] }), "6");
+  ctx.api.getTargets = realTargets;
+  ctx.api.getOtherTokens = realOther;
+}
+
+process.exitCode = summary();
