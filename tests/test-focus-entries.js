@@ -236,4 +236,26 @@ section("Slots and the Level Up summary skip it");
   assert("a prepared entry can't follow the focus entry", [written["data.spells.1.data.autoSlots"], notices], [false, ["Your class has no spell slots for this entry to follow."]]);
 }
 
+section("Settles after one sync: nothing written on later loads");
+{
+  for (const [label, record] of [
+    ["a new champion", character("Champion", 1)],
+    ["a new monk with Qi Spells", character("Monk", 1, {}, ["Qi Spells"])],
+    ["a new witch before the patron", character("Witch", 1)],
+    ["a new cleric with Domain Initiate", character("Cleric", 1, { flags: { divineFont: "healing" } }, ["Domain Initiate"])],
+    ["a champion from before", character("Champion", 3, { autoSpellcasting: undefined, autoFocusSpellcasting: undefined })],
+    ["a deleted focus entry", character("Champion", 1, { spellcastingDismissed: ["class:champion:focus"] })],
+    [
+      "an oracle from before with their own focus entry",
+      character("Oracle", 3, {
+        autoFocusSpellcasting: undefined,
+        spells: [playerEntry("Mine", { type: "focus", focusPool: 1, focusPoolMax: 2, spells1: [spell("Cosmic Tether")] })],
+      }),
+    ],
+  ]) {
+    const once = synced(record);
+    assert(`${label}: the second sync writes nothing at all`, Object.keys(syncValues(once)), []);
+  }
+}
+
 process.exitCode = summary();
