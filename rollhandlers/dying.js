@@ -224,6 +224,14 @@ function applyHealingToToken(target, healing, options = {}) {
   if (!target?.data || !(healing > 0)) {
     return;
   }
+  // Healing the target receives changes by its own healingReceived
+  // modifiers (Robust Health: + level from Treat Wounds). Context: the action
+  // (action:treat-wounds) and, for spells, item:type:spell.
+  const received = getHealingReceivedAdjustment(target, options);
+  healing = Math.max(0, healing + received.amount);
+  if (!(healing > 0)) {
+    return;
+  }
   const oldHp = parseInt(target.data?.curhp || "0", 10) || 0;
   const maxHp = parseInt(target.data?.hitpoints || "0", 10) || 0;
   const newHp = Math.min(oldHp + healing, maxHp);
@@ -249,10 +257,38 @@ function applyHealingToToken(target, healing, options = {}) {
   }
 
   const name = getCreatureName(target);
-  const text = `${name} healed for ${healing} HP${lines.length > 0 ? `, ${lines.join(" and ")}` : ""}.`;
+  const adjusted = received.names.length > 0 ? ` (${received.names.join(", ")})` : "";
+  const text = `${name} healed for ${healing} HP${adjusted}${lines.length > 0 ? `, ${lines.join(" and ")}` : ""}.`;
   const undo = `\`\`\`Undo\nif (isGM) { api.setValuesOnTokenById('${target._id}', '${target.recordType}', ${JSON.stringify(oldValues)}); api.editMessage(null, '~${text}~'); } else { api.showNotification('Only the GM can undo healing.', 'yellow', 'Notice'); }\n\`\`\``;
   api.sendMessage(`${text}\n${undo}`, undefined, undefined, undefined, target);
   api.floatText(target, `+${healing}`, "#1bc91b");
+}
+
+// The target's healingReceived modifiers for this healing: amount to add
+// (negative for penalties) and the names of the modifiers that applied
+function getHealingReceivedAdjustment(target, options = {}) {
+  const action =
+    options.action || (options.treatWounds ? "Treat Wounds" : "") || "";
+  const context = {};
+  if (action) context.action = { name: action };
+  if (options.isSpell) context.origin = { recordType: "spells", data: { traits: ["magical", "healing"] } };
+  let amount = 0;
+  const names = [];
+  getEffectsAndModifiersForToken(
+    target,
+    ["healingReceivedBonus", "healingReceivedPenalty"],
+    "",
+    undefined,
+    undefined,
+    context,
+  ).forEach((mod) => {
+    if (mod.active === false || mod.situational) return;
+    const value = parseInt(mod.value || 0, 10) || 0;
+    if (!value) return;
+    amount += value;
+    names.push(`${value > 0 ? "+" : ""}${value} ${mod.name}`);
+  });
+  return { amount, names };
 }
 
 // Heroic Recovery (Player Core pg. 411): with at least 1 Hero Point, a dying

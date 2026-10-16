@@ -3,6 +3,14 @@
     rollSkill(record, skill);
   }
 
+  // "Roll as..." menu: roll the skill as one of its actions (Demoralize,
+  // Trip...), then clear the menu so the same action can be picked again
+  function performSkillActionFromSheet(skill, actionName) {
+    if (!actionName) return;
+    api.setValue(`data.rollAs${skill.charAt(0).toUpperCase()}${skill.slice(1)}`, "");
+    performSkillAction(record, skill, actionName);
+  }
+
   function onSkillTrainingChange(value, skill) {
     onAddEditFeature(record);
   }
@@ -74,6 +82,15 @@
             field="Roll Acrobatics"
             onclick="performSkillCheck('acrobatics')"
           ></iconbutton>
+          <dropdown
+            size="xs"
+            width="118px"
+            style="margin-left: auto"
+            field="rollAsAcrobatics"
+            placeholder="Roll as..."
+            options='[{"label": "Balance", "value": "Balance"}, {"label": "Tumble Through", "value": "Tumble Through"}, {"label": "Maneuver in Flight", "value": "Maneuver in Flight"}, {"label": "Squeeze", "value": "Squeeze"}, {"label": "Escape", "value": "Escape"}]'
+            onchange="performSkillActionFromSheet('acrobatics', value)"
+          ></dropdown>
         </div>
         <div style="display: flex; gap: 4px; align-items: center">
           <div style="flex: 0 0 52px">
@@ -130,6 +147,15 @@
             field="Roll Nature"
             onclick="performSkillCheck('nature')"
           ></iconbutton>
+          <dropdown
+            size="xs"
+            width="118px"
+            style="margin-left: auto"
+            field="rollAsNature"
+            placeholder="Roll as..."
+            options='[{"label": "Command an Animal", "value": "Command an Animal"}, {"label": "Recall Knowledge", "value": "Recall Knowledge"}, {"label": "Identify Magic", "value": "Identify Magic"}, {"label": "Learn a Spell", "value": "Learn a Spell"}]'
+            onchange="performSkillActionFromSheet('nature', value)"
+          ></dropdown>
         </div>
         <div style="display: flex; gap: 4px; align-items: center">
           <div style="flex: 0 0 52px">
@@ -186,6 +212,15 @@
             field="Roll Arcana"
             onclick="performSkillCheck('arcana')"
           ></iconbutton>
+          <dropdown
+            size="xs"
+            width="118px"
+            style="margin-left: auto"
+            field="rollAsArcana"
+            placeholder="Roll as..."
+            options='[{"label": "Recall Knowledge", "value": "Recall Knowledge"}, {"label": "Decipher Writing", "value": "Decipher Writing"}, {"label": "Identify Magic", "value": "Identify Magic"}, {"label": "Learn a Spell", "value": "Learn a Spell"}, {"label": "Borrow an Arcane Spell", "value": "Borrow an Arcane Spell"}]'
+            onchange="performSkillActionFromSheet('arcana', value)"
+          ></dropdown>
         </div>
         <div style="display: flex; gap: 4px; align-items: center">
           <div style="flex: 0 0 52px">
@@ -242,6 +277,15 @@
             field="Roll Occultism"
             onclick="performSkillCheck('occultism')"
           ></iconbutton>
+          <dropdown
+            size="xs"
+            width="118px"
+            style="margin-left: auto"
+            field="rollAsOccultism"
+            placeholder="Roll as..."
+            options='[{"label": "Recall Knowledge", "value": "Recall Knowledge"}, {"label": "Decipher Writing", "value": "Decipher Writing"}, {"label": "Identify Magic", "value": "Identify Magic"}, {"label": "Learn a Spell", "value": "Learn a Spell"}]'
+            onchange="performSkillActionFromSheet('occultism', value)"
+          ></dropdown>
         </div>
         <div style="display: flex; gap: 4px; align-items: center">
           <div style="flex: 0 0 52px">
@@ -298,6 +342,15 @@
             field="Roll Athletics"
             onclick="performSkillCheck('athletics')"
           ></iconbutton>
+          <dropdown
+            size="xs"
+            width="118px"
+            style="margin-left: auto"
+            field="rollAsAthletics"
+            placeholder="Roll as..."
+            options='[{"label": "Climb", "value": "Climb"}, {"label": "Force Open", "value": "Force Open"}, {"label": "Grapple", "value": "Grapple"}, {"label": "High Jump", "value": "High Jump"}, {"label": "Long Jump", "value": "Long Jump"}, {"label": "Reposition", "value": "Reposition"}, {"label": "Shove", "value": "Shove"}, {"label": "Swim", "value": "Swim"}, {"label": "Trip", "value": "Trip"}, {"label": "Disarm", "value": "Disarm"}, {"label": "Escape", "value": "Escape"}]'
+            onchange="performSkillActionFromSheet('athletics', value)"
+          ></dropdown>
         </div>
         <div style="display: flex; gap: 4px; align-items: center">
           <div style="flex: 0 0 52px">
@@ -354,6 +407,15 @@
             field="Roll Performance"
             onclick="performSkillCheck('performance')"
           ></iconbutton>
+          <dropdown
+            size="xs"
+            width="118px"
+            style="margin-left: auto"
+            field="rollAsPerformance"
+            placeholder="Roll as..."
+            options='[{"label": "Perform", "value": "Perform"}, {"label": "Earn Income", "value": "Earn Income"}]'
+            onchange="performSkillActionFromSheet('performance', value)"
+          ></dropdown>
         </div>
         <div style="display: flex; gap: 4px; align-items: center">
           <div style="flex: 0 0 52px">
@@ -410,6 +472,15 @@
             field="Roll Crafting"
             onclick="performSkillCheck('crafting')"
           ></iconbutton>
+          <dropdown
+            size="xs"
+            width="118px"
+            style="margin-left: auto"
+            field="rollAsCrafting"
+            placeholder="Roll as..."
+            options='[{"label": "Recall Knowledge", "value": "Recall Knowledge"}, {"label": "Repair", "value": "Repair"}, {"label": "Craft", "value": "Craft"}, {"label": "Earn Income", "value": "Earn Income"}, {"label": "Identify Alchemy", "value": "Identify Alchemy"}]'
+            onchange="performSkillActionFromSheet('crafting', value)"
+          ></dropdown>
         </div>
         <div style="display: flex; gap: 4px; align-items: center">
           <div style="flex: 0 0 52px">
@@ -466,6 +537,15 @@
             field="Roll Religion"
             onclick="performSkillCheck('religion')"
           ></iconbutton>
+          <dropdown
+            size="xs"
+            width="118px"
+            style="margin-left: auto"
+            field="rollAsReligion"
+            placeholder="Roll as..."
+            options='[{"label": "Recall Knowledge", "value": "Recall Knowledge"}, {"label": "Decipher Writing", "value": "Decipher Writing"}, {"label": "Identify Magic", "value": "Identify Magic"}, {"label": "Learn a Spell", "value": "Learn a Spell"}]'
+            onchange="performSkillActionFromSheet('religion', value)"
+          ></dropdown>
         </div>
         <div style="display: flex; gap: 4px; align-items: center">
           <div style="flex: 0 0 52px">
@@ -522,6 +602,15 @@
             field="Roll Deception"
             onclick="performSkillCheck('deception')"
           ></iconbutton>
+          <dropdown
+            size="xs"
+            width="118px"
+            style="margin-left: auto"
+            field="rollAsDeception"
+            placeholder="Roll as..."
+            options='[{"label": "Create a Diversion", "value": "Create a Diversion"}, {"label": "Impersonate", "value": "Impersonate"}, {"label": "Lie", "value": "Lie"}, {"label": "Feint", "value": "Feint"}]'
+            onchange="performSkillActionFromSheet('deception', value)"
+          ></dropdown>
         </div>
         <div style="display: flex; gap: 4px; align-items: center">
           <div style="flex: 0 0 52px">
@@ -578,6 +667,15 @@
             field="Roll Society"
             onclick="performSkillCheck('society')"
           ></iconbutton>
+          <dropdown
+            size="xs"
+            width="118px"
+            style="margin-left: auto"
+            field="rollAsSociety"
+            placeholder="Roll as..."
+            options='[{"label": "Recall Knowledge", "value": "Recall Knowledge"}, {"label": "Create Forgery", "value": "Create Forgery"}, {"label": "Decipher Writing", "value": "Decipher Writing"}, {"label": "Subsist", "value": "Subsist"}]'
+            onchange="performSkillActionFromSheet('society', value)"
+          ></dropdown>
         </div>
         <div style="display: flex; gap: 4px; align-items: center">
           <div style="flex: 0 0 52px">
@@ -634,6 +732,15 @@
             field="Roll Diplomacy"
             onclick="performSkillCheck('diplomacy')"
           ></iconbutton>
+          <dropdown
+            size="xs"
+            width="118px"
+            style="margin-left: auto"
+            field="rollAsDiplomacy"
+            placeholder="Roll as..."
+            options='[{"label": "Gather Information", "value": "Gather Information"}, {"label": "Make an Impression", "value": "Make an Impression"}, {"label": "Request", "value": "Request"}]'
+            onchange="performSkillActionFromSheet('diplomacy', value)"
+          ></dropdown>
         </div>
         <div style="display: flex; gap: 4px; align-items: center">
           <div style="flex: 0 0 52px">
@@ -690,6 +797,15 @@
             field="Roll Stealth"
             onclick="performSkillCheck('stealth')"
           ></iconbutton>
+          <dropdown
+            size="xs"
+            width="118px"
+            style="margin-left: auto"
+            field="rollAsStealth"
+            placeholder="Roll as..."
+            options='[{"label": "Conceal an Object", "value": "Conceal an Object"}, {"label": "Hide", "value": "Hide"}, {"label": "Sneak", "value": "Sneak"}, {"label": "Avoid Notice", "value": "Avoid Notice"}]'
+            onchange="performSkillActionFromSheet('stealth', value)"
+          ></dropdown>
         </div>
         <div style="display: flex; gap: 4px; align-items: center">
           <div style="flex: 0 0 52px">
@@ -746,6 +862,15 @@
             field="Roll Intimidation"
             onclick="performSkillCheck('intimidation')"
           ></iconbutton>
+          <dropdown
+            size="xs"
+            width="118px"
+            style="margin-left: auto"
+            field="rollAsIntimidation"
+            placeholder="Roll as..."
+            options='[{"label": "Coerce", "value": "Coerce"}, {"label": "Demoralize", "value": "Demoralize"}]'
+            onchange="performSkillActionFromSheet('intimidation', value)"
+          ></dropdown>
         </div>
         <div style="display: flex; gap: 4px; align-items: center">
           <div style="flex: 0 0 52px">
@@ -802,6 +927,15 @@
             field="Roll Survival"
             onclick="performSkillCheck('survival')"
           ></iconbutton>
+          <dropdown
+            size="xs"
+            width="118px"
+            style="margin-left: auto"
+            field="rollAsSurvival"
+            placeholder="Roll as..."
+            options='[{"label": "Sense Direction", "value": "Sense Direction"}, {"label": "Subsist", "value": "Subsist"}, {"label": "Cover Tracks", "value": "Cover Tracks"}, {"label": "Track", "value": "Track"}]'
+            onchange="performSkillActionFromSheet('survival', value)"
+          ></dropdown>
         </div>
         <div style="display: flex; gap: 4px; align-items: center">
           <div style="flex: 0 0 52px">
@@ -858,6 +992,15 @@
             field="Roll Medicine"
             onclick="performSkillCheck('medicine')"
           ></iconbutton>
+          <dropdown
+            size="xs"
+            width="118px"
+            style="margin-left: auto"
+            field="rollAsMedicine"
+            placeholder="Roll as..."
+            options='[{"label": "Administer First Aid", "value": "Administer First Aid"}, {"label": "Treat Disease", "value": "Treat Disease"}, {"label": "Treat Poison", "value": "Treat Poison"}, {"label": "Treat Wounds", "value": "Treat Wounds"}, {"label": "Recall Knowledge", "value": "Recall Knowledge"}]'
+            onchange="performSkillActionFromSheet('medicine', value)"
+          ></dropdown>
         </div>
         <div style="display: flex; gap: 4px; align-items: center">
           <div style="flex: 0 0 52px">
@@ -914,6 +1057,15 @@
             field="Roll Thievery"
             onclick="performSkillCheck('thievery')"
           ></iconbutton>
+          <dropdown
+            size="xs"
+            width="118px"
+            style="margin-left: auto"
+            field="rollAsThievery"
+            placeholder="Roll as..."
+            options='[{"label": "Palm an Object", "value": "Palm an Object"}, {"label": "Steal", "value": "Steal"}, {"label": "Disable a Device", "value": "Disable a Device"}, {"label": "Pick a Lock", "value": "Pick a Lock"}]'
+            onchange="performSkillActionFromSheet('thievery', value)"
+          ></dropdown>
         </div>
         <div style="display: flex; gap: 4px; align-items: center">
           <div style="flex: 0 0 52px">

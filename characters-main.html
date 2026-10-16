@@ -944,6 +944,13 @@ ${getLevelUpSummary(gains)}`,
     rollSkill(record, "perception");
   }
 
+  // "Roll as..." menu: Seek or Sense Motive, then clear the menu
+  function rollPerceptionAs(actionName) {
+    if (!actionName) return;
+    api.setValue("data.rollAsPerception", "");
+    performSkillAction(record, "perception", actionName);
+  }
+
   function rollRecoveryCheck() {
     api.promptRoll("Recovery Check", "1d20", [], {}, "recovery");
   }
@@ -2460,6 +2467,14 @@ ${getLevelUpSummary(gains)}`,
           defaultvalue="1"
           onchange="updatePerceptionProficiency(value)"
           options='[{"label": "None", "value": "0"}, {"label": "Trained", "value": "1"}, {"label": "Expert", "value": "2"}, {"label": "Master", "value": "3"}, {"label": "Legendary", "value": "4"}]'
+        ></dropdown>
+        <dropdown
+          size="xs"
+          field="rollAsPerception"
+          width="110px"
+          placeholder="Roll as..."
+          options='[{"label": "Seek", "value": "Seek"}, {"label": "Sense Motive", "value": "Sense Motive"}]'
+          onchange="rollPerceptionAs(value)"
         ></dropdown>
       </div>
 

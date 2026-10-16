@@ -96,7 +96,7 @@ const healingMacro = regularHealing
   
   targets.forEach(target => {
     // Hit Points, dying and unconscious, and wounded for Treat Wounds
-    applyHealingToToken(target?.token || target, healing, { treatWounds: ${treatWounds} });
+    applyHealingToToken(target?.token || target, healing, { treatWounds: ${treatWounds}, isSpell: ${data.roll?.metadata?.isSpell === true}, source: ${JSON.stringify(String(data.roll?.metadata?.rollName || ""))} });
   });
   \`\`\`
   `

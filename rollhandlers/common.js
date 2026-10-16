@@ -309,6 +309,47 @@ function getDamageType(rollString) {
  * @param {Object} spell - The spell object with data.damage array
  * @returns {string} - The die size (e.g., "6", "8", "10") or empty string if none found
  */
+/**
+ * A spell's damage or healing formula with spellDieSize modifiers applied:
+ * value "d10" (sets the die; the largest wins) or "upgrade"/"downgrade"
+ * (one step), predicated against the spell ({spell} context, e.g.
+ * ["item:slug:heal"]). Field "healing" or "damage" limits which formula.
+ */
+function applySpellDieSize(record, spell, formula, kind) {
+  if (!record || !spell || !formula) return formula;
+  const mods = getEffectsAndModifiersForToken(
+    record,
+    ["spellDieSize"],
+    "",
+    undefined,
+    undefined,
+    { spell },
+  ).filter(
+    (mod) =>
+      mod.active !== false &&
+      (!mod.field || mod.field === "all" || mod.field === kind),
+  );
+  if (mods.length === 0) return formula;
+  return formula.replace(/(\d*)d(\d+)/g, (match, count, faces) => {
+    let die = parseInt(faces, 10);
+    mods.forEach((mod) => {
+      const size = parseInt(String(mod.value).trim().replace(/^d/i, ""), 10);
+      if (size > die) die = size;
+    });
+    mods.forEach((mod) => {
+      const step = String(mod.value).trim().toLowerCase();
+      const index = WEAPON_DIE_STEPS.indexOf(die);
+      if (index < 0) return;
+      if (step === "upgrade" || step === "+1") {
+        die = WEAPON_DIE_STEPS[Math.min(index + 1, WEAPON_DIE_STEPS.length - 1)];
+      } else if (step === "downgrade" || step === "-1") {
+        die = WEAPON_DIE_STEPS[Math.max(index - 1, 0)];
+      }
+    });
+    return `${count}d${die}`;
+  });
+}
+
 function getSpellDieSize(spell) {
   if (!spell || !spell.data || !spell.data.damage) {
     return "";
@@ -2725,6 +2766,17 @@ function getEffectsAndModifiersForToken(
         active = false;
       }
 
+      // Damage only on a failed Strike (Brutal Finish): data.outcome
+      // "failure" or a check:outcome:failure predicate
+      const predicateText =
+        typeof predicate === "string" ? predicate : JSON.stringify(predicate || "");
+      const failureOnly =
+        modifier.data?.outcome === "failure" ||
+        predicateText.includes("check:outcome:failure");
+      if (modifier.data?.outcome === "failure" && context.outcome !== "failure") {
+        active = false;
+      }
+
       // Override valueType to string if the value contains non-numerical content that needs replacements
       let valueType = modifier.data?.valueType;
       if (valueType === "number" && typeof value === "string") {
@@ -2814,6 +2866,9 @@ function getEffectsAndModifiersForToken(
         if (criticalOnly) {
           resultObj.criticalOnly = true;
         }
+        if (failureOnly) {
+          resultObj.failureOnly = true;
+        }
 
         // A roll-prompt modifier whose predicate fails only on atoms this
         // roll can't know (the action, target, effect source or terrain)
@@ -2822,6 +2877,7 @@ function getEffectsAndModifiersForToken(
           !active &&
           predicate &&
           !criticalOnly &&
+          !failureOnly &&
           SITUATIONAL_MODIFIER_TYPES.has(ruleType)
         ) {
           const parsedPredicate = parseModifierPredicate(predicate);
@@ -4379,7 +4435,13 @@ function updateAttribute({
   if (attribute === "str") {
     strength = value;
   }
-  valuesToSet[`data.bulk`] = 5 + strength;
+  // bulkLimit modifiers raise (or lower) it: Hefty Hauler +2, Hardy Traveler +1
+  let bulkLimitBonus = 0;
+  getEffectsAndModifiersForToken(record, ["bulkLimit"]).forEach((mod) => {
+    if (mod.active === false) return;
+    bulkLimitBonus += parseInt(mod.value || 0, 10) || 0;
+  });
+  valuesToSet[`data.bulk`] = 5 + strength + bulkLimitBonus;
 
   // AC = 10 + your Dexterity modifier. Wearing armor changes your AC and adds proficency bonus if proficient
   let dexValue = parseInt(
@@ -6946,101 +7008,49 @@ function updateTogglesList(record, valuesToSet) {
   const toggleableItems = [];
   const seenNames = new Set();
 
-  // Get all actions
-  const actions = record.data?.actions || [];
-  actions.forEach((action) => {
-    if (
-      action.data?.toggleable === true &&
-      action.name &&
-      !seenNames.has(action.name)
-    ) {
+  // A source's toggles: its main toggle (data.toggleable + predicateValue)
+  // and any extra toggles in data.toggleOptions, named "<source>: <label>".
+  // Extra toggles sharing a group are mutually exclusive (see
+  // onToggleChanged in toggle-list.html).
+  const addTogglesFrom = (source) => {
+    if (!source?.name) return;
+    if (source.data?.toggleable === true && !seenNames.has(source.name)) {
       toggleableItems.push({
-        name: action.name,
-        predicateValue: action.data?.predicateValue || "",
+        name: source.name,
+        predicateValue: source.data?.predicateValue || "",
+        group: "",
       });
-      seenNames.add(action.name);
+      seenNames.add(source.name);
     }
-  });
-
-  // Get all feats, including bonus feats (granted by other feats/features)
-  const feats = [
-    ...(record.data?.feats || []),
-    ...(record.data?.bonusFeats || []),
-  ];
-  feats.forEach((feat) => {
-    if (
-      feat.data?.toggleable === true &&
-      feat.name &&
-      !seenNames.has(feat.name)
-    ) {
+    (Array.isArray(source.data?.toggleOptions) ? source.data.toggleOptions : []).forEach((option) => {
+      const label = String(option?.name || "").trim();
+      const predicateValue = String(option?.data?.predicateValue || "").trim();
+      if (!label || !predicateValue) return;
+      const name = `${source.name}: ${label}`;
+      if (seenNames.has(name)) return;
+      const group = String(option?.data?.group || "").trim();
       toggleableItems.push({
-        name: feat.name,
-        predicateValue: feat.data?.predicateValue || "",
+        name,
+        predicateValue,
+        group: group ? `${source.name}|${group}` : "",
       });
-      seenNames.add(feat.name);
-    }
-  });
-
-  // Get class features (from first class)
-  const classes = record.data?.classes || [];
-  if (classes.length > 0) {
-    const classObj = classes[0];
-    const classFeatures = classObj.data?.features || [];
-    classFeatures.forEach((feature) => {
-      if (
-        feature.data?.toggleable === true &&
-        feature.name &&
-        record.data?.level >= feature.data?.level &&
-        !seenNames.has(feature.name)
-      ) {
-        toggleableItems.push({
-          name: feature.name,
-          predicateValue: feature.data?.predicateValue || "",
-        });
-        seenNames.add(feature.name);
-      }
+      seenNames.add(name);
     });
-  }
+  };
 
-  // Get ancestry features (from first ancestry)
-  const ancestries = record.data?.ancestries || [];
-  if (ancestries.length > 0) {
-    const ancestry = ancestries[0];
-    const ancestryFeatures = ancestry.data?.features || [];
-    ancestryFeatures.forEach((feature) => {
-      if (
-        feature.data?.toggleable === true &&
-        feature.name &&
-        !seenNames.has(feature.name)
-      ) {
-        toggleableItems.push({
-          name: feature.name,
-          predicateValue: feature.data?.predicateValue || "",
-        });
-        seenNames.add(feature.name);
-      }
-    });
-  }
-
-  // Get heritage features (from first heritage)
-  const heritages = record.data?.heritages || [];
-  if (heritages.length > 0) {
-    const heritage = heritages[0];
-    const heritageFeatures = heritage.data?.features || [];
-    heritageFeatures.forEach((feature) => {
-      if (
-        feature.data?.toggleable === true &&
-        feature.name &&
-        !seenNames.has(feature.name)
-      ) {
-        toggleableItems.push({
-          name: feature.name,
-          predicateValue: feature.data?.predicateValue || "",
-        });
-        seenNames.add(feature.name);
-      }
-    });
-  }
+  // Actions, then feats (including bonus feats granted by other feats or
+  // features), then the first class's features at or below the character's
+  // level, the first ancestry's and the first heritage's features
+  (record.data?.actions || []).forEach(addTogglesFrom);
+  [...(record.data?.feats || []), ...(record.data?.bonusFeats || [])].forEach(
+    addTogglesFrom,
+  );
+  const classFeatures = record.data?.classes?.[0]?.data?.features || [];
+  classFeatures
+    .filter((feature) => record.data?.level >= feature.data?.level)
+    .forEach(addTogglesFrom);
+  (record.data?.ancestries?.[0]?.data?.features || []).forEach(addTogglesFrom);
+  (record.data?.heritages?.[0]?.data?.features || []).forEach(addTogglesFrom);
 
   // Get existing toggles to preserve their state
   const existingToggles = record.data?.toggles || [];
@@ -7061,6 +7071,7 @@ function updateTogglesList(record, valuesToSet) {
         data: {
           ...existing.data,
           predicateValue: item.predicateValue,
+          group: item.group,
         },
       };
     } else {
@@ -7071,6 +7082,7 @@ function updateTogglesList(record, valuesToSet) {
         identified: true,
         data: {
           predicateValue: item.predicateValue,
+          group: item.group,
           toggled: false, // Default to inactive
         },
       };
@@ -7084,12 +7096,15 @@ function updateTogglesList(record, valuesToSet) {
   if (!hasChanges) {
     // Same length, check if any items are different
     const existingMap = new Map(
-      existingToggles.map((t) => [t.name, t.data?.predicateValue || ""]),
+      existingToggles.map((t) => [
+        t.name,
+        `${t.data?.predicateValue || ""}|${t.data?.group || ""}`,
+      ]),
     );
 
     for (const newToggle of newToggles) {
       const existingPredicateValue = existingMap.get(newToggle.name);
-      const newPredicateValue = newToggle.data?.predicateValue || "";
+      const newPredicateValue = `${newToggle.data?.predicateValue || ""}|${newToggle.data?.group || ""}`;
 
       if (
         existingPredicateValue === undefined ||
@@ -7686,6 +7701,16 @@ function rollSave(
  * criticalOnly so the attack handler can drop them on a non-critical hit.
  */
 function getCriticalOnlyDamageModifiers(record, fields, itemId, context) {
+  return getOutcomeDamageModifiers(record, fields, itemId, context, "critical-success");
+}
+
+/**
+ * Damage riders for one outcome of a Strike: "critical-success" (flagged
+ * criticalOnly) or "failure" (flagged failureOnly), from a lookup made as if
+ * the Strike had that outcome.
+ */
+function getOutcomeDamageModifiers(record, fields, itemId, context, outcome) {
+  const flag = outcome === "failure" ? "failureOnly" : "criticalOnly";
   const seen = new Set();
   const results = [];
   fields.forEach((field) => {
@@ -7695,13 +7720,13 @@ function getCriticalOnlyDamageModifiers(record, fields, itemId, context) {
       field,
       itemId,
       undefined,
-      { ...context, outcome: "critical-success" },
+      { ...context, outcome },
     ).forEach((mod) => {
-      if (!mod.criticalOnly || !mod.active) return;
+      if (!mod[flag] || !mod.active) return;
       const key = `${mod.name}|${mod.value}`;
       if (seen.has(key)) return;
       seen.add(key);
-      results.push({ ...mod, active: true, criticalOnly: true });
+      results.push({ ...mod, active: true, [flag]: true });
     });
   });
   return results;
@@ -8042,6 +8067,12 @@ function rollSkill(
     }
   });
 
+  // Options the caller adds (a skill action's multiple attack penalty)
+  (Array.isArray(additionalMetadata.extraModifiers)
+    ? additionalMetadata.extraModifiers
+    : []
+  ).forEach((mod) => modifiers.push(mod));
+
   // Fortune / misfortune on this check (initiative too)
   modifiers.push(
     ...getRollTwiceModifiers(
@@ -8062,13 +8093,16 @@ function rollSkill(
   );
 
   // Prepare metadata for the roll handler
+  const { extraModifiers: _extraModifiers, ...metadataExtras } = additionalMetadata;
   const metadata = {
-    rollName: `${capitalize(skillName)}`,
+    rollName: actionName
+      ? `${capitalize(skillName)}: ${actionName}`
+      : `${capitalize(skillName)}`,
     tooltip: `${capitalize(skillName)} Skill Check`,
     skillName: skill,
     group: initiativeGroup,
     degreeOfSuccessAdjustments: degreeOfSuccessAdjustments,
-    ...additionalMetadata,
+    ...metadataExtras,
   };
 
   if (isPerception) {
@@ -8157,6 +8191,184 @@ function rollSavingThrow(save, dc, options = {}) {
   selectedTokens.forEach((token) => {
     rollSave(token, escapedSaveType, dc, !!options.isSpell, false, options);
   });
+}
+
+// Skill actions (Player Core) by skill: the defense they are rolled against
+// and whether they have the attack trait (so the multiple attack penalty
+// applies). Used by the sheet's "roll as" menus and action cards so the
+// roll names its action (action:demoralize) for predicates.
+const SKILL_ACTIONS = {
+  acrobatics: [
+    { name: "Balance" },
+    { name: "Tumble Through", defense: "reflex" },
+    { name: "Maneuver in Flight" },
+    { name: "Squeeze" },
+    { name: "Escape", attack: true },
+  ],
+  arcana: [
+    { name: "Recall Knowledge" },
+    { name: "Decipher Writing" },
+    { name: "Identify Magic" },
+    { name: "Learn a Spell" },
+    { name: "Borrow an Arcane Spell" },
+  ],
+  athletics: [
+    { name: "Climb" },
+    { name: "Force Open" },
+    { name: "Grapple", defense: "fortitude", attack: true },
+    { name: "High Jump" },
+    { name: "Long Jump" },
+    { name: "Reposition", defense: "fortitude", attack: true },
+    { name: "Shove", defense: "fortitude", attack: true },
+    { name: "Swim" },
+    { name: "Trip", defense: "reflex", attack: true },
+    { name: "Disarm", defense: "reflex", attack: true },
+    { name: "Escape", attack: true },
+  ],
+  crafting: [
+    { name: "Recall Knowledge" },
+    { name: "Repair" },
+    { name: "Craft" },
+    { name: "Earn Income" },
+    { name: "Identify Alchemy" },
+  ],
+  deception: [
+    { name: "Create a Diversion", defense: "perception" },
+    { name: "Impersonate", defense: "perception" },
+    { name: "Lie", defense: "perception" },
+    { name: "Feint", defense: "perception" },
+  ],
+  diplomacy: [
+    { name: "Gather Information" },
+    { name: "Make an Impression", defense: "will" },
+    { name: "Request", defense: "will" },
+  ],
+  intimidation: [
+    { name: "Coerce", defense: "will" },
+    { name: "Demoralize", defense: "will" },
+  ],
+  medicine: [
+    { name: "Administer First Aid" },
+    { name: "Treat Disease" },
+    { name: "Treat Poison" },
+    { name: "Treat Wounds" },
+    { name: "Recall Knowledge" },
+  ],
+  nature: [
+    { name: "Command an Animal", defense: "will" },
+    { name: "Recall Knowledge" },
+    { name: "Identify Magic" },
+    { name: "Learn a Spell" },
+  ],
+  occultism: [
+    { name: "Recall Knowledge" },
+    { name: "Decipher Writing" },
+    { name: "Identify Magic" },
+    { name: "Learn a Spell" },
+  ],
+  performance: [{ name: "Perform" }, { name: "Earn Income" }],
+  religion: [
+    { name: "Recall Knowledge" },
+    { name: "Decipher Writing" },
+    { name: "Identify Magic" },
+    { name: "Learn a Spell" },
+  ],
+  society: [
+    { name: "Recall Knowledge" },
+    { name: "Create Forgery" },
+    { name: "Decipher Writing" },
+    { name: "Subsist" },
+  ],
+  stealth: [
+    { name: "Conceal an Object", defense: "perception" },
+    { name: "Hide", defense: "perception" },
+    { name: "Sneak", defense: "perception" },
+    { name: "Avoid Notice" },
+  ],
+  survival: [
+    { name: "Sense Direction" },
+    { name: "Subsist" },
+    { name: "Cover Tracks" },
+    { name: "Track" },
+  ],
+  thievery: [
+    { name: "Palm an Object", defense: "perception" },
+    { name: "Steal", defense: "perception" },
+    { name: "Disable a Device" },
+    { name: "Pick a Lock" },
+  ],
+  perception: [{ name: "Seek" }, { name: "Sense Motive" }],
+};
+
+// The skill(s) a basic action is rolled with, from SKILL_ACTIONS
+function getSkillsForAction(actionName) {
+  const wanted = String(actionName || "").trim().toLowerCase();
+  return Object.entries(SKILL_ACTIONS)
+    .filter(([, actions]) => actions.some((a) => a.name.toLowerCase() === wanted))
+    .map(([skill]) => skill);
+}
+
+/**
+ * Roll a skill as one of its actions: the roll names the action (so
+ * action:<slug> predicates apply), is rolled against a single target's
+ * defense DC when the action has one, and attack-trait actions (Grapple,
+ * Trip...) offer the multiple attack penalty as opt-ins. Treat Wounds and
+ * Administer First Aid open their own flows.
+ */
+function performSkillAction(record, skill, actionName, isMacro = false) {
+  if (!record || !skill || !actionName) return;
+  const action = (SKILL_ACTIONS[skill] || []).find(
+    (a) => a.name.toLowerCase() === String(actionName).toLowerCase(),
+  ) || { name: actionName };
+  if (action.name === "Treat Wounds" && typeof treatWounds === "function") {
+    treatWounds();
+    return;
+  }
+  if (action.name === "Administer First Aid" && typeof administerFirstAid === "function") {
+    administerFirstAid();
+    return;
+  }
+  const targets = (typeof api.getTargets === "function" && api.getTargets()) || [];
+  const target = targets.length === 1 ? targets[0]?.token || targets[0] : null;
+  const dc = action.defense && target
+    ? getDefenseDCForToken(target, action.defense, { action: { name: action.name } })
+    : null;
+  const extraModifiers = action.attack
+    ? [
+        { name: "Multiple Attack Penalty (2nd attack)", type: "", value: -5, active: false, isPenalty: true },
+        { name: "Multiple Attack Penalty (3rd attack)", type: "", value: -10, active: false, isPenalty: true },
+      ]
+    : [];
+  rollSkill(record, skill, dc, false, 0, 1, "int", isMacro, false, undefined, {
+    action: action.name,
+    extraModifiers,
+    dcName: action.defense && target ? `${capitalize(action.defense)} DC` : undefined,
+  });
+}
+
+// Roll buttons for a basic skill action's card: one per skill it uses
+// ("Roll Intimidation" on Demoralize), rolled as that action. Treat Wounds
+// and Administer First Aid have their own buttons.
+function getSkillActionMacros(action) {
+  const name = String(action?.name || "").trim();
+  if (name === "Treat Wounds") {
+    return String(action?.data?.description || "").includes("treatWounds")
+      ? ""
+      : "\n```Treat_Wounds\ntreatWounds();\n```";
+  }
+  if (!name || name === "Administer First Aid") return "";
+  return getSkillsForAction(name)
+    .map((skill) => {
+      const label = `Roll_${capitalize(skill)}`;
+      return `\n\`\`\`${label}\nperformSkillActionForSelected(${JSON.stringify(skill)}, ${JSON.stringify(name)});\n\`\`\``;
+    })
+    .join("");
+}
+
+// From an action card's button: roll for each selected token
+function performSkillActionForSelected(skill, actionName) {
+  const tokens = api.getSelectedOrDroppedToken() || [];
+  tokens.forEach((token) => performSkillAction(token, skill, actionName, true));
 }
 
 // For a quick custom skill macro
@@ -9048,7 +9260,7 @@ function useAction(action) {
 
 ---
 ${actionDescription}
-${effectMacros}${getFirstAidActionMacro(action)}
+${effectMacros}${getFirstAidActionMacro(action)}${getSkillActionMacros(action)}
 `;
 
   // Send the message
@@ -11048,7 +11260,24 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber = 1) {
     weapon._id,
     { weapon, targets },
   );
-  damageModifiers = damageModifiers.filter((mod) => !mod.criticalOnly);
+  damageModifiers = damageModifiers.filter(
+    (mod) => !mod.criticalOnly && !mod.failureOnly,
+  );
+  // Damage dealt only when the Strike fails (Brutal Finish), offered on a
+  // miss as its own button
+  const failureDamage = getOutcomeDamageModifiers(
+    record,
+    [...damageSelectors, damageScore].filter(Boolean),
+    weapon._id,
+    { weapon, targets },
+    "failure",
+  )
+    .map((mod) => {
+      const value = String(mod.value ?? "").trim();
+      return getDamageType(value) !== "untyped" ? value : `${value} ${damageType}`;
+    })
+    .filter(Boolean)
+    .join(" + ");
 
   // Only the strongest damage bonus and penalty of each type apply across the
   // lookups (dice always stack). This must come before the map below, which
@@ -11392,6 +11621,7 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber = 1) {
         showShieldDamage: targetShieldRaised && damageIsPhysical,
         persistentDamage: persistentDamage,
         criticalPersistentDamage: criticalPersistentDamage,
+        failureDamage: failureDamage,
         damageType: damageType,
         splashDamage: splashDamage,
         splashDamageType: splashDamageType,
@@ -11467,6 +11697,7 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber = 1) {
       damage: damage,
       persistentDamage: persistentDamage,
       criticalPersistentDamage: criticalPersistentDamage,
+      failureDamage: failureDamage,
       damageType: damageType,
       showShieldDamage: targetShieldRaised && damageIsPhysical,
       splashDamage: splashDamage,
@@ -11793,9 +12024,12 @@ function performDamageRoll(record, weapon, weaponDataPath, isCritical) {
     });
   }
 
-  // Critical riders join only through criticalRiders (every lookup above
-  // can return them inactive)
-  damageModifiers = damageModifiers.filter((mod) => !mod.criticalOnly);
+  // Critical riders join only through criticalRiders, and miss-only damage
+  // only through the attack's miss button (every lookup above can return
+  // them inactive)
+  damageModifiers = damageModifiers.filter(
+    (mod) => !mod.criticalOnly && !mod.failureOnly,
+  );
 
   // Only the strongest damage bonus and penalty of each type apply across the
   // lookups (dice always stack). This must come before the map below, which

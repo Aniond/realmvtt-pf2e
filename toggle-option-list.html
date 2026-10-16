@@ -1,0 +1,33 @@
+<!-- An extra toggle a feat, feature or action adds to the character's
+     Actions tab (beyond its main Toggleable setting). Options that share a
+     group are mutually exclusive, like Foundry's suboptions. -->
+<div style="display: flex; flex-direction: row; width: 100%; gap: 4px">
+  <div style="display: flex; flex-direction: column; min-width: 50px; flex: 1">
+    <namefield
+      field="name"
+      label="Label"
+      size="xs"
+      width="100%"
+      placeholder="e.g. Three Actions"
+    ></namefield>
+  </div>
+  <div style="display: flex; flex-direction: column; min-width: 50px; flex: 1">
+    <stringfield
+      field="predicateValue"
+      label="Predicate Value"
+      size="xs"
+      width="100%"
+      placeholder="e.g. one-inch-punch:three"
+    ></stringfield>
+  </div>
+  <div style="display: flex; flex-direction: column; width: 110px">
+    <stringfield
+      field="group"
+      label="Group"
+      size="xs"
+      width="100%"
+      placeholder="Optional"
+      description="Toggles in the same group turn each other off"
+    ></stringfield>
+  </div>
+</div>

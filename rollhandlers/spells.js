@@ -771,6 +771,11 @@ function calculateSpellDamage(record, spell, dataPathToSpell) {
   healingString = healingComponents.join(" + ");
   persistentDamage = persistentComponents.join(" + ");
 
+  // spellDieSize modifiers change the spell's dice (Healing Hands: heal rolls
+  // d10s instead of d8s). Field "healing" or "damage" limits which.
+  damageString = applySpellDieSize(record, spell, damageString, "damage");
+  healingString = applySpellDieSize(record, spell, healingString, "healing");
+
   return {
     damageString,
     healingString,

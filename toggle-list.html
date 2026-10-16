@@ -1,3 +1,33 @@
+<script>
+  // Turning a toggle on turns off the others in its group (a feat's
+  // mutually exclusive options), then the sheet recalculates so AC, Speed,
+  // HP and senses that depend on toggles update right away
+  function onToggleChanged(value) {
+    const togglePath = getNearestParentDataPath(dataPath);
+    const toggle = api.getValue(togglePath);
+    const group = toggle?.data?.group || "";
+    const on = value === true || value === "true";
+    // Write this toggle too, so the recalculation reads its new state
+    const valuesToSet = { [`${togglePath}.data.toggled`]: on };
+    if (on && group) {
+      (record.data?.toggles || []).forEach((other, index) => {
+        if (
+          other?._id !== toggle?._id &&
+          other?.data?.group === group &&
+          other?.data?.toggled === true
+        ) {
+          valuesToSet[`data.toggles.${index}.data.toggled`] = false;
+        }
+      });
+    }
+    const recalc = () =>
+      api.getRecord(record.recordType, record._id, (updatedRecord) => {
+        if (updatedRecord) onAddEditFeature(updatedRecord);
+      });
+    api.setValues(valuesToSet, recalc);
+  }
+</script>
+
 <div
   style="
     display: flex;
@@ -16,5 +46,6 @@
     size="sm"
     textalign="right"
     editable="true"
+    onchange="onToggleChanged(value)"
   ></checkbox>
 </div>

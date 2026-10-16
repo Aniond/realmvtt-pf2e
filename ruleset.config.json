@@ -1240,6 +1240,35 @@
       "singleRow": false
     },
     {
+      "name": "Toggle Option List",
+      "type": "toggle_option_list",
+      "isList": true,
+      "minX": 500,
+      "minY": 60,
+      "tabs": [
+        {
+          "name": "Main",
+          "file": "toggle-option-list.html",
+          "fields": []
+        }
+      ],
+      "icon": "",
+      "showAddButton": true,
+      "showDeleteButton": true,
+      "addButtonText": "Add Toggle",
+      "allowedListTypes": [],
+      "newItemName": "Toggle",
+      "newItemUnidentifiedName": "Toggle",
+      "stackDuplicates": false,
+      "disableDrop": false,
+      "countFieldName": "",
+      "emptyListText": "No Additional Toggles",
+      "orderCriteria": [],
+      "maxLength": 0,
+      "filterCriteria": [],
+      "singleRow": false
+    },
+    {
       "name": "Inventory Backpack List",
       "type": "inventory_backpack_list",
       "isList": true,
