@@ -940,14 +940,20 @@ ${getLevelUpSummary(gains)}`,
     rollSave(record, save);
   }
 
+  // The d20 button rolls as the action picked in the "Roll as..." menu
   function rollPerception() {
-    rollSkill(record, "perception");
+    const action = api.getValue("data.rollAsPerception") || "";
+    if (action && action !== "none") {
+      performSkillAction(record, "perception", action);
+    } else {
+      rollSkill(record, "perception");
+    }
   }
 
-  // "Roll as..." menu: Seek or Sense Motive, then clear the menu
+  // "Roll as..." menu: picking Seek or Sense Motive rolls it now; the menu
+  // keeps it so the d20 button rolls as that action until "No Action"
   function rollPerceptionAs(actionName) {
-    if (!actionName) return;
-    api.setValue("data.rollAsPerception", "");
+    if (!actionName || actionName === "none") return;
     performSkillAction(record, "perception", actionName);
   }
 
@@ -2468,14 +2474,16 @@ ${getLevelUpSummary(gains)}`,
           onchange="updatePerceptionProficiency(value)"
           options='[{"label": "None", "value": "0"}, {"label": "Trained", "value": "1"}, {"label": "Expert", "value": "2"}, {"label": "Master", "value": "3"}, {"label": "Legendary", "value": "4"}]'
         ></dropdown>
-        <dropdown
-          size="xs"
-          field="rollAsPerception"
-          width="110px"
-          placeholder="Roll as..."
-          options='[{"label": "Seek", "value": "Seek"}, {"label": "Sense Motive", "value": "Sense Motive"}]'
-          onchange="rollPerceptionAs(value)"
-        ></dropdown>
+        <div style="margin-left: auto">
+          <dropdown
+            size="xs"
+            field="rollAsPerception"
+            width="110px"
+            placeholder="Roll as..."
+            options='[{"label": "No Action", "value": "none"}, {"label": "Seek", "value": "Seek"}, {"label": "Sense Motive", "value": "Sense Motive"}]'
+            onchange="rollPerceptionAs(value)"
+          ></dropdown>
+        </div>
       </div>
 
       <div class="rvtt-sheet-divider">
