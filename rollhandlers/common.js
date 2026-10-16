@@ -1918,7 +1918,7 @@ const SITUATIONAL_MODIFIER_TYPES = new Set([
   "savePenalty", "attackBonus", "attackPenalty", "damageBonus",
   "damagePenalty", "spellAttackBonus", "spellAttackPenalty",
   "spellDamageBonus", "spellDamagePenalty", "cantripDamageBonus",
-  "cantripDamagePenalty", "healingBonus", "healingPenalty",
+  "cantripDamagePenalty", "healingBonus", "healingPenalty", "rollTwice",
 ]);
 
 // Traits of the effect being resisted that a save/skill roll only knows when
@@ -4155,12 +4155,22 @@ function getSaveAttribute(saveType) {
   return "con";
 }
 
-function getSaveDCForToken(token, saveType) {
+function getSaveDCForToken(token, saveType, context = {}) {
   const saveMods = getEffectsAndModifiersForToken(
     token,
     [`saveBonus`, `savePenalty`],
     saveType,
   );
+  // Bonuses to this defense's DC only (Disarming Stance: +2 Reflex DC against
+  // Disarm). context.action is the action used against this creature.
+  const defenseDCMods = getEffectsAndModifiersForToken(
+    token,
+    [`saveDCBonus`, `saveDCPenalty`],
+    [saveType, "saving-throw"],
+    undefined,
+    undefined,
+    context,
+  ).filter((mod) => !mod.situational);
   // Bonuses and penalties to all checks and DCs of the save's attribute
   // (frightened, sickened, clumsy for Reflex), as rollSave adds to the roll.
   // A rule can also name saving throws (Imperial Blood Magic's saves choice).
@@ -4180,13 +4190,57 @@ function getSaveDCForToken(token, saveType) {
     saveDC += parseInt(token.data?.saveBonus || "0", 10) || 0;
   }
 
-  mergeModifierLists(saveMods, attributeMods).forEach((mod) => {
+  mergeModifierLists(mergeModifierLists(saveMods, attributeMods), defenseDCMods).forEach((mod) => {
     if (mod.active === false) return;
     const value = parseInt(mod.value || 0, 10);
-    saveDC += value;
+    saveDC += value || 0;
   });
 
   return saveDC;
+}
+
+/**
+ * A creature's Perception DC: 10 + its Perception modifier, plus Perception
+ * bonuses and penalties, Wisdom-based "all checks and DCs" modifiers, and
+ * saveDCBonus modifiers with field "perception" (Lie Detector), with the
+ * action used against it as context.
+ */
+function getPerceptionDCForToken(token, context = {}) {
+  const perceptionMod = parseInt(token?.data?.perceptionMod || "0", 10) || 0;
+  const mods = mergeModifierLists(
+    mergeModifierLists(
+      getEffectsAndModifiersForToken(token, ["perceptionBonus", "perceptionPenalty"], "perception"),
+      getEffectsAndModifiersForToken(token, ["allBonus", "allPenalty"], "wis"),
+    ),
+    getEffectsAndModifiersForToken(
+      token,
+      ["saveDCBonus", "saveDCPenalty"],
+      "perception",
+      undefined,
+      undefined,
+      context,
+    ),
+  );
+  let dc = 10 + perceptionMod + getNpcProficiencyWithoutLevelAdjustment(token);
+  mods.forEach((mod) => {
+    if (mod.active === false || mod.situational) return;
+    dc += parseInt(mod.value || 0, 10) || 0;
+  });
+  return dc;
+}
+
+/**
+ * The DC a skill action is rolled against: "fortitude", "reflex", "will" or
+ * "perception" of the target, with the action as context so defense DC
+ * modifiers that only apply against it (Disarming Stance) count.
+ */
+function getDefenseDCForToken(token, defense, context = {}) {
+  if (!token || !defense) return null;
+  if (defense === "perception") return getPerceptionDCForToken(token, context);
+  if (["fortitude", "reflex", "will"].includes(defense)) {
+    return getSaveDCForToken(token, defense, context);
+  }
+  return null;
 }
 
 function getArmorClassForToken(token, targetIsOffGuardDueToFlanking = false) {
@@ -7540,6 +7594,16 @@ function rollSave(
   // Determine the attribute for this save
   const attribute = getSaveAttribute(saveType);
 
+  // Fortune / misfortune on this save
+  modifiers.push(
+    ...getRollTwiceModifiers(
+      record,
+      [saveType, attribute, "saving-throw"],
+      undefined,
+      context,
+    ),
+  );
+
   // Get all bonuses/penalties that apply to the save's attribute, or to all
   // saving throws (Imperial Blood Magic's saves choice)
   const allEffectMods = getEffectsAndModifiersForToken(
@@ -7665,6 +7729,43 @@ function getCriticalOnlyDiceForValue(value, damageType) {
     entries.push({ dieType: 0, damageType: type, flatDamage: parseInt(flat[1], 10) });
   }
   return entries;
+}
+
+/**
+ * Fortune and misfortune (Foundry's RollTwice): rollTwice modifiers with
+ * value "keep-higher"/"higher"/"fortune" or "keep-lower"/"lower"/"misfortune",
+ * predicated like any other modifier, become roll prompt entries with value
+ * "advantage"/"disadvantage". The prompt turns an active one into the
+ * ruleset's Fortune/Misfortune option (2d20 keep higher/lower) and cancels
+ * fortune against misfortune. A situational one is listed unticked.
+ */
+function getRollTwiceModifiers(record, fields, itemId, context = {}) {
+  const seen = new Set();
+  const results = [];
+  getEffectsAndModifiersForToken(
+    record,
+    ["rollTwice"],
+    fields,
+    itemId,
+    undefined,
+    context,
+  ).forEach((mod) => {
+    const raw = String(mod.value ?? "").trim().toLowerCase();
+    const fortune = ["keep-higher", "higher", "fortune", "advantage"].includes(raw);
+    const misfortune = ["keep-lower", "lower", "misfortune", "disadvantage"].includes(raw);
+    if (!fortune && !misfortune) return;
+    const key = `${mod.name}|${raw}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    results.push({
+      name: `${mod.name} (${fortune ? "Fortune" : "Misfortune"})`,
+      value: fortune ? "advantage" : "disadvantage",
+      valueType: "string",
+      type: "",
+      active: mod.active !== false,
+    });
+  });
+  return results;
 }
 
 function modToString(mod) {
@@ -7940,6 +8041,16 @@ function rollSkill(
       modifiers.push(mod);
     }
   });
+
+  // Fortune / misfortune on this check (initiative too)
+  modifiers.push(
+    ...getRollTwiceModifiers(
+      record,
+      [...skillSelectors, attribute, ...(isInitiative ? ["initiative"] : [])].filter(Boolean),
+      undefined,
+      context,
+    ),
+  );
 
   // Get degree of success adjustments for both the skill and its attribute
   const degreeOfSuccessAdjustments = getDegreeOfSuccessAdjustments(
@@ -10760,6 +10871,20 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber = 1) {
       modifiers.push(mod);
     }
   });
+
+  // Fortune / misfortune on this Strike
+  getRollTwiceModifiers(
+    record,
+    [
+      isMelee ? "melee" : "ranged",
+      abilityScore,
+      "attack-roll",
+      "strike-attack-roll",
+      "attack",
+    ],
+    weapon._id,
+    { weapon, targets },
+  ).forEach((mod) => modifiers.push(mod));
 
   // Add extra attack modifiers passed via weapon (e.g., from elemental blast)
   if (weapon.data?.extraAttackModifiers) {

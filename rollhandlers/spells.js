@@ -1138,7 +1138,14 @@ api.getRecord('${record.recordType}', '${record._id}', (record) => {
       active: true
     },
     // Only the strongest bonus and penalty of each type across both lookups
-    ...mergeModifierLists(spellAttackMods, spellCheckMods)
+    ...mergeModifierLists(spellAttackMods, spellCheckMods),
+    // Fortune / misfortune on spell attack rolls
+    ...getRollTwiceModifiers(
+      record,
+      ["spell-attack-roll", "attack-roll", "${spellCastingEntry?.data?.attribute || "int"}"],
+      undefined,
+      { spell }
+    )
   ];
   
   // Build criticalOnlyDice array to track splash damage (so it doesn't get doubled)
