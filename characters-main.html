@@ -998,24 +998,22 @@ ${getLevelUpSummary(gains)}`,
       }
     });
 
+    // 10 minutes of rest at full Hit Points ends the wounded condition
+    // (dying.js)
+    const woundedChanges = getRestWoundedChanges(record, record.data?.curhp || 0);
+    Object.assign(valuesToSet, woundedChanges);
+    const focusText =
+      focusPointsRecovered > 0
+        ? `Recovered ${focusPointsRecovered} Focus Point${focusPointsRecovered !== 1 ? "s" : ""}.`
+        : "No Focus Points to recover.";
+    const woundedText = woundedChanges["data.wounded"] === 0 ? " No longer wounded." : "";
+    const text = `Refocusing (10 minutes). ${focusText}${woundedText}`;
     if (Object.keys(valuesToSet).length > 0) {
       api.setValues(valuesToSet, () => {
-        api.sendMessage(
-          `Refocusing (10 minutes). Recovered ${focusPointsRecovered} Focus Point${
-            focusPointsRecovered !== 1 ? "s" : ""
-          }.`,
-          undefined,
-          [],
-          [],
-        );
+        api.sendMessage(text, undefined, [], []);
       });
     } else {
-      api.sendMessage(
-        "Refocusing (10 minutes). No Focus Points to recover.",
-        undefined,
-        [],
-        [],
-      );
+      api.sendMessage(text, undefined, [], []);
     }
   }
 
@@ -1039,6 +1037,17 @@ ${getLevelUpSummary(gains)}`,
     let message = `Resting for the day.`;
     if (healedBy > 0) {
       message += ` Recovered ${healedBy} HP.`;
+    }
+
+    // Waking from a knockout, the wounded condition gone at full Hit Points,
+    // and Orc Ferocity ready again (dying.js)
+    const healed = getHealingChanges(record, curHp, newHp, true);
+    Object.assign(valuesToSet, healed.values, getRestWoundedChanges(record, newHp));
+    if (valuesToSet["data.wounded"] === 0 && getWoundedValue(record) > 0) {
+      message += " No longer wounded.";
+    }
+    if (record.data?.orcFerocityUsed) {
+      valuesToSet["data.orcFerocityUsed"] = false;
     }
 
     // Detemine if any spells need to be reset
@@ -1274,6 +1283,9 @@ ${getLevelUpSummary(gains)}`,
 
     // Chain effect changes synchronously through callbacks
     api.setValues(valuesToSet, () => {
+      if (healed.wake) {
+        wakeCreature(record);
+      }
       if (needToAddVials) {
         queryAndAddVials();
       } else {
@@ -2359,7 +2371,7 @@ ${getLevelUpSummary(gains)}`,
           label="Dying"
           color="red"
           icon="IconSkull"
-          maxvalue="4"
+          maxvalue="5"
           textalign="center"
           minvalue="0"
         ></counter>
@@ -2369,7 +2381,7 @@ ${getLevelUpSummary(gains)}`,
           label="Wounded"
           color="red"
           icon="IconDroplet"
-          maxvalue="3"
+          maxvalue="4"
           textalign="center"
           minvalue="0"
         ></counter>

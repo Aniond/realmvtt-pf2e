@@ -5302,6 +5302,9 @@
         },
         "SpellEntries": {
           "file": "rollhandlers/spell-entries.js"
+        },
+        "Dying": {
+          "file": "rollhandlers/dying.js"
         }
       },
       "defaultDice": "default",

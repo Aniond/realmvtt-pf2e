@@ -18,18 +18,16 @@ if (damage > 0) {
     curhp = 0;
   }
   curhp -= damage;
+  let diesNow = false;
   if (curhp <= 0) {
     curhp = 0;
     if (record.recordType !== "npcs") {
-      // Update dying state
-      const currentDying = parseInt(record.data?.dying || "0", 10);
-      let currentWounded = 0;
-      if (currentDying === 0) {
-        currentWounded = parseInt(record.data?.wounded || "0", 10);
-      }
-      // Only add wounded if dying was at 0 (gaining dying adds wounded)
-      const newDying = currentDying + 1 + currentWounded;
-      valuesToSet["data.dying"] = Math.min(newDying, 4);
+      // Dying 1 plus wounded, or 1 more while dying, up to the dying value
+      // the character dies at (dying.js)
+      const threshold = getDeathThreshold(record);
+      const raised = getDyingAfterDamage(record, false);
+      valuesToSet["data.dying"] = threshold > 0 ? Math.min(raised, threshold) : raised;
+      diesNow = threshold <= 0 || valuesToSet["data.dying"] >= threshold;
     }
   }
   if (curhp > record.data?.hitpoints) {
@@ -44,9 +42,9 @@ if (damage > 0) {
   const token = api.getToken();
   if (value > 0 && token) {
     if (curhp <= 0) {
-      if (token.recordType === "npcs") {
+      if (token.recordType === "npcs" || diesNow) {
         api.addEffect("Dead", token);
-      } else {
+      } else if (!getTokenCondition(token, "unconscious")) {
         api.addEffects(["Unconscious", "Prone"], token);
       }
     }

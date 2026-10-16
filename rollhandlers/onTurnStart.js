@@ -42,6 +42,22 @@ if (shieldUp && token?.recordId) {
   }
 }
 
+// A dying character attempts a recovery check at the start of each of their
+// turns (Player Core pg. 411): a chat line with a button to roll it, and one
+// for Heroic Recovery with Hero Points (dying.js). Once per round, as Next
+// after Previous starts the same turn again.
+if (isCharacter && getDyingValue(token) > 0 && !isTokenDead(token)) {
+  getCombatRound((round) => {
+    if (round !== null && token.data?.recoveryPromptRound === round) return;
+    api.sendMessage(getRecoveryCheckPrompt(token), undefined, [], [], token);
+    if (round !== null) {
+      api.setValuesOnTokenById(token._id, token.recordType, {
+        "data.recoveryPromptRound": round,
+      });
+    }
+  });
+}
+
 // Condition upkeep: the actions the creature has this turn after stunned,
 // slowed and quickened, and the stunned it used up. Not again when Next after
 // Previous starts the same turn a second time.
