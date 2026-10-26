@@ -125,7 +125,8 @@ function withChatButtonToken(tokenId, name, droppedOn, action) {
 function getChatButton(label, creature, call) {
   const droppedOn = 'typeof record !== "undefined" ? record : null';
   const fence = "```";
-  return `${fence}${label}\nwithChatButtonToken('${creature._id}', '${getCreatureName(creature)}', ${droppedOn}, (token) => ${call});\n${fence}`;
+  // JSON.stringify, so an id or name can't break the button's code
+  return `${fence}${label}\nwithChatButtonToken(${JSON.stringify(String(creature._id))}, ${JSON.stringify(getCreatureName(creature))}, ${droppedOn}, (token) => ${call});\n${fence}`;
 }
 
 function getCreatureName(creature) {

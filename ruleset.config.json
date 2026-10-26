@@ -5373,6 +5373,9 @@
         },
         "LimitedUses": {
           "file": "rollhandlers/limited-uses.js"
+        },
+        "Maneuvers": {
+          "file": "rollhandlers/maneuvers.js"
         }
       },
       "defaultDice": "default",

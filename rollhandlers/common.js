@@ -9619,9 +9619,15 @@ function performSkillAction(record, skill, actionName, isMacro = false) {
         { name: "Multiple Attack Penalty (3rd attack)", type: "", value: -10, active: false, isPenalty: true },
       ]
     : [];
+  // A wielded weapon with the action's trait adds its item bonus (Trip with
+  // a trip weapon), and against a target the result card shows what the
+  // outcome does (maneuvers.js)
+  extraModifiers.push(...getManeuverWeaponModifiers(record, action.name));
+  const maneuver = dc ? getManeuverMetadata(record, action.name, target) : null;
   rollSkill(record, skill, dc, false, 0, 1, "int", isMacro, false, undefined, {
     action: action.name,
     extraModifiers,
+    ...(maneuver ? { maneuver } : {}),
     dcName: action.defense && target ? `${capitalize(action.defense)} DC` : undefined,
     // Notes on the target for being forced to move (Rock Dwarf), shown with
     // a Shove or Reposition result
