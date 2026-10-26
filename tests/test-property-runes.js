@@ -429,6 +429,24 @@ section("Clan dagger filigrees, antimagic, rock-braced, soaring");
   assert("soaring: +10 feet item bonus to fly Speed", active(pc({ inventory: [armor(["soaring"])] }), ["speedBonus"], "fly"), [10]);
 }
 
+section("Each Speed stacks its own item bonus (soaring and Boots of Bounding)");
+{
+  const boots = { _id: "boots", name: "Boots of Bounding", data: { type: "equipment", carried: "equipped", invested: "true", traits: ["invested"], modifiers: [{ data: { type: "speedBonus", modifierType: "item", field: "", valueType: "number", value: "5", active: true } }] } };
+  const flier = feat("Wings", [{ type: "speed", field: "fly", value: "20" }]);
+  const speedOf = (inventory, feats = []) => {
+    const record = pc({ inventory, feats, speed: "25 feet", ancestries: [{ name: "Human", data: { speed: "25 feet", hp: 8 } }] });
+    const written = {};
+    ctx.updateAttribute({ record, attribute: "str", value: 2, moreValuesToSet: written });
+    return written["data.speed"] ?? record.data.speed;
+  };
+  assert("boots: land +5", speedOf([boots]), "30 feet");
+  assert("boots and soaring, no fly Speed: land keeps +5", speedOf([boots, armor(["soaring"])]), "30 feet");
+  assert("boots and soaring with a fly Speed: land +5 and fly +10", speedOf([boots, armor(["soaring"])], [flier]), "30 feet, fly 30 feet");
+  assert("soaring alone: fly +10", speedOf([armor(["soaring"])], [flier]), "25 feet, fly 30 feet");
+  const quicker = { ...boots, _id: "boots2", name: "Better Boots", data: { ...boots.data, modifiers: [{ data: { type: "speedBonus", modifierType: "item", field: "", valueType: "number", value: "10", active: true } }] } };
+  assert("two item bonuses to land Speed: still only the higher", speedOf([boots, quicker]), "35 feet");
+}
+
 section("Grievous");
 {
   const card = (d20, metadata) => attackCard(d20, { runes: ["grievous"], weaponGroup: "sword", hasCriticalSpecialization: true, ...metadata }, 10);
