@@ -5365,6 +5365,9 @@
         "SpellEntries": {
           "file": "rollhandlers/spell-entries.js"
         },
+        "PropertyRunes": {
+          "file": "rollhandlers/property-runes.js"
+        },
         "Dying": {
           "file": "rollhandlers/dying.js"
         },
