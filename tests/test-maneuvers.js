@@ -114,13 +114,13 @@ section("Outcomes on the result card");
   const trip = { action: "Trip", targetId: "goblin", targetName: "Goblin", actorId: "pc", actorName: "Valeros" };
   let lines = ctx.getManeuverResultLines(trip, 2);
   assert("critical success: the text", lines[0], "**Trip:** The target falls and lands prone and takes 1d6 bludgeoning damage.");
-  assertIncludes("a button that knocks the target prone", lines[1], "withManeuverToken('goblin', 'Goblin'");
+  assertIncludes("a button that knocks the target prone", lines[1], 'withManeuverToken("goblin", "Goblin"');
   assertIncludes("with prone", lines[1], 'applyManeuverCondition(token, "Prone", 1)');
   assertIncludes("and one for the damage", lines[2], 'api.promptRoll("Trip Damage", "1d6 bludgeoning"');
   lines = ctx.getManeuverResultLines(trip, 1);
   assert("success: prone, no damage", lines.length, 2);
   lines = ctx.getManeuverResultLines(trip, -1);
-  assertIncludes("critical failure: you fall prone", lines[1], "withManeuverToken('pc', 'Valeros'");
+  assertIncludes("critical failure: you fall prone", lines[1], 'withManeuverToken("pc", "Valeros"');
   assert("failure: nothing", ctx.getManeuverResultLines(trip, 0), []);
 
   const demoralize = { ...trip, action: "Demoralize" };
@@ -168,6 +168,41 @@ section("The buttons");
   ctx.api.getSelectedOrDroppedToken = () => [{ token: { ...pcToken, effects: [prone], effectIds: ["prone"] } }];
   new vm.Script(self).runInContext(ctx);
   assert("already prone: not again", added, []);
+}
+
+section("Review fixes: names with an apostrophe, critical results, ABP");
+{
+  // Every button parses, whatever the name holds
+  const parses = (text) => {
+    const bodies = [...text.matchAll(/```[A-Za-z_0-9]+\n([\s\S]*?)\n```/g)].map((m) => m[1]);
+    return bodies.length > 0 && bodies.every((code) => {
+      try {
+        new vm.Script(code);
+        return true;
+      } catch (e) {
+        return false;
+      }
+    });
+  };
+  const odd = { action: "Trip", targetId: "t'1", targetName: "Ta'lir the \"Bold\"", actorId: "pc", actorName: "O'Brien" };
+  assert("maneuver buttons parse with Ta'lir and O'Brien", [2, 1, -1].every((degree) => parses(ctx.getManeuverResultLines(odd, degree).join("\n"))), true);
+  const talir = { _id: "t'1", name: "Ta'lir", recordType: "characters", data: {} };
+  assert("dying.js's buttons too", parses(ctx.getChatButton("Heroic_Recovery", talir, "heroicRecovery(token)")), true);
+
+  const m = { action: "Tumble Through", targetId: "goblin", targetName: "Goblin", actorId: "pc", actorName: "Valeros" };
+  assert("Tumble Through, critical failure: the failure text", ctx.getManeuverResultLines(m, -1), ctx.getManeuverResultLines(m, 0));
+  assert("critical success: the success text", ctx.getManeuverResultLines(m, 2), ctx.getManeuverResultLines(m, 1));
+  const diversion = { ...m, action: "Create a Diversion" };
+  assert("Create a Diversion, critical failure: the failure text", ctx.getManeuverResultLines(diversion, -1)[0].includes("aware you were trying to trick them"), true);
+  assert("Trip keeps its own critical failure", ctx.getManeuverResultLines({ ...m, action: "Trip" }, -1)[0], "**Trip:** You lose your balance and fall and land prone.");
+  assert("Demoralize, critical failure: only the immunity line", ctx.getManeuverResultLines({ ...m, action: "Demoralize" }, -1).length, 1);
+
+  const savedAbp = ctx.getAbpBonuses;
+  ctx.getAbpBonuses = () => ({ attack: 2 });
+  const flail = weapon("Flail", ["trip"], 0);
+  assert("ABP: the attack potency, untyped, with no rune", ctx.getManeuverWeaponModifiers(pc([flail]), "Trip").map((mod) => [mod.name, mod.type, mod.value]), [["Attack Potency +2 (Flail)", "", 2]]);
+  assert("ABP: still needs a weapon with the trait", ctx.getManeuverWeaponModifiers(pc([weapon("Sword", [], 0)]), "Trip"), []);
+  ctx.getAbpBonuses = savedAbp;
 }
 
 process.exitCode = summary();

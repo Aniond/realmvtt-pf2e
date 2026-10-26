@@ -79,9 +79,6 @@ const MANEUVER_OUTCOMES = {
     },
   },
   "create-a-diversion": {
-    2: {
-      text: "You become hidden to each creature whose Perception DC is less than or equal to your result. This lasts until the end of your turn or until you do anything except Step or use the Stealth skill to Hide or Sneak. If you Strike a creature, the creature remains off-guard against that attack, and you then become observed.",
-    },
     1: {
       text: "You become hidden to each creature whose Perception DC is less than or equal to your result. This lasts until the end of your turn or until you do anything except Step or use the Stealth skill to Hide or Sneak. If you Strike a creature, the creature remains off-guard against that attack, and you then become observed.",
     },
@@ -90,9 +87,6 @@ const MANEUVER_OUTCOMES = {
     },
   },
   "tumble-through": {
-    2: {
-      text: "You move through the enemy's space, treating the squares in its space as difficult terrain (every 5 feet costs 10 feet of movement). If you don't have enough Speed to move all the way through its space, you get the same effect as a failure.",
-    },
     1: {
       text: "You move through the enemy's space, treating the squares in its space as difficult terrain (every 5 feet costs 10 feet of movement). If you don't have enough Speed to move all the way through its space, you get the same effect as a failure.",
     },
@@ -134,12 +128,15 @@ function getManeuverWeaponModifiers(creature, actionName) {
         .toLowerCase()
         .trim(),
     );
+  const abp = getAbpBonuses(creature);
   let best = null;
   (creature?.data?.inventory || []).forEach((item) => {
     if (item?.data?.type !== "weapon" || item.data?.carried !== "equipped") return;
     const traits = traitNames(item);
     if (!traitsFor.some((trait) => traits.includes(trait))) return;
-    const potency = parseInt(item.data?.runes?.potency || "0", 10) || 0;
+    // Automatic Bonus Progression: the attack potency in place of the rune,
+    // as performAttackRoll uses it
+    const potency = abp ? abp.attack : parseInt(item.data?.runes?.potency || "0", 10) || 0;
     if (!best || potency > best.potency) {
       best = { item, potency, ranged: traits.includes("ranged-trip") && !traits.includes("trip") };
     }
@@ -147,7 +144,12 @@ function getManeuverWeaponModifiers(creature, actionName) {
   if (!best) return [];
   const modifiers = [];
   if (best.potency > 0) {
-    modifiers.push({ name: best.item.name, type: "item", value: best.potency, active: true });
+    // ABP's attack potency is a potency bonus, which stacks (untyped here)
+    modifiers.push(
+      abp
+        ? { name: `Attack Potency +${best.potency} (${best.item.name})`, type: "", value: best.potency, active: true }
+        : { name: best.item.name, type: "item", value: best.potency, active: true },
+    );
   }
   if (best.ranged) {
     modifiers.push({ name: "Ranged Trip", type: "circumstance", value: -2, active: true, isPenalty: true });
@@ -174,7 +176,8 @@ function getManeuverMetadata(record, actionName, target) {
 function getManeuverButton(label, creatureId, creatureName, call) {
   const droppedOn = 'typeof record !== "undefined" ? record : null';
   const fence = "```";
-  return `${fence}${label}\nwithManeuverToken('${creatureId}', '${creatureName}', ${droppedOn}, (token) => ${call});\n${fence}`;
+  // JSON.stringify, so a name like "Ta'lir" can't break the button's code
+  return `${fence}${label}\nwithManeuverToken(${JSON.stringify(String(creatureId))}, ${JSON.stringify(String(creatureName))}, ${droppedOn}, (token) => ${call});\n${fence}`;
 }
 
 function withManeuverToken(creatureId, name, droppedOn, action) {
@@ -201,7 +204,10 @@ function applyManeuverCondition(token, name, value = 1) {
 function getManeuverResultLines(maneuver, degree) {
   const outcomes = MANEUVER_OUTCOMES[getManeuverSlug(maneuver?.action)];
   if (!outcomes) return [];
-  const outcome = outcomes[String(degree)];
+  // An action with no critical entry has its plain one (Foundry notes Tumble
+  // Through's and Create a Diversion's failure on a critical failure too)
+  const fallback = { 2: "1", "-1": "0" }[String(degree)];
+  const outcome = outcomes[String(degree)] || (fallback ? outcomes[fallback] : undefined);
   const lines = [];
   if (outcome?.text) {
     lines.push(`**${maneuver.action}:** ${outcome.text}`);
