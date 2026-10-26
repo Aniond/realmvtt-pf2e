@@ -1080,7 +1080,7 @@ function getCriticalSpecializationDetails(weaponGroup) {
 }
 
 function getWeaponRuneDetails(runeName) {
-  const rune = (runeName || "").toLowerCase();
+  const rune = getPropertyRuneKey(runeName);
 
   const runeData = {
     ancestralechoing: {
@@ -1452,26 +1452,7 @@ function getWeaponRuneDetails(runeName) {
       description:
         "Electric arcs crisscross shock weapons, dealing an extra 1d6 electricity damage on a hit. On a critical hit, electricity arcs out to deal an equal amount of electricity damage to up to two other creatures of your choice within 10 feet of the target. Electricity damage dealt by this weapon ignores the target's electricity resistance (and the other creatures' on a critical hit).",
       macros: [],
-      modifiers: [
-        {
-          _id: "shock",
-          value: "1d6 electricity",
-          type: "damageBonus",
-          valueType: "string",
-          field: "all",
-          active: true,
-          itemOnly: true,
-        },
-        {
-          _id: "shock-ignores",
-          value: "ignore electricity resistance",
-          type: "damageBonus",
-          valueType: "string",
-          field: "all",
-          active: true,
-          itemOnly: true,
-        },
-      ],
+      modifiers: [],
     },
     greaterthundering: {
       displayName: "Greater Thundering",
@@ -1564,7 +1545,7 @@ function getWeaponRuneDetails(runeName) {
       macros: [],
       modifiers: [],
     },
-    majorrrooting: {
+    majorrooting: {
       displayName: "Major Rooting",
       description:
         "Small roots grow along the surface of the weapon, clinging tightly to its contours. On a critical hit with the weapon, roots grow from the target. It's immobilized for 1 round (Escape DC 34) and clumsy 1 for as long as the immobilization lasts.",
@@ -1632,17 +1613,7 @@ function getWeaponRuneDetails(runeName) {
       description:
         "Electric arcs crisscross shock weapons, dealing an extra 1d6 electricity damage on a hit. On a critical hit, electricity arcs out to deal an equal amount of electricity damage to up to two other creatures of your choice within 10 feet of the target.",
       macros: [],
-      modifiers: [
-        {
-          _id: "shock",
-          value: "1d6 electricity",
-          type: "damageBonus",
-          valueType: "string",
-          field: "all",
-          active: true,
-          itemOnly: true,
-        },
-      ],
+      modifiers: [],
     },
     shockwave: {
       displayName: "Shockwave",
@@ -1727,7 +1698,7 @@ function getWeaponRuneDetails(runeName) {
 }
 
 function getArmorRuneDetails(runeName) {
-  const rune = (runeName || "").toLowerCase();
+  const rune = getPropertyRuneKey(runeName);
 
   const runeData = {
     acidresistant: {
@@ -2148,7 +2119,8 @@ function getArmorRuneDetails(runeName) {
   );
 }
 
-// Returns the rune details above so we can collect their modifiers
+// Returns the rune details above so we can collect their modifiers, with
+// what each rune does (property-runes.js)
 function getFeaturesFromRunes(items = []) {
   const features = [];
   items.forEach((item) => {
@@ -2159,13 +2131,18 @@ function getFeaturesFromRunes(items = []) {
       const runeDetails = isWeapon
         ? getWeaponRuneDetails(rune)
         : getArmorRuneDetails(rune);
-      if (runeDetails?.modifiers && runeDetails.modifiers.length > 0) {
+      const effects = getPropertyRuneEffects(rune, isWeapon);
+      const modifiers = [
+        ...(runeDetails?.modifiers || []),
+        ...(effects?.modifiers || []),
+      ];
+      if (modifiers.length > 0) {
         features.push({
           // Use item ID since it came from this item
           _id: item._id,
-          name: runeDetails.displayName,
+          name: runeDetails.displayName || effects?.name || "",
           data: {
-            modifiers: runeDetails.modifiers.map((modifier) => ({
+            modifiers: modifiers.map((modifier) => ({
               data: {
                 ...modifier,
               },

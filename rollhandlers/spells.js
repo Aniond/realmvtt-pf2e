@@ -1320,6 +1320,8 @@ api.getRecord('${record.recordType}', '${record._id}', (record) => {
         tokenId: ourToken?._id,
         tokenName: tokenName,
         targetId: targetToken?._id,
+        // Fortification on the target's armor (property-runes.js)
+        fortification: ${isAC} ? getFortification(targetToken) : null,
         damage: "${spellDamage.damageString}",
         damageType: "${primaryDamageType}",
         persistentDamage: "${spellDamage.persistentDamage}",

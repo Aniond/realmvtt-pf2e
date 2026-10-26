@@ -1800,6 +1800,42 @@ function getShieldAtoms(token) {
   return atoms;
 }
 
+// Whether a creature heals from void damage (and is harmed by vitality), as
+// applyDamage decides it: the undead trait, or a voidHealing modifier
+// (Dhampir). The lookup only runs when the creature has such a modifier
+// somewhere it reads them from.
+function hasVoidHealing(token, traitNames = null) {
+  const data = token?.data || token?.record?.data || {};
+  const traits =
+    traitNames ||
+    (Array.isArray(data.traits) ? data.traits : []).map((trait) =>
+      String(typeof trait === "string" ? trait : trait?.name || "").toLowerCase(),
+    );
+  if (traits.includes("undead")) return true;
+  const list = (value) => (Array.isArray(value) ? value : []);
+  const withFeatures = (entries) =>
+    list(entries).flatMap((entry) => [entry, ...list(entry?.data?.features)]);
+  const hasModifier = [
+    ...withFeatures(data.features),
+    ...withFeatures(data.ancestries),
+    ...withFeatures(data.heritages),
+    ...withFeatures(data.classes),
+    ...list(data.feats),
+    ...list(data.bonusFeats),
+    ...list(data.actions),
+    ...list(data.inventory),
+  ].some((entry) =>
+    list(entry?.data?.modifiers).some((mod) => mod?.data?.type === "voidHealing"),
+  );
+  const hasRule = list(token?.effects).some((effect) =>
+    list(effect?.rules).some((rule) => rule?.type === "voidHealing"),
+  );
+  if (!hasModifier && !hasRule) return false;
+  return getEffectsAndModifiersForToken(token, ["voidHealing"]).some(
+    (mod) => mod.active !== false,
+  );
+}
+
 /**
  * Atoms describing the target of an attack/damage lookup. Uses
  * context.target, or context.targets when there is exactly one target (with
@@ -1840,6 +1876,25 @@ function getTargetAtoms(token, context) {
       `target:type:${recordType === "characters" ? "character" : "npc"}`,
     );
   }
+  // Foundry's target:negative-healing (void healing, as applyDamage decides
+  // it) and target:mode:<undead|construct|living> (ActorPF2e.modeOfBeing),
+  // which property runes' damage keys off (vitalizing, deathdrinking)
+  const traitNames = traitList.map((trait) =>
+    String(typeof trait === "string" ? trait : trait?.name || "")
+      .toLowerCase()
+      .trim(),
+  );
+  if (hasVoidHealing(targetToken, traitNames)) {
+    atoms.push("target:negative-healing");
+  }
+  const isEidolon = traitNames.includes("eidolon");
+  const modeOfBeing =
+    traitNames.includes("undead") && !isEidolon
+      ? "undead"
+      : traitNames.includes("construct") && !isEidolon && recordType !== "characters"
+        ? "construct"
+        : "living";
+  atoms.push(`target:mode:${modeOfBeing}`);
   // The distance to the target in feet (target:distance:<feet>, so
   // {"lte":["target:distance",30]} works): from api.getTargets, or measured
   // from the creature's token when the target came without one
@@ -1935,7 +1990,8 @@ function getAlteredWeapon(record, weapon) {
       "weaponMaterial",
     ],
     "",
-    undefined,
+    // The weapon's own runes (property-runes.js) as well as feats and effects
+    weapon._id,
     undefined,
     { weapon, targets },
   ).filter((mod) => mod.active);
@@ -12907,6 +12963,8 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber = 1) {
             ? ourToken?.record?.unidentifiedName
             : ourToken?.record?.name,
         targetId: target?.token?._id,
+        // Fortification on the target's armor (property-runes.js)
+        fortification: getFortification(target?.token),
         autoCritical: autoCritical,
         dc: targetAc,
         dcName: acReasons.length > 0 ? `AC (${[...new Set(acReasons)].join(", ")})` : undefined,

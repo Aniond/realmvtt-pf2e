@@ -71,6 +71,9 @@ const showShieldDamage = data?.roll?.metadata?.showShieldDamage;
 const isVitalityDual = data?.roll?.metadata?.isVitalityDual;
 const degreeOfSuccessAdjustments =
   data?.roll?.metadata?.degreeOfSuccessAdjustments;
+// Fortification on the target's armor: { dc, name } (property-runes.js)
+const fortification = data?.roll?.metadata?.fortification;
+let fortificationText = "";
 
 // If it was a spell attack, we need to pass this along in damage metadata
 const isSpell = data?.roll?.metadata?.isSpell === true;
@@ -160,6 +163,15 @@ if (dc > 0) {
     { natural: naturalRoll, total, dc }
   );
   degreeOfSuccess = adjustmentResult.degree;
+  // A critical hit becomes a normal hit on a successful fortification flat
+  // check
+  if (degreeOfSuccess === 2 && fortification?.dc) {
+    const check = rollFortificationCheck(fortification);
+    fortificationText = check.text;
+    if (check.success) {
+      degreeOfSuccess = 1;
+    }
+  }
   noteDegree = degreeOfSuccess;
   const adjustmentModifierName = adjustmentResult.modifierName;
 
@@ -217,7 +229,11 @@ if (dc > 0) {
   }[/center]`;
 }
 
-// Notes from the creature's features for this result (rollNote)
+// The fortification flat check, then notes from the creature's features for
+// this result (rollNote)
+if (fortificationText) {
+  message += `\n\n${fortificationText}`;
+}
 message += getRollNotesText(data?.roll?.metadata?.notes, noteDegree);
 
 // Only add "Attack" tag if there is no "Attack" trait
