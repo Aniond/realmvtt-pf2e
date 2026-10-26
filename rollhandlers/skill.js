@@ -226,6 +226,16 @@ if (targets.length === 0) {
     }
   }
 
+  // A maneuver against a target: what the outcome does, with buttons for
+  // its conditions (maneuvers.js)
+  const maneuverData = data?.roll?.metadata?.maneuver;
+  if (maneuverData) {
+    const maneuverLines = getManeuverResultLines(maneuverData, degreeOfSuccess);
+    if (maneuverLines.length > 0) {
+      message += `\n\n${maneuverLines.join("\n")}`;
+    }
+  }
+
   // Crafting activities (Craft, Grow, Deconstruct, rushed finishing) update
   // the character's crafting projects and say what happened
   if (data?.roll?.metadata?.craftingAction) {
