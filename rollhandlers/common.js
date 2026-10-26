@@ -2167,25 +2167,23 @@ function getOtherSpeeds(record, speedMods, landSpeed, isLandSpeedField) {
           : parseInt(raw, 10) || 0;
     if (feet > (speeds[type] || 0)) speeds[type] = feet;
   });
-  speedMods.forEach((mod) => {
-    if (!mod.active) return;
-    // All Speeds: each other Speed too, which a penalty can't take below
-    // 5 feet
-    if (String(mod.field || "").toLowerCase() === "all-speeds") {
+  // Each Speed stacks its own modifiers (speedMods come unstacked): the
+  // strongest bonus and penalty of each type to that Speed, all-speeds ones
+  // included
+  const isAllSpeeds = (field) => String(field || "").toLowerCase() === "all-speeds";
+  Object.keys(speeds).forEach((type) => {
+    keepStrongestPerType(
+      speedMods.filter(
+        (mod) => mod.active && (typeOf(mod.field) === type || isAllSpeeds(mod.field)),
+      ),
+    ).forEach((mod) => {
       const change = parseInt(mod.value || 0, 10) || 0;
-      Object.keys(speeds).forEach((type) => {
-        speeds[type] =
-          change < 0
-            ? Math.max(Math.min(5, speeds[type]), speeds[type] + change)
-            : speeds[type] + change;
-      });
-      return;
-    }
-    if (isLandSpeedField(mod.field)) return;
-    const type = typeOf(mod.field);
-    if (type && speeds[type] !== undefined) {
-      speeds[type] += parseInt(mod.value || 0, 10) || 0;
-    }
+      // All Speeds: a penalty can't take another Speed below 5 feet
+      speeds[type] =
+        isAllSpeeds(mod.field) && change < 0
+          ? Math.max(Math.min(5, speeds[type]), speeds[type] + change)
+          : speeds[type] + change;
+    });
   });
   return speeds;
 }
@@ -3753,8 +3751,12 @@ function getEffectsAndModifiersForToken(
   );
 
   // For the roll, we need only count 1 status / item / circumstance bonus or penalty,
-  // and we take the highest of each
-  results = keepStrongestPerType(results);
+  // and we take the highest of each. context.keepEveryModifier leaves that to
+  // a caller whose modifiers go to different statistics (the Speeds, one
+  // stacking pool per movement type)
+  if (!context.keepEveryModifier) {
+    results = keepStrongestPerType(results);
+  }
 
   // Filter by appliedById if provided
   if (appliedById) {
@@ -5708,10 +5710,16 @@ function updateAttribute({
   // Collect speed bonus/penalty modifiers from feats, features, items, and effects.
   // getEffectsAndModifiersForToken already negates penalty values and returns the
   // highest of each stacking type (status/item/circumstance), so summing is correct.
-  const speedMods = getEffectsAndModifiersForToken(record, [
-    "speedBonus",
-    "speedPenalty",
-  ]);
+  // Every modifier, unstacked: each Speed stacks its own (an item bonus to
+  // fly Speed doesn't replace one to land Speed)
+  const speedMods = getEffectsAndModifiersForToken(
+    record,
+    ["speedBonus", "speedPenalty"],
+    "",
+    undefined,
+    undefined,
+    { keepEveryModifier: true },
+  );
   // Land Speed takes bonuses with no field (or "land"/"land-speed", Foundry's
   // selector); a field of fly/swim/climb/burrow targets that movement type
   // "all-speeds" (Foundry's all-speeds) changes land Speed and every other
@@ -5721,10 +5729,10 @@ function updateAttribute({
       String(field || "").toLowerCase(),
     );
   let totalSpeedModifier = 0;
-  speedMods.forEach((mod) => {
-    if (mod.active && isLandSpeedField(mod.field)) {
-      totalSpeedModifier += parseInt(mod.value || 0, 10) || 0;
-    }
+  keepStrongestPerType(
+    speedMods.filter((mod) => mod.active && isLandSpeedField(mod.field)),
+  ).forEach((mod) => {
+    totalSpeedModifier += parseInt(mod.value || 0, 10) || 0;
   });
 
   const speed = record.data?.speed || "";

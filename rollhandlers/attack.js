@@ -560,6 +560,11 @@ let critSpecMessage = "";
 if (isCritical && hasCriticalSpecialization && weaponGroup) {
   critSpecMessage =
     "\n\n**[center]Critical Specialization Effect can be Applied[/center]**";
+  // Grievous adds to the effect (property-runes.js)
+  const grievousText = getGrievousText(propertyRunes, weaponGroup);
+  if (grievousText) {
+    critSpecMessage += `\n\n${grievousText}`;
+  }
 }
 
 message = `
