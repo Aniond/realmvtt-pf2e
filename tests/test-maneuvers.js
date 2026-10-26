@@ -205,4 +205,39 @@ section("Review fixes: names with an apostrophe, critical results, ABP");
   ctx.getAbpBonuses = savedAbp;
 }
 
+section("Escape: the grabber's listed Escape DC, or its Athletics DC");
+{
+  const npc = (actions, extra = {}) => ({ _id: "ooze", name: "Ooze", recordType: "npcs", identified: true, effects: [], effectIds: [], data: { level: 3, traits: [], actions, skills: [{ name: "Athletics", data: { mod: 9 } }], ...extra } });
+  const engulf = { name: "Engulf", data: { description: "<p>The creature is grabbed (Escape DC 25).</p>" } };
+  const swallow = { name: "Swallow Whole", data: { description: "<p>... [[/act escape dc=28]], Rupture 15</p>" } };
+  assert("listed Escape DCs, highest first", ctx.getListedEscapeDCs(npc([engulf, swallow])), [28, 25]);
+  assert("\"DC 23 to Escape\" counts too", ctx.getListedEscapeDCs(npc([{ name: "Web", data: { description: "It can attempt a DC 23 to Escape." } }])), [23]);
+  assert("a listed DC wins", ctx.getEscapeDC(npc([engulf])), 25);
+  assert("none listed: the Athletics DC (10 + 9)", ctx.getEscapeDC(npc([])), 19);
+  assert("an NPC without Athletics: its Strength", ctx.getEscapeDC(npc([], { skills: [], str: 4 })), 14);
+  assert("a character: 10 + athleticsMod", ctx.getEscapeDC(pc([], { athleticsMod: 7 })), 17);
+  assert("no grabber: no DC", ctx.getEscapeDC(null), null);
+
+  const roll = act(pc(), "athletics", "Escape", [{ token: npc([engulf]), distance: 5 }]);
+  assert("Escape rolls against it", [roll.metadata.dc, roll.metadata.dcName], [25, "Escape DC"]);
+  assert("with its outcomes", roll.metadata.maneuver?.action, "Escape");
+  assert("Acrobatics too", act(pc(), "acrobatics", "Escape", [{ token: npc([]), distance: 5 }]).metadata.dc, 19);
+
+  const m = { action: "Escape", targetId: "ooze", targetName: "Ooze", actorId: "pc", actorName: "Valeros" };
+  const success = ctx.getManeuverResultLines(m, 1);
+  assertIncludes("success: free, with a button", success[1], 'withManeuverToken("pc", "Valeros"');
+  assertIncludes("that removes the conditions", success[1], "freeFromManeuvers(token)");
+  assertIncludes("critical success: Stride 5 feet", ctx.getManeuverResultLines(m, 2)[0], "Stride up to 5 feet");
+  assertIncludes("critical failure: no Escape until your next turn", ctx.getManeuverResultLines(m, -1)[0], "until your next turn");
+
+  const removed = [];
+  ctx.api.removeEffectById = (id, token, cb) => {
+    removed.push(id);
+    if (cb) cb();
+  };
+  const effect = (name) => ({ _id: name.toLowerCase(), name, rules: [] });
+  ctx.freeFromManeuvers({ _id: "pc-token", effects: [effect("Grabbed"), effect("Restrained"), effect("Prone"), effect("Immobilized")], effectIds: ["grabbed", "restrained", "prone", "immobilized", "immobilized"] });
+  assert("Get Free removes grabbed, restrained and both immobilized stacks, not prone", removed, ["grabbed", "restrained", "immobilized", "immobilized"]);
+}
+
 process.exitCode = summary();

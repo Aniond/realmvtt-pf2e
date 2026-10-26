@@ -62,6 +62,17 @@ const MANEUVER_OUTCOMES = {
     },
     "-1": { text: "The target can move you up to 5 feet as though it successfully Repositioned you." },
   },
+  escape: {
+    2: {
+      text: "You get free and remove the grabbed, immobilized, and restrained conditions imposed by your chosen target. You can then Stride up to 5 feet.",
+      free: true,
+    },
+    1: {
+      text: "You get free and remove the grabbed, immobilized, and restrained conditions imposed by your chosen target.",
+      free: true,
+    },
+    "-1": { text: "You don't get free, and you can't attempt to Escape again until your next turn." },
+  },
   demoralize: {
     2: { text: "The target becomes frightened 2.", target: [["Frightened", 2]] },
     1: { text: "The target becomes frightened 1.", target: [["Frightened", 1]] },
@@ -191,6 +202,74 @@ function withManeuverToken(creatureId, name, droppedOn, action) {
   action(token);
 }
 
+// The conditions an Escape frees you from
+const ESCAPE_CONDITIONS = ["grabbed", "immobilized", "restrained"];
+
+// The Escape DCs a grabber's abilities list ("Escape DC 28", Foundry's
+// [[/act escape dc=28]]), highest first
+function getListedEscapeDCs(grabber) {
+  const data = grabber?.data || grabber?.record?.data || {};
+  const texts = [...(data.actions || []), ...(data.attacks || [])].map(
+    (entry) => `${entry?.name || ""} ${entry?.data?.description || ""}`,
+  );
+  const dcs = new Set();
+  texts.forEach((text) => {
+    for (const match of text.matchAll(/escape\s+dc\s*=?\s*(\d+)|dc\s*(\d+)\s+(?:to\s+)?escape/gi)) {
+      const dc = parseInt(match[1] || match[2], 10);
+      if (dc > 0) dcs.add(dc);
+    }
+  });
+  return [...dcs].sort((a, b) => b - a);
+}
+
+// A creature's Athletics DC: 10 + its Athletics modifier (a character's
+// athleticsMod, an NPC's listed skill or else its Strength modifier), with
+// its Athletics and Strength modifiers, as rollSkill adds them
+function getAthleticsDC(creature) {
+  const data = creature?.data || creature?.record?.data || {};
+  const isCharacter = creature?.recordType === "characters";
+  const listed = (data.skills || []).find((skill) => String(skill?.name || "").toLowerCase() === "athletics");
+  const skillMod = isCharacter
+    ? parseInt(data.athleticsMod || "0", 10) || 0
+    : listed
+      ? parseInt(listed.data?.mod || "0", 10) || 0
+      : parseInt(data.strMod ?? data.str ?? "0", 10) || 0;
+  const mods = mergeModifierLists(
+    getEffectsAndModifiersForToken(creature, ["skillBonus", "skillPenalty"], "athletics"),
+    getEffectsAndModifiersForToken(creature, ["allBonus", "allPenalty"], "str"),
+  );
+  let dc = 10 + skillMod + getNpcProficiencyWithoutLevelAdjustment(creature);
+  mods.forEach((mod) => {
+    if (mod.active === false || mod.situational) return;
+    dc += parseInt(mod.value || 0, 10) || 0;
+  });
+  return dc;
+}
+
+// The DC to Escape a grabber (Sean's ruling on #18): the Escape DC its
+// abilities list (the highest, if several), else its Athletics DC
+function getEscapeDC(grabber) {
+  if (!grabber) return null;
+  const listed = getListedEscapeDCs(grabber);
+  return listed.length > 0 ? listed[0] : getAthleticsDC(grabber);
+}
+
+// Escape: removes the grabbed, immobilized and restrained conditions, one
+// stack at a time
+function freeFromManeuvers(token) {
+  const ids = [];
+  (token?.effects || []).forEach((effect) => {
+    if (!ESCAPE_CONDITIONS.includes(String(effect?.name || "").toLowerCase())) return;
+    const count = (token.effectIds || []).filter((id) => id === effect._id).length || 1;
+    for (let i = 0; i < count; i++) ids.push(effect._id);
+  });
+  const next = () => {
+    const id = ids.shift();
+    if (id) api.removeEffectById(id, token, next);
+  };
+  next();
+}
+
 // Applies a condition at a value as one gain (frightened 2 from a critical
 // Demoralize), after the creature's own conditionGain modifiers
 function applyManeuverCondition(token, name, value = 1) {
@@ -223,6 +302,9 @@ function getManeuverResultLines(maneuver, degree) {
   };
   (outcome?.target || []).forEach(([name, value]) => lines.push(conditionButton("target", name, value)));
   (outcome?.self || []).forEach(([name, value]) => lines.push(conditionButton("self", name, value)));
+  if (outcome?.free) {
+    lines.push(getManeuverButton("Get_Free", maneuver.actorId, maneuver.actorName, "freeFromManeuvers(token)"));
+  }
   if (outcome?.damage) {
     lines.push(
       `\`\`\`Roll_Damage\napi.promptRoll(${JSON.stringify(`${maneuver.action} Damage`)}, ${JSON.stringify(outcome.damage)}, [], { rollName: ${JSON.stringify(maneuver.action)} }, "damage");\n\`\`\``,

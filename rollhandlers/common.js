@@ -5217,6 +5217,8 @@ function getDefenseDCForToken(token, defense, context = {}) {
   if (["fortitude", "reflex", "will"].includes(defense)) {
     return getSaveDCForToken(token, defense, context);
   }
+  // Escape: the grabber's listed Escape DC or its Athletics DC (maneuvers.js)
+  if (defense === "escape") return getEscapeDC(token, context);
   return null;
 }
 
@@ -9483,7 +9485,7 @@ const SKILL_ACTIONS = {
     { name: "Tumble Through", defense: "reflex" },
     { name: "Maneuver in Flight" },
     { name: "Squeeze" },
-    { name: "Escape", attack: true },
+    { name: "Escape", defense: "escape", attack: true },
   ],
   arcana: [
     { name: "Recall Knowledge" },
@@ -9503,7 +9505,7 @@ const SKILL_ACTIONS = {
     { name: "Swim" },
     { name: "Trip", defense: "reflex", attack: true },
     { name: "Disarm", defense: "reflex", attack: true },
-    { name: "Escape", attack: true },
+    { name: "Escape", defense: "escape", attack: true },
   ],
   crafting: [
     { name: "Recall Knowledge" },
