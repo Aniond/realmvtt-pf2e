@@ -191,5 +191,16 @@ ${macro}`
   }
 }
 
+// Uses per minute, round and turn come back when the encounter ends
+// (limited-uses.js)
+getEncounterTokens(data?.tokens)
+  .filter((token) => token?.recordType === "characters")
+  .forEach((token) => {
+    const recharges = getLimitedUseRecharges(token, "encounterEnd");
+    if (Object.keys(recharges).length > 0) {
+      api.setValuesOnTokenById(token._id, token.recordType, recharges);
+    }
+  });
+
 // The encounter is over: encounter predicates no longer hold
 setEncounterState([], 0);
