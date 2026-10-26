@@ -123,6 +123,9 @@ function runeRecoveryDC(damageType, dc) {
 // Weapon runes, keyed as PF2e.js keys them, generated from Foundry's
 // WEAPON_PROPERTY_RUNES and its English notes. Not here: grievous, whose
 // notes depend on the weapon group's critical specialization.
+// Holy and unholy split Foundry's 1d4-or-2d4 into 1d4 plus an extra 1d4
+// against the opposite trait: damage of one type adds up before resistances,
+// and with no target, ticking the extra gives 2d4 rather than 1d4 + 2d4.
 const WEAPON_RUNE_EFFECTS = {
   anchoring: {
     name: "Anchoring",
@@ -367,8 +370,8 @@ const WEAPON_RUNE_EFFECTS = {
   holy: {
     name: "Holy",
     modifiers: [
-      runeDamage("1d4 spirit", { predicate: "[{\"not\":\"target:trait:unholy\"}]" }),
-      runeDamage("2d4 spirit", { predicate: "[\"target:trait:unholy\"]" }),
+      runeDamage("1d4 spirit"),
+      runeDamage("1d4 spirit", { predicate: "[\"target:trait:unholy\"]", nameSuffix: "extra" }),
       runeTrait("holy"),
     ],
   },
@@ -470,8 +473,8 @@ const WEAPON_RUNE_EFFECTS = {
   unholy: {
     name: "Unholy",
     modifiers: [
-      runeDamage("1d4 spirit", { predicate: "[{\"not\":\"target:trait:holy\"}]" }),
-      runeDamage("2d4 spirit", { predicate: "[\"target:trait:holy\"]" }),
+      runeDamage("1d4 spirit"),
+      runeDamage("1d4 spirit", { predicate: "[\"target:trait:holy\"]", nameSuffix: "extra" }),
       runeTrait("unholy"),
     ],
   },

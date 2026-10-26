@@ -2136,20 +2136,28 @@ function getFeaturesFromRunes(items = []) {
         ...(runeDetails?.modifiers || []),
         ...(effects?.modifiers || []),
       ];
-      if (modifiers.length > 0) {
+      // A modifier with a nameSuffix gets its own feature ("Holy (extra)"),
+      // so the engine doesn't merge it with an equal one of the rune's
+      const name = runeDetails.displayName || effects?.name || "";
+      const groups = {};
+      modifiers.forEach(({ nameSuffix, ...modifier }) => {
+        const featureName = nameSuffix ? `${name} (${nameSuffix})` : name;
+        (groups[featureName] = groups[featureName] || []).push(modifier);
+      });
+      Object.entries(groups).forEach(([featureName, featureModifiers]) => {
         features.push({
           // Use item ID since it came from this item
           _id: item._id,
-          name: runeDetails.displayName || effects?.name || "",
+          name: featureName,
           data: {
-            modifiers: modifiers.map((modifier) => ({
+            modifiers: featureModifiers.map((modifier) => ({
               data: {
                 ...modifier,
               },
             })),
           },
         });
-      }
+      });
     });
   });
   return features;
