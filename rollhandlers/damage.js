@@ -55,9 +55,10 @@ const isCritical = data.roll?.metadata?.critical === true;
 const criticalOnlyDice = data.roll?.metadata?.criticalOnlyDice || [];
 let criticalDamageInfo = "";
 
-// If it's critical and there is persistent damage, we double the persistent damage
+// If it's critical and there is persistent damage, we double the persistent
+// damage (its dice and flat amounts)
 if (isCritical && persistentDamage && persistentDamage !== "") {
-  persistentDamage = doubleDamageDice(persistentDamage);
+  persistentDamage = doublePersistentDamage(persistentDamage);
 }
 // Persistent damage only a critical hit adds (e.g. Accursed Claws) is not doubled
 const criticalPersistentDamage =
@@ -282,32 +283,32 @@ applyPersistentDamage("${persistentDamage}", "${tokenId}", "${tokenName}");
 `
     : "";
 
-let doublePersistentDamage = persistentDamage
-  ? doubleDamageDice(persistentDamage)
+let doubledPersistentDamage = persistentDamage
+  ? doublePersistentDamage(persistentDamage)
   : "";
-const doublePersistentDamageMacroName = doublePersistentDamage
-  ? doublePersistentDamage
+const doublePersistentDamageMacroName = doubledPersistentDamage
+  ? doubledPersistentDamage
       .split(" ")
       .map((word) => capitalize(word))
       .join("_")
   : "Double_Persistent_Damage";
 const doublePersistentDamageMacro =
-  doublePersistentDamage && isSpell
+  doubledPersistentDamage && isSpell
     ? `
 \`\`\`${doublePersistentDamageMacroName}_Persistent_Damage
-applyPersistentDamage("${doublePersistentDamage}", "${tokenId}", "${tokenName}");
+applyPersistentDamage("${doubledPersistentDamage}", "${tokenId}", "${tokenName}");
 \`\`\`
 `
     : "";
 
-// Flat Check for Persistent Damage Recovery DC 15
-// After you take persistent damage, roll a DC 15 flat check to see if you recover from the persistent damage. If you succeed, the condition ends.
+// Flat Check for Persistent Damage Recovery, DC 15 unless the creature's
+// persistentRecoveryDC modifiers change it for this damage type (Charhide
+// Goblin: DC 10 for fire), worked out when the damage was rolled
+// After you take persistent damage, roll a flat check to see if you recover from the persistent damage. If you succeed, the condition ends.
 const persistentRecoveryMacro =
   isPersistant && persistentPartIndex >= 0
     ? `
-\`\`\`Roll_Recovery
-api.promptRoll("Recovery", "1d20", [], { dc: 15, rollName: "Persistent Damage Flat Check", tooltip: "Flat Check to Recover from Persistent Damage", isPersistent: true, persistentPartIndex: ${persistentPartIndex} }, "flatCheck");
-\`\`\`
+${getPersistentRecoveryButton(data.roll?.metadata?.recoveryDC, persistentPartIndex)}
 `
     : "";
 

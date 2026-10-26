@@ -17,7 +17,7 @@ function getWoundedValue(creature) {
 
 // A creature's doomed value, from the Doomed condition on it
 function getDoomedValue(creature) {
-  return getTokenCondition(creature, "doomed")?.value || 0;
+  return getTokenConditionValue(creature, "doomed");
 }
 
 // The dying value a creature dies at: 4, or 5 with Diehard, less its doomed
@@ -39,15 +39,31 @@ function getDyingMaximum(creature) {
 }
 
 // recoveryDC modifiers adjust the recovery check DC (Toughness and Mountain's
-// Stoutness lower it by 1); like Toughness, the strongest reduction applies
-function getRecoveryDCAdjustment(creature) {
+// Stoutness lower it by 1); like Toughness, the strongest reduction applies.
+// A value from the dying value (Nine Lives Catfolk:
+// -@actor.conditions.dying.value, so the dying value isn't added) comes on
+// top of that, as in Foundry, worked out at the dying value the check is for.
+function getRecoveryDCAdjustment(creature, dying = getDyingValue(creature)) {
   let adjustment = hasFeatNamed(creature, "Toughness") ? -1 : 0;
+  let fromDying = 0;
   getEffectsAndModifiersForToken(creature, ["recoveryDC"]).forEach((mod) => {
     if (mod.active === false) return;
-    const value = parseInt(mod.value, 10);
-    if (!isNaN(value) && value < adjustment) adjustment = value;
+    const value = Math.trunc(getModifierSortValue(mod));
+    if (/conditions\.dying\.|condition\.dying/.test(String(mod.rawValue || ""))) {
+      const atDying = {
+        ...creature,
+        data: { ...(creature?.data || {}), dying },
+      };
+      fromDying += Math.trunc(
+        getModifierSortValue({
+          value: checkForReplacements(mod.rawValue, {}, atDying),
+        }),
+      );
+    } else if (value < adjustment) {
+      adjustment = value;
+    }
   });
-  return adjustment;
+  return adjustment + fromDying;
 }
 
 // The highest wounded value, 1 below the dying value a creature dies at
@@ -59,7 +75,7 @@ function getWoundedMax(creature) {
 // The DC of a recovery check: 10 + the dying value, 1 lower with Toughness
 // (the Core Rulebook's Toughness made it 9 + dying, the same number)
 function getRecoveryCheckDC(creature, dying = getDyingValue(creature)) {
-  return 10 + dying + getRecoveryDCAdjustment(creature);
+  return 10 + dying + getRecoveryDCAdjustment(creature, dying);
 }
 
 // Whether damage has the nonlethal trait (fists, nonlethal spells), which
@@ -237,6 +253,14 @@ function applyHealingToToken(target, healing, options = {}) {
   if (!target?.data || !(healing > 0)) {
     return;
   }
+  // Magical healing a raging Superstition barbarian has to accept first
+  // (onMagicAccepted)
+  if (!options.magicAccepted && isMagicalHealing(options)) {
+    confirmMagicAccepted(target, options.source || "magical healing", () =>
+      applyHealingToToken(target, healing, { ...options, magicAccepted: true }),
+    );
+    return;
+  }
   // Healing the target receives changes by its own healingReceived
   // modifiers (Robust Health: + level from Treat Wounds). Context: the action
   // (action:treat-wounds) and, for spells, item:type:spell.
@@ -277,6 +301,17 @@ function applyHealingToToken(target, healing, options = {}) {
   api.floatText(target, `+${healing}`, "#1bc91b");
 }
 
+// Healing from a spell or a magical item (the roll's damageSource)
+function isMagicalHealing(options = {}) {
+  const source = options.damageSource || null;
+  return (
+    options.isSpell === true ||
+    source?.type === "spell" ||
+    source?.magical === true ||
+    isMagicalSource(source?.traits)
+  );
+}
+
 // The target's healingReceived modifiers for this healing: amount to add
 // (negative for penalties) and the names of the modifiers that applied
 function getHealingReceivedAdjustment(target, options = {}) {
@@ -284,7 +319,24 @@ function getHealingReceivedAdjustment(target, options = {}) {
     options.action || (options.treatWounds ? "Treat Wounds" : "") || "";
   const context = {};
   if (action) context.action = { name: action };
-  if (options.isSpell) context.origin = { recordType: "spells", data: { traits: ["magical", "healing"] } };
+  // Where the healing comes from (the roll's damageSource): a spell, or an
+  // item whose traits and item:magical predicates can read (Curse of
+  // Outpouring Life: magical healing, so a healing potion but not an
+  // alchemical elixir)
+  const source = options.damageSource || null;
+  if (options.isSpell || source?.type === "spell") {
+    context.origin = { recordType: "spells", data: { traits: ["magical", "healing"] } };
+    // Foundry's item:magical and item:type:spell for the spell
+    context.item = { name: source?.slug || "", recordType: "spells", data: { traits: ["magical", "healing"] } };
+  } else if (source && source.type) {
+    const traits = [...(source.traits || [])];
+    if (source.magical && !traits.includes("magical")) traits.push("magical");
+    context.item = {
+      name: source.slug || "",
+      recordType: "items",
+      data: { type: source.type, traits },
+    };
+  }
   let amount = 0;
   const names = [];
   getEffectsAndModifiersForToken(
@@ -455,6 +507,25 @@ function getRecoveryCheckResult(creature, degree) {
   }
   // Doomed can bring the dying value it dies at to 0, which kills at once
   return { values, dying: next, dead: threshold <= 0 || (next > 0 && next >= threshold) };
+}
+
+// Hit Points regained from a night's rest (Player Core pg. 459): the
+// Constitution modifier (minimum 1) times the level, plus the creature's
+// restHealing modifiers (Foundry's hp.recoveryAddend; Hillock Halfling adds
+// the level). { amount, names } with the names of the modifiers that added.
+function getRestHealing(creature) {
+  const level = parseInt(creature?.data?.level || "0", 10) || 0;
+  const constitution = parseInt(creature?.data?.con || "0", 10) || 0;
+  let amount = Math.max(1, Math.max(1, constitution) * level);
+  const names = [];
+  getEffectsAndModifiersForToken(creature, ["restHealing"]).forEach((mod) => {
+    if (mod.active === false) return;
+    const value = Math.trunc(getModifierSortValue(mod));
+    if (!value) return;
+    amount += value;
+    names.push(`${value > 0 ? "+" : ""}${value} ${mod.name}`);
+  });
+  return { amount: Math.max(0, amount), names };
 }
 
 // Rest: a creature at full Hit Points after 10 minutes of rest loses the

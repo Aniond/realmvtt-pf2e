@@ -201,3 +201,6 @@ getEncounterTokens(data?.tokens)
       api.setValuesOnTokenById(token._id, token.recordType, recharges);
     }
   });
+
+// The encounter is over: encounter predicates no longer hold
+setEncounterState([], 0);
