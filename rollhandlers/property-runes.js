@@ -120,13 +120,90 @@ function runeRecoveryDC(damageType, dc) {
   };
 }
 
+// A bonus to the wearer's or wielder's Perception (Sense Motive)
+function runePerceptionBonus(value, predicate = undefined) {
+  return {
+    type: "perceptionBonus",
+    modifierType: "item",
+    field: "perception",
+    valueType: "number",
+    value: String(value),
+    active: true,
+    ...(predicate ? { predicate } : {}),
+  };
+}
+
+// An item bonus to the wearer's Speed of one kind ("fly")
+function runeSpeedBonus(kind, value) {
+  return {
+    type: "speedBonus",
+    modifierType: "item",
+    field: kind,
+    valueType: "number",
+    value: String(value),
+    active: true,
+  };
+}
+
+// A bonus to one of the wearer's save DCs, for some checks against it
+function runeSaveDCBonus(save, value, modifierType, predicate) {
+  return {
+    type: "saveDCBonus",
+    modifierType,
+    field: save,
+    valueType: "number",
+    value: String(value),
+    active: true,
+    predicate,
+  };
+}
+
+// A bonus to the wearer's saving throws
+function runeSaveBonus(value, modifierType, predicate) {
+  return {
+    type: "saveBonus",
+    modifierType,
+    field: "saving-throw",
+    valueType: "number",
+    value: String(value),
+    active: true,
+    predicate,
+  };
+}
+
 // Weapon runes, keyed as PF2e.js keys them, generated from Foundry's
-// WEAPON_PROPERTY_RUNES and its English notes. Not here: grievous, whose
-// notes depend on the weapon group's critical specialization.
+// WEAPON_PROPERTY_RUNES and its English notes. Grievous is below, as its
+// benefit depends on the weapon group's critical specialization.
 // Holy and unholy split Foundry's 1d4-or-2d4 into 1d4 plus an extra 1d4
 // against the opposite trait: damage of one type adds up before resistances,
 // and with no target, ticking the extra gives 2d4 rather than 1d4 + 2d4.
 const WEAPON_RUNE_EFFECTS = {
+  // The dwarven clan dagger filigrees (Dwarven Clan Dagger runes): item
+  // bonuses for the dagger's owner while it's equipped, from their text
+  bolkasblessing: {
+    name: "Bolka's Blessing",
+    modifiers: [runeSkillBonus("diplomacy", 1), runePerceptionBonus(1, '["action:sense-motive"]')],
+  },
+  greaterbolkasblessing: {
+    name: "Greater Bolka's Blessing",
+    modifiers: [runeSkillBonus("diplomacy", 2), runePerceptionBonus(2, '["action:sense-motive"]')],
+  },
+  kolssoath: {
+    name: "Kol's Oath",
+    modifiers: [runeSkillBonus("society", 1), runeSkillBonus("diplomacy", 1, '["action:request"]')],
+  },
+  greaterkolssoath: {
+    name: "Greater Kol's Oath",
+    modifiers: [runeSkillBonus("society", 2), runeSkillBonus("diplomacy", 2, '["action:request"]')],
+  },
+  truddsstrength: {
+    name: "Trudd's Strength",
+    modifiers: [runeSkillBonus("athletics", 1), runeSkillBonus("intimidation", 1, '["action:coerce"]')],
+  },
+  greatertruddsstrength: {
+    name: "Greater Trudd's Strength",
+    modifiers: [runeSkillBonus("athletics", 2), runeSkillBonus("intimidation", 2, '["action:coerce"]')],
+  },
   anchoring: {
     name: "Anchoring",
     modifiers: [
@@ -490,7 +567,18 @@ const WEAPON_RUNE_EFFECTS = {
 const SLICK_PREDICATE = '[{"or":["action:escape","action:squeeze"]}]';
 
 // Armor runes, from their own text
+// Antimagic's bonus counts against magic: a spell's tradition, as a spell's
+// save passes it, or the magical trait
+const ANTIMAGIC_PREDICATE =
+  '[{"or":["origin:trait:magical","origin:trait:arcane","origin:trait:divine","origin:trait:occult","origin:trait:primal"]}]';
+
 const ARMOR_RUNE_EFFECTS = {
+  antimagic: { name: "Antimagic", modifiers: [runeSaveBonus(1, "status", ANTIMAGIC_PREDICATE)] },
+  rockbraced: {
+    name: "Rock-Braced",
+    modifiers: [runeSaveDCBonus("fortitude", 4, "item", '["forced-movement"]')],
+  },
+  soaring: { name: "Soaring", modifiers: [runeSpeedBonus("fly", 10)] },
   acidresistant: { name: "Acid Resistant", modifiers: [runeResistance("acid", 5)] },
   coldresistant: { name: "Cold Resistant", modifiers: [runeResistance("cold", 5)] },
   electricityresistant: {
@@ -549,6 +637,37 @@ const ARMOR_RUNE_EFFECTS = {
   truestanching: { name: "True Stanching", modifiers: [runeRecoveryDC("bleed", 5)] },
 };
 
+// Grievous: what a critical hit with critical specialization adds, by
+// weapon group (the rune's text)
+const GRIEVOUS_EFFECTS = {
+  axe: "You can damage a third creature, with the same restrictions.",
+  bow: "The Athletics check to pull the missile free is DC 20.",
+  brawling: "The target takes a -4 circumstance penalty to its save.",
+  club: "You can knock the target up to 15 feet away.",
+  crossbow:
+    "If the target of the critical hit is adjacent to a surface, it gets stuck to that surface by the missile, as the bow critical specialization.",
+  dart: "The base persistent bleed damage increases to 2d6.",
+  firearm: "The target takes a -4 circumstance penalty to its save.",
+  flail:
+    "You move the target 5 feet. You can't move it away from you, but you can move it in another direction of your choice.",
+  hammer: "You can also knock the target 5 feet away from you.",
+  knife: "The target takes a -5-foot status penalty to its Speed while it has the persistent bleed damage.",
+  pick: "The extra damage from the critical specialization effect increases to 4 per weapon damage die.",
+  polearm: "You can move the target up to 10 feet.",
+  shield: "You can knock the target up to 10 feet away.",
+  sling: "The target also takes a -10-foot status penalty to its Speed for 1 round if it fails the save.",
+  spear: "The clumsy condition lasts for 2 rounds.",
+  sword: "The target is off-guard until the end of your next turn.",
+};
+
+// Grievous's line for the attack card when a critical hit gets the critical
+// specialization effect (attack.js), or ""
+function getGrievousText(runes, weaponGroup) {
+  const hasGrievous = (runes || []).some((rune) => getPropertyRuneKey(rune) === "grievous");
+  const text = GRIEVOUS_EFFECTS[String(weaponGroup || "").toLowerCase()];
+  return hasGrievous && text ? `**Grievous:** ${text}` : "";
+}
+
 // The flat check DC each fortification rune gives against critical hits
 const FORTIFICATION_DCS = {
   fortification: 17,
@@ -563,6 +682,9 @@ const PROPERTY_RUNE_ALIASES = {
   greaterdisrupting: "greatervitalizing",
   spellstoring: "spellreservoir",
   dancing: "animated",
+  // Kol's Oath by its name; Foundry's slug is kolssOath
+  kolsoath: "kolssoath",
+  greaterkolsoath: "greaterkolssoath",
 };
 
 // The key PF2e.js and these tables use for a rune on an item: from Foundry's

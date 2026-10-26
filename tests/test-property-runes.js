@@ -139,6 +139,7 @@ section("Rune keys: Foundry slugs, names and legacy runes");
   assert("greater disrupting", ctx.getPropertyRuneKey("greaterDisrupting"), "greatervitalizing");
   assert("spell-storing is spell reservoir", ctx.getPropertyRuneKey("spell-storing"), "spellreservoir");
   assert("dancing is animated", ctx.getPropertyRuneKey("dancing"), "animated");
+  assert("Kol's Oath by its name: Foundry's kolssOath", ctx.getPropertyRuneKey("Greater Kol's Oath"), "greaterkolssoath");
   assert("rune details by any of these", [ctx.getWeaponRuneDetails("speed").displayName, ctx.getWeaponRuneDetails("Ghost Touch").displayName], ["Quickstrike", "Ghost Touch"]);
   assert("Major Rooting, as the item sheet stores it, has its details", ctx.getWeaponRuneDetails("majorRooting").displayName, "Major Rooting");
   assert("armor runes too", ctx.getArmorRuneDetails("greaterFortification").displayName, "Greater Fortification");
@@ -148,7 +149,7 @@ section("Rune keys: Foundry slugs, names and legacy runes");
   assert("every weapon rune with effects has the ruleset's details, but Foundry's two energy vulnerability runes", foundryOnly, ["energyvulnerability", "greaterenergyvulnerability"]);
   const armorEffects = vm.runInContext("ARMOR_RUNE_EFFECTS", ctx);
   assert("every armor rune with effects has the ruleset's details", Object.keys(armorEffects).filter((key) => !ctx.getArmorRuneDetails(key).displayName), []);
-  assert("52 weapon runes and 23 armor runes have effects", [Object.keys(weaponEffects).length, Object.keys(armorEffects).length], [52, 23]);
+  assert("58 weapon runes and 26 armor runes have effects", [Object.keys(weaponEffects).length, Object.keys(armorEffects).length], [58, 26]);
 }
 
 section("Damage on the rune's own weapon");
@@ -396,6 +397,46 @@ section("Fortification");
     Object.assign(ctx.api, saved);
   }
   assert("a spell attack carries it too", captured?.metadata?.fortification, { dc: 17, name: "Fortification" });
+}
+
+section("Clan dagger filigrees, antimagic, rock-braced, soaring");
+{
+  const dagger = (rune) => weapon("Clan Dagger", [rune], { group: "knife", traits: ["agile", "dwarf", "parry", "uncommon", "versatile b"], damage: { dice: 1, die: "d4", damageType: "piercing" } });
+  const active = (record, types, field, context = {}) =>
+    lookup(record, types, field, context).filter((mod) => mod.active && !mod.situational).map((mod) => mod.value);
+  const bolka = pc({ inventory: [dagger("bolkasBlessing")] });
+  assert("Bolka's blessing: +1 item to Diplomacy", active(bolka, ["skillBonus"], "diplomacy"), [1]);
+  assert("and to Perception to Sense Motive", active(bolka, ["perceptionBonus"], "perception", { action: { name: "Sense Motive" } }), [1]);
+  assert("not to Seek", active(bolka, ["perceptionBonus"], "perception", { action: { name: "Seek" } }), []);
+  const kol = pc({ inventory: [dagger("greaterKolssOath")] });
+  assert("greater Kol's oath: +2 to Society", active(kol, ["skillBonus"], "society"), [2]);
+  assert("and to Diplomacy to Request", active(kol, ["skillBonus"], "diplomacy", { action: { name: "Request" } }), [2]);
+  const trudd = pc({ inventory: [dagger("truddsStrength")] });
+  assert("Trudd's strength: +1 to Athletics", active(trudd, ["skillBonus"], "athletics"), [1]);
+  assert("and to Intimidation to Coerce", active(trudd, ["skillBonus"], "intimidation", { action: { name: "Coerce" } }), [1]);
+  assert("not to Demoralize", active(trudd, ["skillBonus"], "intimidation", { action: { name: "Demoralize" } }), []);
+  const stowed = pc({ inventory: [{ ...dagger("truddsStrength"), data: { ...dagger("truddsStrength").data, carried: "carried" } }] });
+  assert("only while equipped", active(stowed, ["skillBonus"], "athletics"), []);
+
+  const antimagic = pc({ inventory: [armor(["antimagic"])] });
+  assert("antimagic: +1 status to saves against an arcane spell", active(antimagic, ["saveBonus"], "saving-throw", { origin: { data: { traits: ["fire", "arcane"] } } }), [1]);
+  assert("not against a mundane effect", active(antimagic, ["saveBonus"], "saving-throw", { origin: { data: { traits: ["poison"] } } }), []);
+  const braced = pc({ inventory: [armor(["rockBraced"])], fortitude: 10 });
+  const plain = pc({ fortitude: 10 });
+  const dc = (record, action) => ctx.getDefenseDCForToken(record, "fortitude", { action: { name: action } });
+  assert("rock-braced: +4 to Fortitude DC against Shove", dc(braced, "Shove") - dc(plain, "Shove"), 4);
+  assert("not against Grapple", dc(braced, "Grapple") - dc(plain, "Grapple"), 0);
+  assert("soaring: +10 feet item bonus to fly Speed", active(pc({ inventory: [armor(["soaring"])] }), ["speedBonus"], "fly"), [10]);
+}
+
+section("Grievous");
+{
+  const card = (d20, metadata) => attackCard(d20, { runes: ["grievous"], weaponGroup: "sword", hasCriticalSpecialization: true, ...metadata }, 10);
+  assertIncludes("a critical hit with critical specialization adds the group's benefit", card(19, {}), "**Grievous:** The target is off-guard until the end of your next turn.");
+  assert("not on a hit", card(10, {}).includes("Grievous:"), false);
+  assert("not without critical specialization", card(19, { hasCriticalSpecialization: false }).includes("Grievous:"), false);
+  assert("not without the rune", card(19, { runes: [] }).includes("Grievous:"), false);
+  assertIncludes("by group: pick", card(19, { weaponGroup: "pick" }), "increases to 4 per weapon damage die");
 }
 
 process.exitCode = summary();
