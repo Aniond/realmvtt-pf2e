@@ -93,6 +93,23 @@ Fields such as `onload` and `onchange` only work on Realm VTT field HTML, not on
 2. Proficiency calculations, ability scores, and modifiers are centralized
 3. Use `onAddEditFeature()` to trigger recalculations after data changes
 
+### Attack Log (multiple attack penalty, momentum traits)
+
+`rollhandlers/attack-log.js` counts the attacks a creature makes on its own turn. It suggests and never enforces, since players make mistakes:
+
+- Strikes keep their 1st/2nd/3rd buttons, which always set the penalty. The card adds a hint when the button doesn't match the count.
+- Spell attacks and attack-trait skill actions (Grapple, Trip...) get the penalty from the count as a ticked modifier that can be unticked in the roll prompt.
+- Forceful, twin, sweep and backswing apply from the earlier attacks, also as ticked modifiers.
+- Each logged attack's card has a "Remove From Attack Count" button for a roll made by mistake.
+
+Storage:
+
+- `onTurnStart` sets the campaign variable `pf2eTurn` to `{ key, tokenId, recordId }`. The key is the token and the round, so Next after Previous keeps the turn's log. `onEncounterEnd` clears it.
+- The log is on the attacker's token at `data.turnAttacks` (`{ turnKey, attacks }`). It is written only by the result handlers (`attack.js`, `skill.js`) from `metadata.turnAttack`, which carries the log as it was at roll time. A log whose `turnKey` isn't the current turn's is ignored.
+- Removed attacks are marked at `data.turnAttackSkips.<entryId>`, so the button never reads the token.
+
+When adding a new kind of attack roll, pass `turnAttack` (from `getTurnAttackMetadata`) in the roll metadata and call `logTurnAttack` in its result handler. Attacks on another creature's turn (reactions) are not logged and take no penalty from the log.
+
 ### Data Structure
 
 - Character data is nested under `record.data`
