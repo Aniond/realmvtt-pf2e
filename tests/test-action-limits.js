@@ -160,18 +160,17 @@ section("Press needs a multiple attack penalty");
   assertIncludes("the Strike taken out of the count: warned again", use("Certain Strike", ["Press"]), "Press needs");
 }
 
-section("No attacks after a finisher");
+section("No attacks after a finisher (its own Strike is part of it)");
 {
   setup();
   const key = startTurn();
+  // A Strike before the finisher doesn't count
+  record.data.turnAttacks = { turnKey: key, attacks: [logged("strike", { id: `${Date.now() - 60000}-0` })] };
   use("Confident Finisher", ["Finisher", "Swashbuckler"]);
-  assertIncludes("an attack-trait action after it: a warning", use("Tumble Through Strike", ["Attack"]), "**No attacks after a finisher:** Confident Finisher was used this turn.");
-  assertIncludes("a second finisher too", use("Bleeding Finisher", ["Finisher"]), "No attacks after a finisher");
-  assertNotIncludes("other actions are fine", use("Stride", ["Move"]), "finisher");
-  const log = ctx.getOpenTurnActionLog(record, token);
-  assert("the warning attack rolls get", ctx.getAfterFinisherWarning(log), "**No attacks after a finisher:** Confident Finisher was used this turn.");
+  assertNotIncludes("an attack-trait action right after it: part of it, no warning", use("Tumble Through Strike", ["Attack"]), "No attacks after a finisher");
 
-  // A Strike's card shows it (attack.js prints attackNumberHint)
+  // The finisher's own Strike: no warning (Sean's review: every finisher
+  // warned on its own Strike)
   const saved = { getTargets: ctx.api.getTargets, promptRoll: ctx.api.promptRoll };
   let metadata = {};
   ctx.api.getTargets = () => [];
@@ -179,8 +178,20 @@ section("No attacks after a finisher");
   const rapier = { _id: "rapier", name: "Rapier", recordType: "items", data: { type: "weapon", carried: "equipped", itemCategory: "martial", group: "sword", traits: ["Deadly d8", "Disarm", "Finesse"], usage: "held-in-one-hand", range: 0, damage: { dice: 1, die: "d6", damageType: "piercing" } } };
   record.data.inventory = [rapier];
   ctx.performAttackRoll(record, rapier, "data.inventory.0", 1);
+  assertNotIncludes("the first Strike after the finisher: no warning", metadata.attackNumberHint || "", "No attacks after a finisher");
+
+  // Once its Strike is logged, the next attack is warned
+  record.data.turnAttacks.attacks.push(logged("strike", { id: `${Date.now() + 1000}-1` }));
+  ctx.performAttackRoll(record, rapier, "data.inventory.0", 1);
   Object.assign(ctx.api, saved);
-  assertIncludes("a Strike after it: the card's hint", metadata.attackNumberHint || "", "No attacks after a finisher");
+  assertIncludes("the second Strike: the card's hint", metadata.attackNumberHint || "", "**No attacks after a finisher:** Confident Finisher was used this turn.");
+  assertIncludes("an attack-trait action now: a warning", use("Tumble Through Strike", ["Attack"]), "**No attacks after a finisher:** Confident Finisher was used this turn.");
+  assertIncludes("a second finisher too", use("Bleeding Finisher", ["Finisher"]), "No attacks after a finisher");
+  assertNotIncludes("other actions are fine", use("Stride", ["Move"]), "finisher");
+  const log = ctx.getOpenTurnActionLog(record, token);
+  const attackLog = ctx.getOpenTurnAttackLog(record, token);
+  assert("the warning attack rolls get", ctx.getAfterFinisherWarning(log, attackLog), "**No attacks after a finisher:** Confident Finisher was used this turn.");
+  assert("without the attack log: none", ctx.getAfterFinisherWarning(log, null), "");
 
   // A maneuver: skill.js prints it
   ctx.__state.messages = [];
@@ -200,6 +211,19 @@ section("Hex and composition: one cast a turn");
   assert("the cast is logged as a spell", record.data.turnActions.uses.map((u) => [u.name, u.kind, u.traits]), [["Evil Eye", "spell", ["hex"]]]);
   assertIncludes("a second hex", cast("Clinging Ice", ["Hex", "Witch"]), "**One hex per turn:** Evil Eye was already used this turn.");
   assertIncludes("a second composition", (cast("Courageous Anthem", ["Composition", "Bard"]), cast("Rallying Anthem", ["Composition", "Bard"])), "**One composition per turn:** Courageous Anthem was already used this turn.");
+}
+
+section("A variant cast from the spell's card isn't a second cast");
+{
+  setup();
+  startTurn();
+  cast("Evil Eye", ["Hex", "Witch"]);
+  ctx.__state.messages = [];
+  const overlay = spell("Evil Eye (sustained)", ["Hex", "Witch"]);
+  record.data.spells[0].data.cantrips[0].data.overlays = [overlay];
+  ctx.castSpell(record, overlay, "data.spells.0.data.cantrips.0.data.overlays.0", true);
+  assertNotIncludes("the overlay: no hex warning", ctx.__state.messages.join("\n"), "One hex");
+  assert("and only the first cast is logged", record.data.turnActions.uses.map((u) => u.name), ["Evil Eye"]);
 }
 
 section("A new composition ends the one before");

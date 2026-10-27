@@ -9653,7 +9653,12 @@ function performSkillAction(record, skill, actionName, isMacro = false, options 
     ...(turnAttack ? { turnAttack } : {}),
     // After a finisher this turn, no attack is allowed (action-limits.js)
     ...(action.attack
-      ? { attackNumberHint: getAfterFinisherWarning(getOpenTurnActionLog(record, attackerToken)) }
+      ? {
+          attackNumberHint: getAfterFinisherWarning(
+            getOpenTurnActionLog(record, attackerToken),
+            getOpenTurnAttackLog(record, attackerToken),
+          ),
+        }
       : {}),
     dcName: options.escape?.dcName || (action.defense && target ? `${capitalize(action.defense)} DC` : undefined),
     // Notes on the target for being forced to move (Rock Dwarf), shown with
@@ -11915,7 +11920,7 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber) {
   const attackNumberMismatch = !!getAttackNumberHint(attackNumber, loggedAttackNumber);
   const attackNumberHint = [
     getAttackNumberHint(attackNumber, loggedAttackNumber),
-    getAfterFinisherWarning(getOpenTurnActionLog(record, attackerToken)),
+    getAfterFinisherWarning(getOpenTurnActionLog(record, attackerToken), turnAttackLog),
   ]
     .filter(Boolean)
     .join("\n\n");

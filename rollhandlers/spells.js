@@ -1192,7 +1192,10 @@ api.getRecord('${record.recordType}', '${record._id}', (record) => {
   const getTurnAttack = (targetId) =>
     getTurnAttackMetadata(ourToken, record, { kind: "spell", name: ${JSON.stringify(spellName)}, targetId });
   // After a finisher this turn, no attack is allowed (action-limits.js)
-  const attackNumberHint = getAfterFinisherWarning(getOpenTurnActionLog(record, ourToken));
+  const attackNumberHint = getAfterFinisherWarning(
+    getOpenTurnActionLog(record, ourToken),
+    getOpenTurnAttackLog(record, ourToken),
+  );
 
   // Build criticalOnlyDice array to track splash damage (so it doesn't get doubled)
   const splashDamageValue = ${
@@ -1726,9 +1729,13 @@ api.getRecord('${record.recordType}', '${record._id}', (updatedRecord) => {
 
   // The limits its traits set on the caster's turn (hex, composition), the
   // spellshape used for it, and the cast goes in the turn's action log
-  // (action-limits.js)
-  const limits = checkActionLimits(record, ourToken, spellName, traits, "spell");
-  const limitLines = limits.lines.map((line) => `${line}\n`).join("");
+  // (action-limits.js). An overlay is a variant of the spell just cast, from
+  // its card, not a second cast.
+  const limitLines = isOverlay
+    ? ""
+    : checkActionLimits(record, ourToken, spellName, traits, "spell")
+        .lines.map((line) => `${line}\n`)
+        .join("");
 
   const message = `
   #### ${portrait}${spellName}${actionIcon ? "&nbsp;" : ""}${actionIcon}

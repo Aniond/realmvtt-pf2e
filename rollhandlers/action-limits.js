@@ -7,7 +7,7 @@
 //     per turn (a creature's own turn comes once a round, so its turn's log
 //     covers both);
 //   - finisher: no attack-trait actions for the rest of the turn, including
-//     Strikes, spell attacks and maneuvers;
+//     Strikes, spell attacks and maneuvers, after the finisher's own Strike;
 //   - press: only on the creature's turn, with a multiple attack penalty (an
 //     attack already this turn);
 //   - spellshape (legacy: metamagic): the next spell's card says it applies,
@@ -78,12 +78,15 @@ function findTurnUse(log, trait) {
 }
 
 // The card's line after a finisher this turn, for an attack-trait use or an
-// attack roll, or ""
-function getAfterFinisherWarning(log) {
+// attack roll, or "". The finisher's own Strike (Confident Finisher: "Make a
+// Strike") is part of it, so only an attack once one has been logged after
+// the finisher is warned (Dual Finisher's second Strike is too).
+function getAfterFinisherWarning(log, attackLog) {
   const finisher = findTurnUse(log, "finisher");
-  return finisher
-    ? `**No attacks after a finisher:** ${finisher.name} was used this turn.`
-    : "";
+  if (!finisher) return "";
+  const time = getLogEntryTime(finisher);
+  const attacked = (attackLog?.attacks || []).some((attack) => getLogEntryTime(attack) >= time);
+  return attacked ? `**No attacks after a finisher:** ${finisher.name} was used this turn.` : "";
 }
 
 // The card's lines for the limits a use breaks, from the creature's logs
@@ -114,7 +117,7 @@ function getActionLimitWarnings(use, log, attackLog, otherTurn = false) {
     }
   });
   if (hasLimitTrait(use, "attack") || hasLimitTrait(use, "finisher")) {
-    const warning = getAfterFinisherWarning(log);
+    const warning = getAfterFinisherWarning(log, attackLog);
     if (warning) warnings.push(warning);
   }
   return warnings;
