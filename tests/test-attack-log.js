@@ -196,9 +196,6 @@ section("Counting this turn's attacks");
   assert("3rd: -10", ctx.getTurnMapModifiers(3)[0].value, -10);
   assert("off its turn: none", ctx.getTurnMapModifiers(null), []);
 
-  assert("hint: button 1 on the 2nd attack", ctx.getAttackNumberHint(1, 2), "This is the 2nd attack this turn, rolled as the 1st.");
-  assert("hint: none when they match", ctx.getAttackNumberHint(2, 2), "");
-  assert("hint: none off its turn", ctx.getAttackNumberHint(1, null), "");
   variables = {};
 }
 
@@ -220,24 +217,25 @@ section("Logging an attack's result");
   assert("no DC: degree unknown", ctx.getLoggedTurnAttackValues(first, null)["data.turnAttacks"].attacks[0].degree, null);
   assert("nothing to log: nothing written", ctx.getLoggedTurnAttackValues(null, 1), null);
 
-  // attack.js logs the result and shows the hint
+  // attack.js logs the result
   sets = [];
   const card = runHandler("attack.js", {
     roll: {
       dice: [{ type: 20, value: 15 }],
       total: 25,
-      metadata: { dc: 18, attack: "Longsword", traits: [], damage: "2d8 slashing", turnAttack: first, attackNumberHint: "This is the 2nd attack this turn, rolled as the 1st." },
+      metadata: { dc: 18, attack: "Longsword", traits: [], damage: "2d8 slashing", turnAttack: first },
     },
   });
   assert("attack.js writes the log to the token", sets.map(([id, type, v]) => [id, type, v["data.turnAttacks"].attacks.map((a) => a.degree)]), [["tok", "characters", [1]]]);
-  assertIncludes("and the card says which attack it was", card, "This is the 2nd attack this turn, rolled as the 1st.");
+  assertNotIncludes("the card doesn't compare the button with the count", card, "attack this turn");
+  assertNotIncludes("and has no Remove From Attack Count button", card, "Remove_From_Attack_Count");
   sets = [];
   runHandler("attack.js", { roll: { dice: [{ type: 20, value: 15 }], total: 25, metadata: { dc: 18, attack: "Longsword", traits: [], damage: "2d8 slashing" } } });
   assert("off its turn: attack.js writes nothing", sets, []);
   variables = {};
 }
 
-section("Strikes: the buttons, the hint, the log");
+section("Strikes: the buttons and the log");
 {
   const sword = weapon("Longsword");
   const record = pc([sword]);
@@ -258,11 +256,9 @@ section("Strikes: the buttons, the hint, the log");
   record.data.turnAttacks = { turnKey: key, attacks: [logged("strike", { weaponId: "w-Longsword" })] };
   roll = strike(record, sword, { attackNumber: 1 });
   assert("2nd attack, button 1: the button wins", named(roll.modifiers, "Mutliple Attack Penalty"), []);
-  assert("and the card says so", roll.metadata.attackNumberHint, "This is the 2nd attack this turn, rolled as the 1st.");
-  assert("with the Remove button", roll.metadata.attackNumberMismatch, true);
+  assert("and no hint: the count can lag behind a quick roll", roll.metadata.attackNumberHint, "");
   roll = strike(record, sword, { attackNumber: 2 });
   assert("button 2: -5, no hint", [named(roll.modifiers, "Mutliple Attack Penalty").map((m) => m.value), roll.metadata.attackNumberHint], [[-5], ""]);
-  assert("and no Remove button", roll.metadata.attackNumberMismatch, false);
   roll = strike(record, sword, {});
   assert("no button (Elemental Blast): the log sets -5", named(roll.modifiers, "Mutliple Attack Penalty").map((m) => m.value), [-5]);
   roll = strike(record, sword, { targets: [target("orc")], attackNumber: 2 });
@@ -394,64 +390,6 @@ section("Attack-trait skill actions take MAP from the log");
   sets = [];
   runHandler("skill.js", { roll: { dice: [{ type: 20, value: 12 }], total: 20, metadata: { dc: 17, rollName: "Athletics: Climb" } } });
   assert("other skill checks log nothing", sets, []);
-  variables = {};
-}
-
-section("A roll made by mistake can be taken back out");
-{
-  const record = pc();
-  const token = pcToken(record);
-  const key = startTurn(token);
-  const mistake = ctx.getTurnAttackMetadata(token, record, { kind: "strike", name: "Longsword", weaponId: "w1" });
-  const button = ctx.getUncountAttackButton(mistake);
-  assertIncludes("the card gets a button", button, "```Remove_From_Attack_Count");
-  assert("no button off its turn", ctx.getUncountAttackButton(null), "");
-
-  // attack.js puts it only on a Strike card with the hint (Sean: on every
-  // card it was confusing)
-  const card = runHandler("attack.js", { roll: { dice: [{ type: 20, value: 15 }], total: 25, metadata: { dc: 18, attack: "Longsword", traits: [], damage: "2d8 slashing", turnAttack: mistake, attackNumberMismatch: true, attackNumberHint: "This is the 2nd attack this turn, rolled as the 1st." } } });
-  assertIncludes("on a Strike card with the hint", card, "Remove_From_Attack_Count");
-  const matching = runHandler("attack.js", { roll: { dice: [{ type: 20, value: 15 }], total: 25, metadata: { dc: 18, attack: "Longsword", traits: [], damage: "2d8 slashing", turnAttack: mistake, attackNumberMismatch: false } } });
-  assertNotIncludes("not when the button matches the count", matching, "Remove_From_Attack_Count");
-  const offTurn = runHandler("attack.js", { roll: { dice: [{ type: 20, value: 15 }], total: 25, metadata: { dc: 18, attack: "Longsword", traits: [], damage: "2d8 slashing", attackNumberMismatch: true } } });
-  assertNotIncludes("not off its turn", offTurn, "Remove_From_Attack_Count");
-  const trip = ctx.getTurnAttackMetadata(token, record, { kind: "maneuver", name: "Trip" });
-  const skillCard = runHandler("skill.js", { roll: { dice: [{ type: 20, value: 12 }], total: 20, metadata: { dc: 17, rollName: "Athletics: Trip", turnAttack: trip } } });
-  assertNotIncludes("not on a maneuver card", skillCard, "Remove_From_Attack_Count");
-
-  // The attack is logged; clicking the button marks it, without reading the token
-  record.data.turnAttacks = ctx.getLoggedTurnAttackValues(mistake, 1)["data.turnAttacks"];
-  assert("logged: the next is the 2nd", ctx.getNextAttackNumber(record, token), 2);
-  sets = [];
-  const notices = [];
-  const savedNotify = ctx.api.showNotification;
-  ctx.api.showNotification = (...args) => notices.push(args);
-  const macro = button.split("\n").slice(1, -1).join("\n");
-  new vm.Script(macro, { filename: "button" }).runInContext(ctx);
-  ctx.api.showNotification = savedNotify;
-  assert("the button writes the skip to the token", sets, [["tok", "characters", { [`data.turnAttackSkips.${mistake.entry.id}`]: key }]]);
-  assert("and says so", notices.length, 1);
-  record.data.turnAttackSkips = { [mistake.entry.id]: key };
-  assert("no longer counted: the next is the 1st again", ctx.getNextAttackNumber(record, token), 1);
-  assert("its MAP is gone", ctx.getTurnMapModifiers(ctx.getNextAttackNumber(record, token)), []);
-
-  // A result that comes in later from a copy of the log made before the
-  // click still leaves it out
-  const next = ctx.getTurnAttackMetadata(token, record, { kind: "strike", name: "Longsword", weaponId: "w1" });
-  const stale = { ...next, log: { turnKey: key, attacks: [{ ...mistake.entry, degree: 1 }] } };
-  record.data.turnAttacks = ctx.getLoggedTurnAttackValues(stale, 1)["data.turnAttacks"];
-  assert("an older copy written back: still left out", ctx.getNextAttackNumber(record, token), 2);
-  assert("only the real attack counts", ctx.getOpenTurnAttackLog(record, token).attacks.map((a) => a.id), [next.entry.id]);
-
-  // Forceful no longer sees it either
-  const hammer = { ...weapon("Warhammer", ["forceful"]), _id: "w1" };
-  record.data.turnAttacks = { turnKey: key, attacks: [{ ...mistake.entry, degree: 1 }] };
-  const skips = record.data.turnAttackSkips;
-  delete record.data.turnAttackSkips;
-  assert("forceful: counted, it adds 1", ctx.getMomentumTraitModifiers(ctx.getOpenTurnAttackLog(record, token), hammer, { damageDice: 1 }).damage.map((m) => m.value), [1]);
-  record.data.turnAttackSkips = skips;
-  assert("forceful: the removed attack doesn't count", ctx.getMomentumTraitModifiers(ctx.getOpenTurnAttackLog(record, token), hammer, { damageDice: 1 }).damage, []);
-  delete record.data.turnAttackSkips;
   variables = {};
 }
 

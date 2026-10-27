@@ -11908,22 +11908,16 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber) {
   // Feats and effects can change the die size or traits for this Strike
   weapon = getAlteredWeapon(record, weapon);
   // The creature's attacks this turn (attack-log.js). The button clicked
-  // sets the multiple attack penalty, and the card says when it isn't the
-  // attack the log counts; without a button, the log sets it.
+  // sets the multiple attack penalty; without a button, the log sets it.
   const attackerToken = api.getToken();
   const turnAttackLog = getOpenTurnAttackLog(record, attackerToken);
   const loggedAttackNumber = getNextAttackNumber(record, attackerToken);
-  // and after a finisher this turn, that no attack is allowed
+  // After a finisher this turn, the card says no attack is allowed
   // (action-limits.js)
-  // The Remove From Attack Count button goes only on a card with the hint,
-  // where the count and the button clicked disagree (Sean's review of #20)
-  const attackNumberMismatch = !!getAttackNumberHint(attackNumber, loggedAttackNumber);
-  const attackNumberHint = [
-    getAttackNumberHint(attackNumber, loggedAttackNumber),
-    getAfterFinisherWarning(getOpenTurnActionLog(record, attackerToken), turnAttackLog),
-  ]
-    .filter(Boolean)
-    .join("\n\n");
+  const attackNumberHint = getAfterFinisherWarning(
+    getOpenTurnActionLog(record, attackerToken),
+    turnAttackLog,
+  );
   if (!attackNumber) {
     attackNumber = loggedAttackNumber || 1;
   }
@@ -13075,7 +13069,6 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber) {
         targetId: target?.token?._id,
         turnAttack: getTurnAttack(target?.token?._id),
         attackNumberHint,
-        attackNumberMismatch,
         // Fortification on the target's armor (property-runes.js)
         fortification: getFortification(target?.token),
         autoCritical: autoCritical,
@@ -13169,7 +13162,6 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber) {
           : ourToken?.record?.name,
       turnAttack: getTurnAttack(null),
       attackNumberHint,
-      attackNumberMismatch,
       damage: damage,
       persistentDamage: persistentDamage,
       criticalPersistentDamage: criticalPersistentDamage,
