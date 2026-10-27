@@ -6,7 +6,9 @@
 //   - spell attacks and attack-trait skill actions (Grapple, Trip...) take
 //     the penalty from the log, ticked in the roll prompt, where it can be
 //     unticked;
-//   - forceful, sweep, twin and backswing apply from the earlier attacks.
+//   - forceful, sweep, twin and backswing apply from the earlier attacks;
+//   - each logged attack's card has a button that takes it back out of the
+//     log, for a roll made by mistake. Nothing here is enforced.
 // onTurnStart records whose turn it is, with a key of its own, in a campaign
 // variable that every client can read at once. A log counts only on its own
 // creature's turn, so a reaction on another creature's turn (Reactive
@@ -62,7 +64,24 @@ function getOpenTurnAttackLog(...creatures) {
   const log = creatures
     .map((creature) => creature?.data?.turnAttacks || creature?.record?.data?.turnAttacks)
     .find((entry) => entry && typeof entry === "object" && entry.turnKey === turn.key);
-  return { turnKey: turn.key, attacks: Array.isArray(log?.attacks) ? log.attacks : [] };
+  const uncounted = getUncountedAttackIds(...creatures);
+  const attacks = (Array.isArray(log?.attacks) ? log.attacks : []).filter(
+    (attack) => !uncounted.has(attack?.id),
+  );
+  return { turnKey: turn.key, attacks };
+}
+
+// The attacks taken back out of the log with the card's button (a roll made
+// by mistake): data.turnAttackSkips, entry id -> turn key
+function getUncountedAttackIds(...creatures) {
+  const ids = new Set();
+  creatures.forEach((creature) => {
+    const skips = creature?.data?.turnAttackSkips || creature?.record?.data?.turnAttackSkips;
+    if (skips && typeof skips === "object") {
+      Object.keys(skips).forEach((id) => ids.add(id));
+    }
+  });
+  return ids;
 }
 
 // The attack this is on the creature's turn (1, 2 or 3 for the third and
@@ -136,6 +155,20 @@ function logTurnAttack(turnAttack, degree = null) {
   const values = getLoggedTurnAttackValues(turnAttack, degree);
   if (!values) return;
   api.setValuesOnTokenById(turnAttack.tokenId, turnAttack.recordType, values);
+}
+
+// The card's button that takes the attack back out of the log, for a roll
+// made by mistake, or "". It only marks the entry's id, so it never has to
+// read the token, and a log written later from an older copy still leaves the
+// attack out.
+function getUncountAttackButton(turnAttack) {
+  const id = turnAttack?.entry?.id;
+  if (!id || !turnAttack?.tokenId || !turnAttack?.log?.turnKey) return "";
+  const values = JSON.stringify({ [`data.turnAttackSkips.${id}`]: turnAttack.log.turnKey });
+  return `\`\`\`Remove_From_Attack_Count
+api.setValuesOnTokenById(${JSON.stringify(turnAttack.tokenId)}, ${JSON.stringify(turnAttack.recordType)}, ${values});
+api.showNotification("This attack no longer counts toward the multiple attack penalty this turn.", "yellow", "Attack Log");
+\`\`\``;
 }
 
 // The modifiers forceful, sweep, twin and backswing give a Strike from the

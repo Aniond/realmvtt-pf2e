@@ -369,4 +369,59 @@ section("Attack-trait skill actions take MAP from the log");
   variables = {};
 }
 
+section("A roll made by mistake can be taken back out");
+{
+  const record = pc();
+  const token = pcToken(record);
+  const key = startTurn(token);
+  const mistake = ctx.getTurnAttackMetadata(token, record, { kind: "strike", name: "Longsword", weaponId: "w1" });
+  const button = ctx.getUncountAttackButton(mistake);
+  assertIncludes("the card gets a button", button, "```Remove_From_Attack_Count");
+  assert("no button off its turn", ctx.getUncountAttackButton(null), "");
+
+  // attack.js and skill.js put it on the card, only for logged attacks
+  const card = runHandler("attack.js", { roll: { dice: [{ type: 20, value: 15 }], total: 25, metadata: { dc: 18, attack: "Longsword", traits: [], damage: "2d8 slashing", turnAttack: mistake } } });
+  assertIncludes("on the Strike card", card, "Remove_From_Attack_Count");
+  const offTurn = runHandler("attack.js", { roll: { dice: [{ type: 20, value: 15 }], total: 25, metadata: { dc: 18, attack: "Longsword", traits: [], damage: "2d8 slashing" } } });
+  assertNotIncludes("not off its turn", offTurn, "Remove_From_Attack_Count");
+  const trip = ctx.getTurnAttackMetadata(token, record, { kind: "maneuver", name: "Trip" });
+  const skillCard = runHandler("skill.js", { roll: { dice: [{ type: 20, value: 12 }], total: 20, metadata: { dc: 17, rollName: "Athletics: Trip", turnAttack: trip } } });
+  assertIncludes("on the maneuver card", skillCard, "Remove_From_Attack_Count");
+
+  // The attack is logged; clicking the button marks it, without reading the token
+  record.data.turnAttacks = ctx.getLoggedTurnAttackValues(mistake, 1)["data.turnAttacks"];
+  assert("logged: the next is the 2nd", ctx.getNextAttackNumber(record, token), 2);
+  sets = [];
+  const notices = [];
+  const savedNotify = ctx.api.showNotification;
+  ctx.api.showNotification = (...args) => notices.push(args);
+  const macro = button.split("\n").slice(1, -1).join("\n");
+  new vm.Script(macro, { filename: "button" }).runInContext(ctx);
+  ctx.api.showNotification = savedNotify;
+  assert("the button writes the skip to the token", sets, [["tok", "characters", { [`data.turnAttackSkips.${mistake.entry.id}`]: key }]]);
+  assert("and says so", notices.length, 1);
+  record.data.turnAttackSkips = { [mistake.entry.id]: key };
+  assert("no longer counted: the next is the 1st again", ctx.getNextAttackNumber(record, token), 1);
+  assert("its MAP is gone", ctx.getTurnMapModifiers(ctx.getNextAttackNumber(record, token)), []);
+
+  // A result that comes in later from a copy of the log made before the
+  // click still leaves it out
+  const next = ctx.getTurnAttackMetadata(token, record, { kind: "strike", name: "Longsword", weaponId: "w1" });
+  const stale = { ...next, log: { turnKey: key, attacks: [{ ...mistake.entry, degree: 1 }] } };
+  record.data.turnAttacks = ctx.getLoggedTurnAttackValues(stale, 1)["data.turnAttacks"];
+  assert("an older copy written back: still left out", ctx.getNextAttackNumber(record, token), 2);
+  assert("only the real attack counts", ctx.getOpenTurnAttackLog(record, token).attacks.map((a) => a.id), [next.entry.id]);
+
+  // Forceful no longer sees it either
+  const hammer = { ...weapon("Warhammer", ["forceful"]), _id: "w1" };
+  record.data.turnAttacks = { turnKey: key, attacks: [{ ...mistake.entry, degree: 1 }] };
+  const skips = record.data.turnAttackSkips;
+  delete record.data.turnAttackSkips;
+  assert("forceful: counted, it adds 1", ctx.getMomentumTraitModifiers(ctx.getOpenTurnAttackLog(record, token), hammer, { damageDice: 1 }).damage.map((m) => m.value), [1]);
+  record.data.turnAttackSkips = skips;
+  assert("forceful: the removed attack doesn't count", ctx.getMomentumTraitModifiers(ctx.getOpenTurnAttackLog(record, token), hammer, { damageDice: 1 }).damage, []);
+  delete record.data.turnAttackSkips;
+  variables = {};
+}
+
 process.exitCode = summary() > 0 ? 1 : 0;
