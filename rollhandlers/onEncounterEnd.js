@@ -202,5 +202,7 @@ getEncounterTokens(data?.tokens)
     }
   });
 
-// The encounter is over: encounter predicates no longer hold
+// The encounter is over: encounter predicates no longer hold, and no one's
+// turn is being taken (attack-log.js)
 setEncounterState([], 0);
+setCurrentTurn(null);

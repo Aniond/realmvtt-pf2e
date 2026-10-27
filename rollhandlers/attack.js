@@ -236,6 +236,20 @@ if (fortificationText) {
 }
 message += getRollNotesText(data?.roll?.metadata?.notes, noteDegree);
 
+// The attack goes in the creature's log for this turn, and the card says when
+// the button clicked isn't the attack the log counts (attack-log.js)
+logTurnAttack(data?.roll?.metadata?.turnAttack, noteDegree);
+if (data?.roll?.metadata?.attackNumberHint) {
+  message += `\n\n${data.roll.metadata.attackNumberHint}`;
+}
+// A roll made by mistake can be taken back out of the log
+{
+  const uncountButton = getUncountAttackButton(data?.roll?.metadata?.turnAttack);
+  if (uncountButton) {
+    message += `\n${uncountButton}`;
+  }
+}
+
 // Only add "Attack" tag if there is no "Attack" trait
 const hasAttackTrait = traits.some(
   (trait) => trait.toLowerCase().trim() === "attack"

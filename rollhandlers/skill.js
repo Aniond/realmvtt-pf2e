@@ -250,6 +250,17 @@ if (targets.length === 0) {
 // Notes from the creature's features for this result (rollNote)
 message += getRollNotesText(data?.roll?.metadata?.notes, noteDegree);
 
+// An attack-trait action (Grapple, Trip...) goes in the creature's log for
+// this turn (attack-log.js)
+logTurnAttack(data?.roll?.metadata?.turnAttack, noteDegree);
+// A roll made by mistake can be taken back out of the log
+{
+  const uncountButton = getUncountAttackButton(data?.roll?.metadata?.turnAttack);
+  if (uncountButton) {
+    message += `\n${uncountButton}`;
+  }
+}
+
 api.sendMessage(
   message,
   roll,
