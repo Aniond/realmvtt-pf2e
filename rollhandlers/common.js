@@ -9624,12 +9624,23 @@ function performSkillAction(record, skill, actionName, isMacro = false, options 
   const dc = action.defense && target
     ? getDefenseDCForToken(target, action.defense, { action: { name: action.name }, escape: options.escape })
     : null;
+  // The penalty for the attack the creature's log counts this turn is ticked
+  // (attack-log.js); without a log, both are left to the player
+  const attackerToken = record.recordId ? record : api.getToken();
+  const attackNumber = action.attack ? getNextAttackNumber(record, attackerToken) : null;
   const extraModifiers = action.attack
     ? [
-        { name: "Multiple Attack Penalty (2nd attack)", type: "", value: -5, active: false, isPenalty: true },
-        { name: "Multiple Attack Penalty (3rd attack)", type: "", value: -10, active: false, isPenalty: true },
+        { name: "Multiple Attack Penalty (2nd attack)", type: "", value: -5, active: attackNumber === 2, isPenalty: true },
+        { name: "Multiple Attack Penalty (3rd attack)", type: "", value: -10, active: attackNumber === 3, isPenalty: true },
       ]
     : [];
+  const turnAttack = action.attack
+    ? getTurnAttackMetadata(attackerToken, record, {
+        kind: "maneuver",
+        name: action.name,
+        targetId: target?._id,
+      })
+    : null;
   // A wielded weapon with the action's trait adds its item bonus (Trip with
   // a trip weapon), and against a target the result card shows what the
   // outcome does (maneuvers.js)
@@ -9639,6 +9650,7 @@ function performSkillAction(record, skill, actionName, isMacro = false, options 
     action: action.name,
     extraModifiers,
     ...(maneuver ? { maneuver } : {}),
+    ...(turnAttack ? { turnAttack } : {}),
     dcName: options.escape?.dcName || (action.defense && target ? `${capitalize(action.defense)} DC` : undefined),
     // Notes on the target for being forced to move (Rock Dwarf), shown with
     // a Shove or Reposition result
@@ -11872,9 +11884,19 @@ function hasArmorSpecializationEffect(record, item) {
   return false;
 }
 
-function performAttackRoll(record, weapon, weaponDataPath, attackNumber = 1) {
+function performAttackRoll(record, weapon, weaponDataPath, attackNumber) {
   // Feats and effects can change the die size or traits for this Strike
   weapon = getAlteredWeapon(record, weapon);
+  // The creature's attacks this turn (attack-log.js). The button clicked
+  // sets the multiple attack penalty, and the card says when it isn't the
+  // attack the log counts; without a button, the log sets it.
+  const attackerToken = api.getToken();
+  const turnAttackLog = getOpenTurnAttackLog(record, attackerToken);
+  const loggedAttackNumber = getNextAttackNumber(record, attackerToken);
+  const attackNumberHint = getAttackNumberHint(attackNumber, loggedAttackNumber);
+  if (!attackNumber) {
+    attackNumber = loggedAttackNumber || 1;
+  }
   const valuesToSet = {};
 
   // Check if this is an NPC attack
@@ -12509,8 +12531,8 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber = 1) {
   // -2 circumstance penalty, and circumstance penalties don't stack, so it adds
   // only the part of -2 that the attack's worst circumstance penalty doesn't
   // already cover.
-  const getRollModifiers = () => {
-    const rollModifiers = keepStrongestPerType(modifiers);
+  const getRollModifiers = (targetModifiers = []) => {
+    const rollModifiers = keepStrongestPerType([...modifiers, ...targetModifiers]);
     if (hasNonlethalTrait) {
       const worstCircumstancePenalty = Math.min(
         0,
@@ -12577,6 +12599,32 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber = 1) {
       active: true,
     });
   }
+
+  // Forceful, twin and backswing from the earlier attacks this turn
+  // (attack-log.js); sweep depends on the target, so it is added per target
+  const momentum = isSpell
+    ? { attack: [], damage: [] }
+    : getMomentumTraitModifiers(turnAttackLog, weapon, {
+        damageDice: turnAttackLog
+          ? countWeaponDamageDice(weapon, getStrikingRuneForRecord(record, weapon))
+          : 0,
+      });
+  modifiers.push(...momentum.attack);
+  const getSweepModifiers = (targetId) =>
+    isSpell
+      ? []
+      : getMomentumTraitModifiers(turnAttackLog, weapon, { targetId }).attack.filter(
+          (mod) => mod.name === "Sweep",
+        );
+  // What the result handler logs for this attack
+  const getTurnAttack = (targetId) =>
+    getTurnAttackMetadata(attackerToken, record, {
+      kind: isSpell ? "spell" : "strike",
+      name: weapon.name,
+      weaponId: weapon._id,
+      baseItem: getBaseItemSlug(weapon),
+      targetId,
+    });
 
   if (Object.keys(valuesToSet).length > 0) {
     api.setValues(valuesToSet);
@@ -12671,6 +12719,7 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber = 1) {
   // Only the strongest damage bonus and penalty of each type apply across the
   // lookups (dice always stack). This must come before the map below, which
   // turns type into the damage type.
+  damageModifiers.push(...momentum.damage);
   damageModifiers = keepStrongestPerType(damageModifiers);
   damageModifiers.push(...criticalOnlyDamageModifiers);
 
@@ -12994,6 +13043,8 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber = 1) {
             ? ourToken?.record?.unidentifiedName
             : ourToken?.record?.name,
         targetId: target?.token?._id,
+        turnAttack: getTurnAttack(target?.token?._id),
+        attackNumberHint,
         // Fortification on the target's armor (property-runes.js)
         fortification: getFortification(target?.token),
         autoCritical: autoCritical,
@@ -13038,7 +13089,7 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber = 1) {
       api.promptRoll(
         `Attack with ${weapon.name}`,
         diceRoll,
-        getRollModifiers(),
+        getRollModifiers(getSweepModifiers(target?.token?._id)),
         metadata,
         "attack",
       );
@@ -13085,6 +13136,8 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber = 1) {
         ourToken?.identified === false
           ? ourToken?.record?.unidentifiedName
           : ourToken?.record?.name,
+      turnAttack: getTurnAttack(null),
+      attackNumberHint,
       damage: damage,
       persistentDamage: persistentDamage,
       criticalPersistentDamage: criticalPersistentDamage,
@@ -16518,7 +16571,8 @@ function elementalBlast() {
               syntheticWeapon.data.extraDamageModifiers = extraDamageModifiers;
 
               // Perform the attack roll using the existing function
-              performAttackRoll(record, syntheticWeapon, null, 1);
+              // No attack number: the attack log sets the multiple attack penalty
+              performAttackRoll(record, syntheticWeapon, null);
             },
             "Roll Attack",
             "Cancel",

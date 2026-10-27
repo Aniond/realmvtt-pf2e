@@ -5376,6 +5376,9 @@
         },
         "Maneuvers": {
           "file": "rollhandlers/maneuvers.js"
+        },
+        "AttackLog": {
+          "file": "rollhandlers/attack-log.js"
         }
       },
       "defaultDice": "default",

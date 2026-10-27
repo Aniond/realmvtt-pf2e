@@ -1183,9 +1183,15 @@ api.getRecord('${record.recordType}', '${record._id}', (record) => {
       ["spell-attack-roll", "attack-roll", "${spellCastingEntry?.data?.attribute || "int"}"],
       undefined,
       { spell }
-    )
+    ),
+    // The multiple attack penalty from the caster's attacks this turn
+    // (attack-log.js), ticked; it can be unticked in the prompt
+    ...getTurnMapModifiers(getNextAttackNumber(record, ourToken))
   ];
-  
+  // What the result handler logs for this attack
+  const getTurnAttack = (targetId) =>
+    getTurnAttackMetadata(ourToken, record, { kind: "spell", name: ${JSON.stringify(spellName)}, targetId });
+
   // Build criticalOnlyDice array to track splash damage (so it doesn't get doubled)
   const splashDamageValue = ${
     typeof spellDamage.splashDamageValue === "number"
@@ -1240,6 +1246,7 @@ api.getRecord('${record.recordType}', '${record._id}', (record) => {
       splashDamageType: splashDamageType,
       tokenId: ourToken?._id,
       tokenName: tokenName,
+      turnAttack: getTurnAttack(null),
       damageModifiers: damageModifiers,
       traits: ${JSON.stringify(traits)},
       animation: ${JSON.stringify(animation)},
@@ -1320,6 +1327,7 @@ api.getRecord('${record.recordType}', '${record._id}', (record) => {
         tokenId: ourToken?._id,
         tokenName: tokenName,
         targetId: targetToken?._id,
+        turnAttack: getTurnAttack(targetToken?._id),
         // Fortification on the target's armor (property-runes.js)
         fortification: ${isAC} ? getFortification(targetToken) : null,
         damage: "${spellDamage.damageString}",
