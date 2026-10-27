@@ -11910,6 +11910,9 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber) {
   const loggedAttackNumber = getNextAttackNumber(record, attackerToken);
   // and after a finisher this turn, that no attack is allowed
   // (action-limits.js)
+  // The Remove From Attack Count button goes only on a card with the hint,
+  // where the count and the button clicked disagree (Sean's review of #20)
+  const attackNumberMismatch = !!getAttackNumberHint(attackNumber, loggedAttackNumber);
   const attackNumberHint = [
     getAttackNumberHint(attackNumber, loggedAttackNumber),
     getAfterFinisherWarning(getOpenTurnActionLog(record, attackerToken)),
@@ -13067,6 +13070,7 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber) {
         targetId: target?.token?._id,
         turnAttack: getTurnAttack(target?.token?._id),
         attackNumberHint,
+        attackNumberMismatch,
         // Fortification on the target's armor (property-runes.js)
         fortification: getFortification(target?.token),
         autoCritical: autoCritical,
@@ -13160,6 +13164,7 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber) {
           : ourToken?.record?.name,
       turnAttack: getTurnAttack(null),
       attackNumberHint,
+      attackNumberMismatch,
       damage: damage,
       persistentDamage: persistentDamage,
       criticalPersistentDamage: criticalPersistentDamage,

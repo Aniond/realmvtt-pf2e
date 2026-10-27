@@ -100,7 +100,7 @@ Fields such as `onload` and `onchange` only work on Realm VTT field HTML, not on
 - Strikes keep their 1st/2nd/3rd buttons, which always set the penalty. The card adds a hint when the button doesn't match the count.
 - Spell attacks and attack-trait skill actions (Grapple, Trip...) get the penalty from the count as a ticked modifier that can be unticked in the roll prompt.
 - Forceful, twin, sweep and backswing apply from the earlier attacks, also as ticked modifiers.
-- Each logged attack's card has a "Remove From Attack Count" button for a roll made by mistake.
+- A Strike card with that hint also has a "Remove From Attack Count" button, for a roll made by mistake. Other cards don't, so the button only shows when the count looks off.
 
 Storage:
 

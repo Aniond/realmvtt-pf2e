@@ -259,8 +259,10 @@ section("Strikes: the buttons, the hint, the log");
   roll = strike(record, sword, { attackNumber: 1 });
   assert("2nd attack, button 1: the button wins", named(roll.modifiers, "Mutliple Attack Penalty"), []);
   assert("and the card says so", roll.metadata.attackNumberHint, "This is the 2nd attack this turn, rolled as the 1st.");
+  assert("with the Remove button", roll.metadata.attackNumberMismatch, true);
   roll = strike(record, sword, { attackNumber: 2 });
   assert("button 2: -5, no hint", [named(roll.modifiers, "Mutliple Attack Penalty").map((m) => m.value), roll.metadata.attackNumberHint], [[-5], ""]);
+  assert("and no Remove button", roll.metadata.attackNumberMismatch, false);
   roll = strike(record, sword, {});
   assert("no button (Elemental Blast): the log sets -5", named(roll.modifiers, "Mutliple Attack Penalty").map((m) => m.value), [-5]);
   roll = strike(record, sword, { targets: [target("orc")], attackNumber: 2 });
@@ -405,14 +407,17 @@ section("A roll made by mistake can be taken back out");
   assertIncludes("the card gets a button", button, "```Remove_From_Attack_Count");
   assert("no button off its turn", ctx.getUncountAttackButton(null), "");
 
-  // attack.js and skill.js put it on the card, only for logged attacks
-  const card = runHandler("attack.js", { roll: { dice: [{ type: 20, value: 15 }], total: 25, metadata: { dc: 18, attack: "Longsword", traits: [], damage: "2d8 slashing", turnAttack: mistake } } });
-  assertIncludes("on the Strike card", card, "Remove_From_Attack_Count");
-  const offTurn = runHandler("attack.js", { roll: { dice: [{ type: 20, value: 15 }], total: 25, metadata: { dc: 18, attack: "Longsword", traits: [], damage: "2d8 slashing" } } });
+  // attack.js puts it only on a Strike card with the hint (Sean: on every
+  // card it was confusing)
+  const card = runHandler("attack.js", { roll: { dice: [{ type: 20, value: 15 }], total: 25, metadata: { dc: 18, attack: "Longsword", traits: [], damage: "2d8 slashing", turnAttack: mistake, attackNumberMismatch: true, attackNumberHint: "This is the 2nd attack this turn, rolled as the 1st." } } });
+  assertIncludes("on a Strike card with the hint", card, "Remove_From_Attack_Count");
+  const matching = runHandler("attack.js", { roll: { dice: [{ type: 20, value: 15 }], total: 25, metadata: { dc: 18, attack: "Longsword", traits: [], damage: "2d8 slashing", turnAttack: mistake, attackNumberMismatch: false } } });
+  assertNotIncludes("not when the button matches the count", matching, "Remove_From_Attack_Count");
+  const offTurn = runHandler("attack.js", { roll: { dice: [{ type: 20, value: 15 }], total: 25, metadata: { dc: 18, attack: "Longsword", traits: [], damage: "2d8 slashing", attackNumberMismatch: true } } });
   assertNotIncludes("not off its turn", offTurn, "Remove_From_Attack_Count");
   const trip = ctx.getTurnAttackMetadata(token, record, { kind: "maneuver", name: "Trip" });
   const skillCard = runHandler("skill.js", { roll: { dice: [{ type: 20, value: 12 }], total: 20, metadata: { dc: 17, rollName: "Athletics: Trip", turnAttack: trip } } });
-  assertIncludes("on the maneuver card", skillCard, "Remove_From_Attack_Count");
+  assertNotIncludes("not on a maneuver card", skillCard, "Remove_From_Attack_Count");
 
   // The attack is logged; clicking the button marks it, without reading the token
   record.data.turnAttacks = ctx.getLoggedTurnAttackValues(mistake, 1)["data.turnAttacks"];
