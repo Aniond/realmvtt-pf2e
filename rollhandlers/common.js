@@ -8878,6 +8878,17 @@ function rollSave(
     metadata.isSpell = true;
   }
 
+  // The saver's token, where save.js keeps the result for Apply by Saves,
+  // and whether it is a basic save (basic-saves.js)
+  const saver = getSaverTokenRef(record);
+  if (saver) {
+    metadata.saverTokenId = saver.id;
+    metadata.saverRecordType = saver.recordType;
+  }
+  if (options.basic) {
+    metadata.basicSave = true;
+  }
+
   // The save-specific and attribute lookups can each bring a status penalty
   // (fatigued, frightened): only the worst one applies
   modifiers.splice(0, modifiers.length, ...keepStrongestPerType(modifiers));
@@ -9076,6 +9087,7 @@ function getSaveMacro(
   isSpell = false,
   showDc = false,
   traits = [],
+  basic = false,
 ) {
   if (!saveType) {
     console.error("getSaveMacro: Invalid saveType");
@@ -9116,8 +9128,13 @@ selectedTokens.forEach(token => {
   const sourceTraits = (Array.isArray(traits) ? traits : [])
     .map((t) => String(typeof t === "string" ? t : t?.name || "").trim())
     .filter((t) => t && !getIsTraitRarity(t));
-  if (sourceTraits.length > 0) {
-    macroContent += `, ${JSON.stringify({ traits: sourceTraits })}`;
+  // A basic save: the save card says what damage it takes (basic-saves.js)
+  const saveOptions = {
+    ...(sourceTraits.length > 0 ? { traits: sourceTraits } : {}),
+    ...(basic ? { basic: true } : {}),
+  };
+  if (Object.keys(saveOptions).length > 0) {
+    macroContent += `, ${JSON.stringify(saveOptions)}`;
   }
 
   // Close the function call and forEach
@@ -15971,6 +15988,11 @@ function executeDamageMacro(
     damageType: damageType,
     traits,
   };
+  // An ability's damage (a breath weapon) is often against a basic save its
+  // description asks for: the card offers Apply by Saves (basic-saves.js)
+  if (category === "standard") {
+    metadata.applyBySaves = true;
+  }
   // Where it comes from (updateDamageMacros), for resistances that depend
   // on it and for healing received from a magical item
   if (context.damageSource) {

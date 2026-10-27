@@ -5382,6 +5382,9 @@
         },
         "ActionLimits": {
           "file": "rollhandlers/action-limits.js"
+        },
+        "BasicSaves": {
+          "file": "rollhandlers/basic-saves.js"
         }
       },
       "defaultDice": "default",

@@ -890,6 +890,13 @@ applyPersistentDamage("${spellDamage.persistentDamage}", "${tokenId}", "${tokenN
     : ["spellDamageBonus", "spellDamagePenalty"];
 
   const traits = spell?.data?.traits || [];
+  // A basic save: the damage card applies it to each target by its save
+  // (basic-saves.js)
+  const save = spell?.data?.defense?.save;
+  const basicSave =
+    save?.statistic && (save.basic === true || save.basic === "true")
+      ? { saveType: String(save.statistic).toLowerCase() }
+      : null;
 
   return `\`\`\`${macroName}
 // Lookup the record and then prompt the roll
@@ -970,6 +977,7 @@ api.getRecord('${record.recordType}', '${record._id}', (record) => {
       portrait: ${JSON.stringify(spell?.portrait || "")},
       // The spell and its casting tradition, for resistances to spells
       damageSource: getDamageSource(record, spell, ${JSON.stringify(tradition)}),
+      basicSave: ${JSON.stringify(basicSave)},
     },
     "damage"
   );
@@ -1058,7 +1066,8 @@ function getSpellSaveMacro(record, spell, spellCastingEntry, dataPathToSpell) {
   if (forcesMovement === true || forcesMovement === "true") {
     sourceTraits.push("forced-movement");
   }
-  return getSaveMacro(saveType, saveDC, true, true, sourceTraits);
+  const basic = spell?.data?.defense?.save?.basic;
+  return getSaveMacro(saveType, saveDC, true, true, sourceTraits, basic === true || basic === "true");
 }
 
 function getSpellAttackMacro(

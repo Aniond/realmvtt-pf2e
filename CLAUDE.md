@@ -122,6 +122,14 @@ When adding a new kind of attack roll, pass `turnAttack` (from `getTurnAttackMet
 - A composition is remembered at `data.lastComposition` (`{ name, round }`); a different one cast within 4 rounds says the old one ends.
 - Applying a `Stance: ...` effect (`applyEffectButton`) first removes the creature's other `Stance: ...` effects.
 
+### Basic Saves (applied per target)
+
+`rollhandlers/basic-saves.js` lets one damage roll be applied to many creatures by each one's own basic save.
+
+- `rollSave` puts the saver's token in the roll metadata (`saverTokenId`, from `getSaverTokenRef`), and `basicSave: true` when the save button passed `{ basic: true }` (`getSaveMacro`'s `basic` argument; spells with the Basic box).
+- `save.js` keeps the result on that token at `data.lastSave` (`{ degree, saveType, dc, time }`), and a basic save's card says what damage it takes.
+- A damage card with `metadata.basicSave` (`{ saveType }`, from a spell's damage button) or `metadata.applyBySaves` (`executeDamageMacro`'s standard damage, an ability's button) has an Apply by Saves button. `applyDamageBySaves` applies it to each selected creature by its last save from the past 10 minutes (of the spell's save type, when known): none, half, full or double. It posts what each took and clears the save.
+
 ### Data Structure
 
 - Character data is nested under `record.data`

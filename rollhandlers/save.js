@@ -131,6 +131,23 @@ if (dc > 0) {
 // Notes from the creature's features for this result (rollNote)
 message += getRollNotesText(data?.roll?.metadata?.notes, noteDegree);
 
+// A basic save says what damage it takes, and the result is kept on the
+// saver's token for the damage card's Apply by Saves (basic-saves.js)
+{
+  const basicLine = getBasicSaveLine(data?.roll?.metadata, noteDegree);
+  if (basicLine) {
+    message += `\n\n${basicLine}`;
+  }
+  const lastSave = getLastSaveValues(data?.roll?.metadata, noteDegree);
+  if (lastSave) {
+    api.setValuesOnTokenById(
+      data.roll.metadata.saverTokenId,
+      data.roll.metadata.saverRecordType,
+      lastSave,
+    );
+  }
+}
+
 api.sendMessage(
   message,
   roll,
