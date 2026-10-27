@@ -213,6 +213,13 @@ section("Escape: the grabber's Athletics DC, or an Escape DC it lists");
   const listedDCs = (grabber) => ctx.getListedEscapeDCs(grabber).map((l) => [l.name, l.dc]);
   assert("listed Escape DCs, highest first", listedDCs(npc([engulf, swallow])), [["Swallow Whole", 28], ["Engulf", 25]]);
   assert("\"DC 23 to Escape\" counts too", listedDCs(npc([{ name: "Web", data: { description: "It can attempt a DC 23 to Escape." } }])), [["Web", 23]]);
+  // The backfilled wordings from Sean's review
+  const listedFrom = (description) => listedDCs(npc([{ name: "Hold", data: { description } }]));
+  assert("\"(Escape DC 45).\"", listedFrom("The target is grabbed (Escape DC 45)."), [["Hold", 45]]);
+  assert("\"until it Escapes (DC 17).\"", listedFrom("The creature is immobilized until it Escapes (DC 17)."), [["Hold", 17]]);
+  assert("\"can attempt to Escape (DC 21).\"", listedFrom("A pinned creature can attempt to Escape (DC 21)."), [["Hold", 21]]);
+  assert("\"by Escaping (DC 32)\"", listedFrom("It can end all effects by Escaping (DC 32) or by cutting free."), [["Hold", 32]]);
+  assert("\"a DC 38 check to Escape\"", listedFrom("It's stuck until it succeeds at a DC 38 check to Escape."), [["Hold", 38]]);
   // The imported form before the converter keeps the DC: nothing listed
   const imported = { name: "Engulf", data: { description: "<p>Reflex Save (DC 22), 4d6 acid Damage damage, Escape, Rupture 15</p><p>An engulfed creature can get free by  against the listed escape DC.</p>" } };
   assert("\"Escape, Rupture 15\" lists no DC", listedDCs(npc([imported])), []);

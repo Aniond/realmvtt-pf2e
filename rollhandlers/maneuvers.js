@@ -206,15 +206,17 @@ function withManeuverToken(creatureId, name, droppedOn, action) {
 const ESCAPE_CONDITIONS = ["grabbed", "immobilized", "restrained"];
 
 // The Escape DCs a grabber's abilities list ("Escape DC 28", Foundry's
-// [[/act escape dc=28]]): [{ name, dc }] per ability, highest first
+// [[/act escape dc=28]], "Escapes (DC 17)", "a DC 38 check to Escape"):
+// [{ name, dc }] per ability, highest first
 function getListedEscapeDCs(grabber) {
   const data = grabber?.data || grabber?.record?.data || {};
   const listed = [];
   [...(data.actions || []), ...(data.attacks || [])].forEach((entry) => {
     const name = String(entry?.name || "").trim();
     const text = `${name} ${entry?.data?.description || ""}`;
-    for (const match of text.matchAll(/escape\s+dc\s*=?\s*(\d+)|dc\s*(\d+)\s+(?:to\s+)?escape/gi)) {
-      const dc = parseInt(match[1] || match[2], 10);
+    const pattern = /escape\s+dc\s*=?\s*(\d+)|dc\s*(\d+)\s+(?:check\s+)?(?:to\s+)?escape|escap(?:e|es|ing)\s*\(dc\s*(\d+)\)/gi;
+    for (const match of text.matchAll(pattern)) {
+      const dc = parseInt(match[1] || match[2] || match[3], 10);
       if (dc > 0 && !listed.some((l) => l.name === name && l.dc === dc)) listed.push({ name, dc });
     }
   });
