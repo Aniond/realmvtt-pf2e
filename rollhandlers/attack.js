@@ -236,19 +236,11 @@ if (fortificationText) {
 }
 message += getRollNotesText(data?.roll?.metadata?.notes, noteDegree);
 
-// The attack goes in the creature's log for this turn, and the card says when
-// the button clicked isn't the attack the log counts (attack-log.js)
+// The attack goes in the creature's log for this turn (attack-log.js)
 logTurnAttack(data?.roll?.metadata?.turnAttack, noteDegree);
+// After a finisher this turn, no attack is allowed (action-limits.js)
 if (data?.roll?.metadata?.attackNumberHint) {
   message += `\n\n${data.roll.metadata.attackNumberHint}`;
-}
-// When the count and the button clicked disagree, the attack can be taken
-// back out of the log (a roll made by mistake)
-if (data?.roll?.metadata?.attackNumberMismatch) {
-  const uncountButton = getUncountAttackButton(data?.roll?.metadata?.turnAttack);
-  if (uncountButton) {
-    message += `\n${uncountButton}`;
-  }
 }
 
 // Only add "Attack" tag if there is no "Attack" trait

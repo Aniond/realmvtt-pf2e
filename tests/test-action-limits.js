@@ -156,8 +156,6 @@ section("Press needs a multiple attack penalty");
   assertIncludes("no attack yet: a warning", use("Certain Strike", ["Press", "Fighter"]), "**Press needs a multiple attack penalty:** there's no attack yet this turn.");
   record.data.turnAttacks = { turnKey: key, attacks: [logged("strike")] };
   assertNotIncludes("after a Strike: none", use("Certain Strike", ["Press", "Fighter"]), "Press needs");
-  record.data.turnAttackSkips = { [record.data.turnAttacks.attacks[0].id]: key };
-  assertIncludes("the Strike taken out of the count: warned again", use("Certain Strike", ["Press"]), "Press needs");
 }
 
 section("No attacks after a finisher (its own Strike is part of it)");
@@ -178,7 +176,7 @@ section("No attacks after a finisher (its own Strike is part of it)");
   const rapier = { _id: "rapier", name: "Rapier", recordType: "items", data: { type: "weapon", carried: "equipped", itemCategory: "martial", group: "sword", traits: ["Deadly d8", "Disarm", "Finesse"], usage: "held-in-one-hand", range: 0, damage: { dice: 1, die: "d6", damageType: "piercing" } } };
   record.data.inventory = [rapier];
   ctx.performAttackRoll(record, rapier, "data.inventory.0", 1);
-  assertNotIncludes("the first Strike after the finisher: no warning", metadata.attackNumberHint || "", "No attacks after a finisher");
+  assert("the first Strike after the finisher: no warning", metadata.attackNumberHint, "");
 
   // Once its Strike is logged, the next attack is warned
   record.data.turnAttacks.attacks.push(logged("strike", { id: `${Date.now() + 1000}-1` }));
