@@ -62,6 +62,17 @@ const MANEUVER_OUTCOMES = {
     },
     "-1": { text: "The target can move you up to 5 feet as though it successfully Repositioned you." },
   },
+  escape: {
+    2: {
+      text: "You get free and remove the grabbed, immobilized, and restrained conditions imposed by your chosen target. You can then Stride up to 5 feet.",
+      free: true,
+    },
+    1: {
+      text: "You get free and remove the grabbed, immobilized, and restrained conditions imposed by your chosen target.",
+      free: true,
+    },
+    "-1": { text: "You don't get free, and you can't attempt to Escape again until your next turn." },
+  },
   demoralize: {
     2: { text: "The target becomes frightened 2.", target: [["Frightened", 2]] },
     1: { text: "The target becomes frightened 1.", target: [["Frightened", 1]] },
@@ -191,6 +202,108 @@ function withManeuverToken(creatureId, name, droppedOn, action) {
   action(token);
 }
 
+// The conditions an Escape frees you from
+const ESCAPE_CONDITIONS = ["grabbed", "immobilized", "restrained"];
+
+// The Escape DCs a grabber's abilities list ("Escape DC 28", Foundry's
+// [[/act escape dc=28]], "Escapes (DC 17)", "a DC 38 check to Escape"):
+// [{ name, dc }] per ability, highest first
+function getListedEscapeDCs(grabber) {
+  const data = grabber?.data || grabber?.record?.data || {};
+  const listed = [];
+  [...(data.actions || []), ...(data.attacks || [])].forEach((entry) => {
+    const name = String(entry?.name || "").trim();
+    const text = `${name} ${entry?.data?.description || ""}`;
+    const pattern = /escape\s+dc\s*=?\s*(\d+)|dc\s*(\d+)\s+(?:check\s+)?(?:to\s+)?escape|escap(?:e|es|ing)\s*\(dc\s*(\d+)\)/gi;
+    for (const match of text.matchAll(pattern)) {
+      const dc = parseInt(match[1] || match[2] || match[3], 10);
+      if (dc > 0 && !listed.some((l) => l.name === name && l.dc === dc)) listed.push({ name, dc });
+    }
+  });
+  return listed.sort((a, b) => b.dc - a.dc);
+}
+
+// What an Escape from a grabber can be against: its Athletics DC (Grab and
+// Grapple), then each Escape DC its abilities list (Engulf, Swallow Whole)
+function getEscapeChoices(grabber) {
+  if (!grabber) return [];
+  return [
+    { name: "Grab or Grapple", label: "Athletics DC", dcName: "Escape DC (Athletics)", dc: getAthleticsDC(grabber) },
+    ...getListedEscapeDCs(grabber).map((l) => ({ ...l, label: "Escape DC", dcName: `Escape DC (${l.name})` })),
+  ];
+}
+
+// Before an Escape from a grabber that lists Escape DCs, asks which hold it
+// is (Grabbed by the pseudopod, or Engulfed) and calls back with that choice
+function promptEscapeChoice(grabber, callback) {
+  const choices = getEscapeChoices(grabber);
+  if (choices.length < 2) {
+    callback(choices[0]);
+    return;
+  }
+  api.showPrompt(
+    "Escape",
+    `What are you escaping from ${getCreatureName(grabber)}?`,
+    "Select...",
+    choices.map((c, i) => ({ label: `${c.name}: ${c.label} ${c.dc}`, value: String(i) })),
+    null,
+    (selected) => {
+      const choice = choices[parseInt(getPromptSelections(selected)[0], 10)];
+      if (choice) callback(choice);
+    },
+    "Roll",
+    "Cancel",
+    1,
+  );
+}
+
+// A creature's Athletics DC: 10 + its Athletics modifier (a character's
+// athleticsMod, an NPC's listed skill or else its Strength modifier), with
+// its Athletics and Strength modifiers, as rollSkill adds them
+function getAthleticsDC(creature) {
+  const data = creature?.data || creature?.record?.data || {};
+  const isCharacter = creature?.recordType === "characters";
+  const listed = (data.skills || []).find((skill) => String(skill?.name || "").toLowerCase() === "athletics");
+  const skillMod = isCharacter
+    ? parseInt(data.athleticsMod || "0", 10) || 0
+    : listed
+      ? parseInt(listed.data?.mod || "0", 10) || 0
+      : parseInt(data.strMod ?? data.str ?? "0", 10) || 0;
+  const mods = mergeModifierLists(
+    getEffectsAndModifiersForToken(creature, ["skillBonus", "skillPenalty"], "athletics"),
+    getEffectsAndModifiersForToken(creature, ["allBonus", "allPenalty"], "str"),
+  );
+  let dc = 10 + skillMod + getNpcProficiencyWithoutLevelAdjustment(creature);
+  mods.forEach((mod) => {
+    if (mod.active === false || mod.situational) return;
+    dc += parseInt(mod.value || 0, 10) || 0;
+  });
+  return dc;
+}
+
+// The DC to Escape a grabber (Sean's ruling on #18): the hold chosen in
+// promptEscapeChoice, else its Athletics DC
+function getEscapeDC(grabber, context = {}) {
+  if (!grabber) return null;
+  return context.escape?.dc ?? getAthleticsDC(grabber);
+}
+
+// Escape: removes the grabbed, immobilized and restrained conditions, one
+// stack at a time
+function freeFromManeuvers(token) {
+  const ids = [];
+  (token?.effects || []).forEach((effect) => {
+    if (!ESCAPE_CONDITIONS.includes(String(effect?.name || "").toLowerCase())) return;
+    const count = (token.effectIds || []).filter((id) => id === effect._id).length || 1;
+    for (let i = 0; i < count; i++) ids.push(effect._id);
+  });
+  const next = () => {
+    const id = ids.shift();
+    if (id) api.removeEffectById(id, token, next);
+  };
+  next();
+}
+
 // Applies a condition at a value as one gain (frightened 2 from a critical
 // Demoralize), after the creature's own conditionGain modifiers
 function applyManeuverCondition(token, name, value = 1) {
@@ -223,6 +336,12 @@ function getManeuverResultLines(maneuver, degree) {
   };
   (outcome?.target || []).forEach(([name, value]) => lines.push(conditionButton("target", name, value)));
   (outcome?.self || []).forEach(([name, value]) => lines.push(conditionButton("self", name, value)));
+  if (outcome?.free) {
+    lines.push(getManeuverButton("Get_Free", maneuver.actorId, maneuver.actorName, "freeFromManeuvers(token)"));
+    lines.push(
+      "Get Free removes every grabbed, immobilized, and restrained condition. If another creature or effect still holds you, add its condition back.",
+    );
+  }
   if (outcome?.damage) {
     lines.push(
       `\`\`\`Roll_Damage\napi.promptRoll(${JSON.stringify(`${maneuver.action} Damage`)}, ${JSON.stringify(outcome.damage)}, [], { rollName: ${JSON.stringify(maneuver.action)} }, "damage");\n\`\`\``,

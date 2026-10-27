@@ -5217,6 +5217,9 @@ function getDefenseDCForToken(token, defense, context = {}) {
   if (["fortitude", "reflex", "will"].includes(defense)) {
     return getSaveDCForToken(token, defense, context);
   }
+  // Escape: the hold chosen before the roll (an Escape DC the grabber lists)
+  // or its Athletics DC (maneuvers.js)
+  if (defense === "escape") return getEscapeDC(token, context);
   return null;
 }
 
@@ -9483,7 +9486,7 @@ const SKILL_ACTIONS = {
     { name: "Tumble Through", defense: "reflex" },
     { name: "Maneuver in Flight" },
     { name: "Squeeze" },
-    { name: "Escape", attack: true },
+    { name: "Escape", defense: "escape", attack: true },
   ],
   arcana: [
     { name: "Recall Knowledge" },
@@ -9503,7 +9506,7 @@ const SKILL_ACTIONS = {
     { name: "Swim" },
     { name: "Trip", defense: "reflex", attack: true },
     { name: "Disarm", defense: "reflex", attack: true },
-    { name: "Escape", attack: true },
+    { name: "Escape", defense: "escape", attack: true },
   ],
   crafting: [
     { name: "Recall Knowledge" },
@@ -9595,7 +9598,7 @@ function getSkillsForAction(actionName) {
  * Trip...) offer the multiple attack penalty as opt-ins. Treat Wounds and
  * Administer First Aid open their own flows.
  */
-function performSkillAction(record, skill, actionName, isMacro = false) {
+function performSkillAction(record, skill, actionName, isMacro = false, options = {}) {
   if (!record || !skill || !actionName) return;
   const action = (SKILL_ACTIONS[skill] || []).find(
     (a) => a.name.toLowerCase() === String(actionName).toLowerCase(),
@@ -9610,8 +9613,16 @@ function performSkillAction(record, skill, actionName, isMacro = false) {
   }
   const targets = (typeof api.getTargets === "function" && api.getTargets()) || [];
   const target = targets.length === 1 ? targets[0]?.token || targets[0] : null;
+  // Escape from a grabber that lists Escape DCs asks which hold it is first
+  // (maneuvers.js)
+  if (action.defense === "escape" && target && !options.escape) {
+    promptEscapeChoice(target, (escape) =>
+      performSkillAction(record, skill, actionName, isMacro, { ...options, escape }),
+    );
+    return;
+  }
   const dc = action.defense && target
-    ? getDefenseDCForToken(target, action.defense, { action: { name: action.name } })
+    ? getDefenseDCForToken(target, action.defense, { action: { name: action.name }, escape: options.escape })
     : null;
   const extraModifiers = action.attack
     ? [
@@ -9628,7 +9639,7 @@ function performSkillAction(record, skill, actionName, isMacro = false) {
     action: action.name,
     extraModifiers,
     ...(maneuver ? { maneuver } : {}),
-    dcName: action.defense && target ? `${capitalize(action.defense)} DC` : undefined,
+    dcName: options.escape?.dcName || (action.defense && target ? `${capitalize(action.defense)} DC` : undefined),
     // Notes on the target for being forced to move (Rock Dwarf), shown with
     // a Shove or Reposition result
     targetNotes: FORCED_MOVEMENT_ACTIONS.has(toSlug(action.name))

@@ -205,4 +205,73 @@ section("Review fixes: names with an apostrophe, critical results, ABP");
   ctx.getAbpBonuses = savedAbp;
 }
 
+section("Escape: the grabber's Athletics DC, or an Escape DC it lists");
+{
+  const npc = (actions, extra = {}) => ({ _id: "ooze", name: "Ooze", recordType: "npcs", identified: true, effects: [], effectIds: [], data: { level: 3, traits: [], actions, skills: [{ name: "Athletics", data: { mod: 9 } }], ...extra } });
+  const engulf = { name: "Engulf", data: { description: "<p>Reflex Save (DC 22), 4d6 acid Damage damage, Escape DC 25, Rupture 15</p><p>An engulfed creature can get free by  against the listed escape DC.</p>" } };
+  const swallow = { name: "Swallow Whole", data: { description: "<p>... [[/act escape dc=28]], Rupture 15</p>" } };
+  const listedDCs = (grabber) => ctx.getListedEscapeDCs(grabber).map((l) => [l.name, l.dc]);
+  assert("listed Escape DCs, highest first", listedDCs(npc([engulf, swallow])), [["Swallow Whole", 28], ["Engulf", 25]]);
+  assert("\"DC 23 to Escape\" counts too", listedDCs(npc([{ name: "Web", data: { description: "It can attempt a DC 23 to Escape." } }])), [["Web", 23]]);
+  // The backfilled wordings from Sean's review
+  const listedFrom = (description) => listedDCs(npc([{ name: "Hold", data: { description } }]));
+  assert("\"(Escape DC 45).\"", listedFrom("The target is grabbed (Escape DC 45)."), [["Hold", 45]]);
+  assert("\"until it Escapes (DC 17).\"", listedFrom("The creature is immobilized until it Escapes (DC 17)."), [["Hold", 17]]);
+  assert("\"can attempt to Escape (DC 21).\"", listedFrom("A pinned creature can attempt to Escape (DC 21)."), [["Hold", 21]]);
+  assert("\"by Escaping (DC 32)\"", listedFrom("It can end all effects by Escaping (DC 32) or by cutting free."), [["Hold", 32]]);
+  assert("\"a DC 38 check to Escape\"", listedFrom("It's stuck until it succeeds at a DC 38 check to Escape."), [["Hold", 38]]);
+  // The imported form before the converter keeps the DC: nothing listed
+  const imported = { name: "Engulf", data: { description: "<p>Reflex Save (DC 22), 4d6 acid Damage damage, Escape, Rupture 15</p><p>An engulfed creature can get free by  against the listed escape DC.</p>" } };
+  assert("\"Escape, Rupture 15\" lists no DC", listedDCs(npc([imported])), []);
+  assert("without a choice: the Athletics DC (10 + 9)", ctx.getEscapeDC(npc([engulf])), 19);
+  assert("with one: its DC", ctx.getEscapeDC(npc([engulf]), { escape: { dc: 25 } }), 25);
+  assert("an NPC without Athletics: its Strength", ctx.getEscapeDC(npc([], { skills: [], str: 4 })), 14);
+  assert("a character: 10 + athleticsMod", ctx.getEscapeDC(pc([], { athleticsMod: 7 })), 17);
+  assert("no grabber: no DC", ctx.getEscapeDC(null), null);
+  assert(
+    "the choices: Grab or Grapple, then each listed hold",
+    ctx.getEscapeChoices(npc([engulf, swallow])).map((c) => [c.name, c.dc]),
+    [["Grab or Grapple", 19], ["Swallow Whole", 28], ["Engulf", 25]],
+  );
+
+  // Nothing listed: no prompt, against the Athletics DC
+  const savedPrompt = ctx.api.showPrompt;
+  let prompted = null;
+  ctx.api.showPrompt = (title, text, placeholder, options, query, cb) => (prompted = { text, options, cb });
+  const plain = act(pc(), "athletics", "Escape", [{ token: npc([imported]), distance: 5 }]);
+  assert("nothing listed: no prompt", prompted, null);
+  assert("Escape rolls against the Athletics DC", [plain.metadata.dc, plain.metadata.dcName], [19, "Escape DC (Athletics)"]);
+  assert("with its outcomes", plain.metadata.maneuver?.action, "Escape");
+  assert("Acrobatics too", act(pc(), "acrobatics", "Escape", [{ token: npc([]), distance: 5 }]).metadata.dc, 19);
+
+  // A listed hold: asks which one, then rolls against it
+  ctx.api.getTargets = () => [{ token: npc([engulf]), distance: 5 }];
+  ctx.performSkillAction(pc(), "athletics", "Escape");
+  assert("a listed hold: asks which", prompted?.options.map((o) => o.label), ["Grab or Grapple: Athletics DC 19", "Engulf: Escape DC 25"]);
+  const asEngulf = capturePrompt(() => prompted.cb(["1"]));
+  assert("Engulfed: its Escape DC", [asEngulf.metadata.dc, asEngulf.metadata.dcName], [25, "Escape DC (Engulf)"]);
+  ctx.performSkillAction(pc(), "athletics", "Escape");
+  assert("Grabbed: the Athletics DC", capturePrompt(() => prompted.cb("0")).metadata.dc, 19);
+  ctx.performSkillAction(pc(), "athletics", "Escape");
+  assert("cancelled: no roll", capturePrompt(() => prompted.cb(null)), null);
+  ctx.api.showPrompt = savedPrompt;
+
+  const m = { action: "Escape", targetId: "ooze", targetName: "Ooze", actorId: "pc", actorName: "Valeros" };
+  const success = ctx.getManeuverResultLines(m, 1);
+  assertIncludes("success: free, with a button", success[1], 'withManeuverToken("pc", "Valeros"');
+  assertIncludes("that removes the conditions", success[1], "freeFromManeuvers(token)");
+  assertIncludes("from any source, as the card says", success[2], "If another creature or effect still holds you");
+  assertIncludes("critical success: Stride 5 feet", ctx.getManeuverResultLines(m, 2)[0], "Stride up to 5 feet");
+  assertIncludes("critical failure: no Escape until your next turn", ctx.getManeuverResultLines(m, -1)[0], "until your next turn");
+
+  const removed = [];
+  ctx.api.removeEffectById = (id, token, cb) => {
+    removed.push(id);
+    if (cb) cb();
+  };
+  const effect = (name) => ({ _id: name.toLowerCase(), name, rules: [] });
+  ctx.freeFromManeuvers({ _id: "pc-token", effects: [effect("Grabbed"), effect("Restrained"), effect("Prone"), effect("Immobilized")], effectIds: ["grabbed", "restrained", "prone", "immobilized", "immobilized"] });
+  assert("Get Free removes grabbed, restrained and both immobilized stacks, not prone", removed, ["grabbed", "restrained", "immobilized", "immobilized"]);
+}
+
 process.exitCode = summary();
