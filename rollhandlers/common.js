@@ -9651,6 +9651,10 @@ function performSkillAction(record, skill, actionName, isMacro = false, options 
     extraModifiers,
     ...(maneuver ? { maneuver } : {}),
     ...(turnAttack ? { turnAttack } : {}),
+    // After a finisher this turn, no attack is allowed (action-limits.js)
+    ...(action.attack
+      ? { attackNumberHint: getAfterFinisherWarning(getOpenTurnActionLog(record, attackerToken)) }
+      : {}),
     dcName: options.escape?.dcName || (action.defense && target ? `${capitalize(action.defense)} DC` : undefined),
     // Notes on the target for being forced to move (Rock Dwarf), shown with
     // a Shove or Reposition result
@@ -10630,9 +10634,20 @@ function useAction(action, actionDataPath = null) {
     isMagicalSource(traits),
   );
 
+  // The limits its traits set on the creature's turn (flourish, press...);
+  // the use goes in the turn's action log (action-limits.js)
+  const limits = checkActionLimits(
+    (typeof record !== "undefined" && record) || null,
+    api.getToken(),
+    actionName,
+    traits,
+    "action",
+  );
+  const limitLines = limits.lines.map((line) => `${line}\n`).join("");
+
   const message = `
 #### ${portrait}${actionName}${actionIcon ? "&nbsp;" : ""}${actionIcon}
-${usesLine ? `${usesLine}\n` : ""}
+${usesLine ? `${usesLine}\n` : ""}${limitLines}
 ---
 ${actionDescription}
 ${effectMacros}${getActionHealingMacros(action)}${getFirstAidActionMacro(action)}${getSkillActionMacros(action)}
@@ -11893,7 +11908,14 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber) {
   const attackerToken = api.getToken();
   const turnAttackLog = getOpenTurnAttackLog(record, attackerToken);
   const loggedAttackNumber = getNextAttackNumber(record, attackerToken);
-  const attackNumberHint = getAttackNumberHint(attackNumber, loggedAttackNumber);
+  // and after a finisher this turn, that no attack is allowed
+  // (action-limits.js)
+  const attackNumberHint = [
+    getAttackNumberHint(attackNumber, loggedAttackNumber),
+    getAfterFinisherWarning(getOpenTurnActionLog(record, attackerToken)),
+  ]
+    .filter(Boolean)
+    .join("\n\n");
   if (!attackNumber) {
     attackNumber = loggedAttackNumber || 1;
   }
@@ -19244,7 +19266,7 @@ function applyEffectButton(
   value = 1,
   magical = false,
 ) {
-  const apply = () =>
+  const add = () =>
     addConditionGain(target, effectName, value, (stacks) => {
       if (stacks === 1) {
         api.addEffectById(effectId, target, undefined, appliedBy);
@@ -19252,6 +19274,23 @@ function applyEffectButton(
         api.addEffects(Array(stacks).fill(effectName), target);
       }
     });
+  // Entering a stance ends the creature's other stance (action-limits.js)
+  const apply = () => {
+    const stances = getOtherStanceEffects(target, effectName);
+    if (stances.length === 0) {
+      add();
+      return;
+    }
+    const stanceName = (name) => String(name || "").replace(/^stance:\s*/i, "");
+    api.sendMessage(
+      `${getTokenDisplayName(target)} leaves ${stances.map((effect) => stanceName(effect.name)).join(", ")} for ${stanceName(effectName)}.`,
+      undefined,
+      [],
+      [],
+      target,
+    );
+    removeEffectsInOrder(stances.map((effect) => effect._id), target, add);
+  };
   // Magic a raging Superstition barbarian accepts (onMagicAccepted)
   if (magical) {
     confirmMagicAccepted(target, effectName, apply, effectId);

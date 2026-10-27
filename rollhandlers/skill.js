@@ -253,6 +253,10 @@ message += getRollNotesText(data?.roll?.metadata?.notes, noteDegree);
 // An attack-trait action (Grapple, Trip...) goes in the creature's log for
 // this turn (attack-log.js)
 logTurnAttack(data?.roll?.metadata?.turnAttack, noteDegree);
+// After a finisher this turn, no attack is allowed (action-limits.js)
+if (data?.roll?.metadata?.attackNumberHint) {
+  message += `\n\n${data.roll.metadata.attackNumberHint}`;
+}
 // A roll made by mistake can be taken back out of the log
 {
   const uncountButton = getUncountAttackButton(data?.roll?.metadata?.turnAttack);

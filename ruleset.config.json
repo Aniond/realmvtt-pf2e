@@ -5379,6 +5379,9 @@
         },
         "AttackLog": {
           "file": "rollhandlers/attack-log.js"
+        },
+        "ActionLimits": {
+          "file": "rollhandlers/action-limits.js"
         }
       },
       "defaultDice": "default",
