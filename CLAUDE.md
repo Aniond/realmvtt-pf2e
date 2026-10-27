@@ -100,7 +100,7 @@ Fields such as `onload` and `onchange` only work on Realm VTT field HTML, not on
 - Strikes keep their 1st/2nd/3rd buttons, which always set the penalty. The card adds a hint when the button doesn't match the count.
 - Spell attacks and attack-trait skill actions (Grapple, Trip...) get the penalty from the count as a ticked modifier that can be unticked in the roll prompt.
 - Forceful, twin, sweep and backswing apply from the earlier attacks, also as ticked modifiers.
-- Each logged attack's card has a "Remove From Attack Count" button for a roll made by mistake.
+- A Strike card with that hint also has a "Remove From Attack Count" button, for a roll made by mistake. Other cards don't, so the button only shows when the count looks off.
 
 Storage:
 
@@ -109,6 +109,18 @@ Storage:
 - Removed attacks are marked at `data.turnAttackSkips.<entryId>`, so the button never reads the token.
 
 When adding a new kind of attack roll, pass `turnAttack` (from `getTurnAttackMetadata`) in the roll metadata and call `logTurnAttack` in its result handler. Attacks on another creature's turn (reactions) are not logged and take no penalty from the log.
+
+### Action Limits (flourish, stance, press, finisher, spellshape...)
+
+`rollhandlers/action-limits.js` keeps the actions and spells a creature uses on its own turn, for the same turn key as the attack log, on its token at `data.turnActions` (`{ turnKey, uses }`). It also warns and never blocks: the card gets a bold line and a notice, and the use still goes ahead.
+
+- `checkActionLimits(creature, token, name, traits, kind)` is called by `useAction` (kind `"action"`) and `castSpell` (kind `"spell"`). It returns the card's lines and logs the use.
+- Flourish, stance and overflow are once per round; hex and composition once per turn. Press needs an attack already this turn (the attack log) and the creature's own turn.
+- After a finisher, attack-trait actions, Strikes, spell attacks and maneuvers get a warning (`getAfterFinisherWarning`, carried as `metadata.attackNumberHint`), but only once an attack has been logged after the finisher: the finisher's own Strike is part of it.
+- An overlay cast (`castSpell(..., isOverlay = true)`) is a variant of the spell just cast, so it is neither checked nor logged.
+- A spellshape (legacy: metamagic) puts a note on the next spell's card, or says it was wasted when another action or attack came between.
+- A composition is remembered at `data.lastComposition` (`{ name, round }`); a different one cast within 4 rounds says the old one ends.
+- Applying a `Stance: ...` effect (`applyEffectButton`) first removes the creature's other `Stance: ...` effects.
 
 ### Data Structure
 

@@ -242,8 +242,9 @@ logTurnAttack(data?.roll?.metadata?.turnAttack, noteDegree);
 if (data?.roll?.metadata?.attackNumberHint) {
   message += `\n\n${data.roll.metadata.attackNumberHint}`;
 }
-// A roll made by mistake can be taken back out of the log
-{
+// When the count and the button clicked disagree, the attack can be taken
+// back out of the log (a roll made by mistake)
+if (data?.roll?.metadata?.attackNumberMismatch) {
   const uncountButton = getUncountAttackButton(data?.roll?.metadata?.turnAttack);
   if (uncountButton) {
     message += `\n${uncountButton}`;

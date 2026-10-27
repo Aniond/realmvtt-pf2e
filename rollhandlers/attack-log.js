@@ -7,8 +7,9 @@
 //     the penalty from the log, ticked in the roll prompt, where it can be
 //     unticked;
 //   - forceful, sweep, twin and backswing apply from the earlier attacks;
-//   - each logged attack's card has a button that takes it back out of the
-//     log, for a roll made by mistake. Nothing here is enforced.
+//   - a Strike card whose button disagrees with the count (the hint) has a
+//     button that takes the attack back out of the log, for a roll made by
+//     mistake. Nothing here is enforced.
 // onTurnStart records whose turn it is, with a key of its own, in a campaign
 // variable that every client can read at once. A log counts only on its own
 // creature's turn, so a reaction on another creature's turn (Reactive

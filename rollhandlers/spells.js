@@ -1191,6 +1191,11 @@ api.getRecord('${record.recordType}', '${record._id}', (record) => {
   // What the result handler logs for this attack
   const getTurnAttack = (targetId) =>
     getTurnAttackMetadata(ourToken, record, { kind: "spell", name: ${JSON.stringify(spellName)}, targetId });
+  // After a finisher this turn, no attack is allowed (action-limits.js)
+  const attackNumberHint = getAfterFinisherWarning(
+    getOpenTurnActionLog(record, ourToken),
+    getOpenTurnAttackLog(record, ourToken),
+  );
 
   // Build criticalOnlyDice array to track splash damage (so it doesn't get doubled)
   const splashDamageValue = ${
@@ -1247,6 +1252,7 @@ api.getRecord('${record.recordType}', '${record._id}', (record) => {
       tokenId: ourToken?._id,
       tokenName: tokenName,
       turnAttack: getTurnAttack(null),
+      attackNumberHint,
       damageModifiers: damageModifiers,
       traits: ${JSON.stringify(traits)},
       animation: ${JSON.stringify(animation)},
@@ -1328,6 +1334,7 @@ api.getRecord('${record.recordType}', '${record._id}', (record) => {
         tokenName: tokenName,
         targetId: targetToken?._id,
         turnAttack: getTurnAttack(targetToken?._id),
+        attackNumberHint,
         // Fortification on the target's armor (property-runes.js)
         fortification: ${isAC} ? getFortification(targetToken) : null,
         damage: "${spellDamage.damageString}",
@@ -1720,9 +1727,19 @@ api.getRecord('${record.recordType}', '${record._id}', (updatedRecord) => {
     }
   }
 
+  // The limits its traits set on the caster's turn (hex, composition), the
+  // spellshape used for it, and the cast goes in the turn's action log
+  // (action-limits.js). An overlay is a variant of the spell just cast, from
+  // its card, not a second cast.
+  const limitLines = isOverlay
+    ? ""
+    : checkActionLimits(record, ourToken, spellName, traits, "spell")
+        .lines.map((line) => `${line}\n`)
+        .join("");
+
   const message = `
   #### ${portrait}${spellName}${actionIcon ? "&nbsp;" : ""}${actionIcon}
-
+${limitLines}
   ---
   ${spellDescription}
   ${macros && macros.length > 0 ? `${macros.join("\n")}\n` : ""}
