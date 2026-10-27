@@ -59,8 +59,9 @@ if (isCharacter && getDyingValue(token) > 0 && !isTokenDead(token)) {
 }
 
 // Whose turn it is, for the attack log: the multiple attack penalty and the
-// momentum weapon traits count this turn's attacks (attack-log.js)
-setCurrentTurn(token);
+// momentum weapon traits count this turn's attacks (attack-log.js). The round
+// keeps the turn's log when Next after Previous starts the same turn again.
+setCurrentTurn(token, data?.round);
 
 // Uses per turn and per round come back at the creature's own turn, and
 // per turn at every other creature's turn, as in Foundry (limited-uses.js).

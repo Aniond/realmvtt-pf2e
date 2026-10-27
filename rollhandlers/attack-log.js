@@ -36,13 +36,19 @@ function getCurrentTurn() {
 // Records whose turn starts (onTurnStart); without a token, no one's
 // (onEncounterEnd). A character's turn also matches its record, which its
 // sheet rolls from; an NPC's only its token, as tokens of one NPC share it.
-function setCurrentTurn(token) {
+// The key is the token and the round, so Next after Previous, which starts
+// the same turn again, keeps the turn's log; without a round, a new key.
+function setCurrentTurn(token, round = null) {
   if (typeof api?.setCampaignVariable !== "function") return;
+  const turnRound = round !== null && round !== "" && Number.isFinite(Number(round)) ? Number(round) : null;
   api.setCampaignVariable(
     TURN_VARIABLE,
     token?._id
       ? {
-          key: `${token._id}-${Date.now()}-${Math.floor(Math.random() * 1e9)}`,
+          key:
+            turnRound !== null
+              ? `${token._id}-round-${turnRound}`
+              : `${token._id}-${Date.now()}-${Math.floor(Math.random() * 1e9)}`,
           tokenId: token._id,
           recordId: token.recordType === "characters" ? token.recordId || null : null,
         }
@@ -91,12 +97,8 @@ function getNextAttackNumber(...creatures) {
   return log ? Math.min(log.attacks.length + 1, 3) : null;
 }
 
-function getOrdinal(n) {
-  return ["", "1st", "2nd", "3rd"][n] || `${n}th`;
-}
-
 // The card's line when the button clicked isn't the attack the log counts,
-// or ""
+// or "" (getOrdinal is spell-entries.js's)
 function getAttackNumberHint(attackNumber, nextAttackNumber) {
   if (!nextAttackNumber || !attackNumber || attackNumber === nextAttackNumber) return "";
   return `This is the ${getOrdinal(nextAttackNumber)} attack this turn, rolled as the ${getOrdinal(attackNumber)}.`;

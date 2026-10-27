@@ -144,10 +144,22 @@ section("Whose turn it is");
   runHandler("onEncounterEnd.js", { tokens: [] });
   assert("onEncounterEnd: no one's turn", ctx.getNextAttackNumber(record, token), null);
   runHandler("onRoundStart.js", { round: 1, tokens: [token] });
-  runHandler("onTurnStart.js", { token, tokens: [token] });
+  runHandler("onTurnStart.js", { token, tokens: [token], round: 1 });
   assert("onTurnStart records it", variables.pf2eTurn.tokenId, "tok");
   assert("with the character's record", variables.pf2eTurn.recordId, "pc");
   assert("it is the fighter's turn", ctx.getNextAttackNumber(record, token), 1);
+
+  // Next after Previous starts the same turn again: its attacks still count
+  record.data.turnAttacks = { turnKey: variables.pf2eTurn.key, attacks: [logged("strike"), logged("strike")] };
+  runHandler("onTurnStart.js", { token, tokens: [token], round: 1 });
+  assert("Next after Previous: the turn's two attacks still count", ctx.getNextAttackNumber(record, token), 3);
+  runHandler("onTurnStart.js", { token, tokens: [token], round: 2 });
+  assert("its turn next round: a new log", ctx.getNextAttackNumber(record, token), 1);
+  ctx.setCurrentTurn(token, "3");
+  assert("a round given as text works too", variables.pf2eTurn.key, "tok-round-3");
+  ctx.setCurrentTurn(token);
+  assert("without a round: a key of its own", /^tok-\d+-\d+$/.test(variables.pf2eTurn.key), true);
+  delete record.data.turnAttacks;
   variables = {};
 }
 
