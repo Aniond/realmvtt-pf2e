@@ -155,10 +155,24 @@ section("Whose turn it is");
   assert("Next after Previous: the turn's two attacks still count", ctx.getNextAttackNumber(record, token), 3);
   runHandler("onTurnStart.js", { token, tokens: [token], round: 2 });
   assert("its turn next round: a new log", ctx.getNextAttackNumber(record, token), 1);
-  ctx.setCurrentTurn(token, "3");
-  assert("a round given as text works too", variables.pf2eTurn.key, "tok-round-3");
+  const roundTwoKey = variables.pf2eTurn.key;
+  ctx.setCurrentTurn(token, "2");
+  assert("a round given as text works too", variables.pf2eTurn.key, roundTwoKey);
+  ctx.setCurrentTurn({ _id: "gob1", recordType: "npcs" }, 2);
+  ctx.setCurrentTurn(token, 2);
+  assert("another creature's turn came between: a new key", variables.pf2eTurn.key !== roundTwoKey, true);
   ctx.setCurrentTurn(token);
   assert("without a round: a key of its own", /^tok-\d+-\d+$/.test(variables.pf2eTurn.key), true);
+
+  // A new encounter starts a new log, even in the same round as the last
+  // fight's attacks (Sean's review: a round-only key carried them over)
+  runHandler("onTurnStart.js", { token, tokens: [token], round: 1 });
+  record.data.turnAttacks = { turnKey: variables.pf2eTurn.key, attacks: [logged("strike"), logged("strike")] };
+  assert("last fight: two attacks in round 1", ctx.getNextAttackNumber(record, token), 3);
+  runHandler("onEncounterEnd.js", { tokens: [] });
+  variables.pf2eEncounter = { round: 1, participants: [] };
+  runHandler("onTurnStart.js", { token, tokens: [token], round: 1 });
+  assert("new fight, round 1: the first attack is the 1st", ctx.getNextAttackNumber(record, token), 1);
   delete record.data.turnAttacks;
   variables = {};
 }

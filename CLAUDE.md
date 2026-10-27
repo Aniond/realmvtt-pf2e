@@ -104,7 +104,7 @@ Fields such as `onload` and `onchange` only work on Realm VTT field HTML, not on
 
 Storage:
 
-- `onTurnStart` sets the campaign variable `pf2eTurn` to `{ key, tokenId, recordId }`. The key is the token and the round, so Next after Previous keeps the turn's log. `onEncounterEnd` clears it.
+- `onTurnStart` sets the campaign variable `pf2eTurn` to `{ key, round, tokenId, recordId }`. The same token's turn starting again in the same round (Next after Previous) keeps the key and so the turn's log; any other turn start gets a new key. `onEncounterEnd` clears it, so a new encounter always starts a new log.
 - The log is on the attacker's token at `data.turnAttacks` (`{ turnKey, attacks }`). It is written only by the result handlers (`attack.js`, `skill.js`) from `metadata.turnAttack`, which carries the log as it was at roll time. A log whose `turnKey` isn't the current turn's is ignored.
 - Removed attacks are marked at `data.turnAttackSkips.<entryId>`, so the button never reads the token.
 

@@ -36,19 +36,27 @@ function getCurrentTurn() {
 // Records whose turn starts (onTurnStart); without a token, no one's
 // (onEncounterEnd). A character's turn also matches its record, which its
 // sheet rolls from; an NPC's only its token, as tokens of one NPC share it.
-// The key is the token and the round, so Next after Previous, which starts
-// the same turn again, keeps the turn's log; without a round, a new key.
+// Next after Previous starts the same turn again: the same token's turn in
+// the same round keeps its key, so its log still counts. Anything else gets
+// a new key, including a new encounter, as onEncounterEnd clears the
+// variable (a round-only key would match last fight's round 1).
 function setCurrentTurn(token, round = null) {
   if (typeof api?.setCampaignVariable !== "function") return;
   const turnRound = round !== null && round !== "" && Number.isFinite(Number(round)) ? Number(round) : null;
+  const current =
+    typeof api?.getCampaignVariable === "function" ? api.getCampaignVariable(TURN_VARIABLE) : null;
+  const sameTurn =
+    !!token?._id &&
+    turnRound !== null &&
+    !!current?.key &&
+    current.tokenId === token._id &&
+    current.round === turnRound;
   api.setCampaignVariable(
     TURN_VARIABLE,
     token?._id
       ? {
-          key:
-            turnRound !== null
-              ? `${token._id}-round-${turnRound}`
-              : `${token._id}-${Date.now()}-${Math.floor(Math.random() * 1e9)}`,
+          key: sameTurn ? current.key : `${token._id}-${Date.now()}-${Math.floor(Math.random() * 1e9)}`,
+          round: turnRound,
           tokenId: token._id,
           recordId: token.recordType === "characters" ? token.recordId || null : null,
         }
