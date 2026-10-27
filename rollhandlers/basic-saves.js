@@ -3,10 +3,11 @@
 // save (Player Core pg. 405, Basic Saving Throws).
 //   - save.js keeps each save's result on the saver's token (data.lastSave),
 //     whichever order the saves and the damage are rolled in;
-//   - the damage card of a spell with a basic save, or of an ability's damage
-//     button, has an Apply by Saves button: for each selected creature it
-//     applies the damage by that creature's last save, says what each took,
-//     and clears the save so it can't be used twice.
+//   - the damage card of a spell with a basic save, or of the damage button
+//     of an ability whose save button is basic, has an Apply by Saves
+//     button: for each selected creature it applies the damage by that
+//     creature's last save, says what each took, and clears the save so it
+//     can't be used twice.
 // Loaded as one of the ruleset's scripts (ruleset.config.json,
 // otherSettings.scripts), so it shares common.js's scope at runtime.
 
@@ -44,6 +45,22 @@ function getLastSaveValues(metadata, degree) {
       time: Date.now(),
     },
   };
+}
+
+// The basic save a description's damage buttons are against: a spell's
+// Basic box, or the description's save button with basic: true (the module
+// converter writes rollSavingThrow('reflex', 28, { basic: true }) for
+// Foundry's @Check[reflex|dc:28|basic]). { saveType } or null; older imports
+// without the flag have none.
+function getDescriptionBasicSave(description, item) {
+  const save = item?.data?.defense?.save;
+  if (item?.recordType === "spells" && save?.statistic && (save.basic === true || save.basic === "true")) {
+    return { saveType: String(save.statistic).toLowerCase() };
+  }
+  const match = String(description || "").match(
+    /rollSavingThrow\(\s*\\?['"](fortitude|reflex|will)\\?['"]\s*,\s*\d+\s*,\s*\{[^}]*?\bbasic\\?['"]?\s*:\s*true/i,
+  );
+  return match ? { saveType: match[1].toLowerCase() } : null;
 }
 
 // The save card's line for a basic save, or ""

@@ -128,7 +128,7 @@ When adding a new kind of attack roll, pass `turnAttack` (from `getTurnAttackMet
 
 - `rollSave` puts the saver's token in the roll metadata (`saverTokenId`, from `getSaverTokenRef`), and `basicSave: true` when the save button passed `{ basic: true }` (`getSaveMacro`'s `basic` argument; spells with the Basic box).
 - `save.js` keeps the result on that token at `data.lastSave` (`{ degree, saveType, dc, time }`), and a basic save's card says what damage it takes.
-- A damage card with `metadata.basicSave` (`{ saveType }`, from a spell's damage button) or `metadata.applyBySaves` (`executeDamageMacro`'s standard damage, an ability's button) has an Apply by Saves button. `applyDamageBySaves` applies it to each selected creature by its last save from the past 10 minutes (of the spell's save type, when known): none, half, full or double. It posts what each took and clears the save.
+- A damage card with `metadata.basicSave` (`{ saveType }`) has an Apply by Saves button. A spell's damage button sets it from the Basic box. An ability's damage buttons (`executeDamageMacro`) get it from `updateDamageMacros` when the description's save button is basic: the module converter writes `rollSavingThrow('reflex', 28, { basic: true })` for Foundry's `@Check[reflex|dc:28|basic]`. Older imports without the flag get no button. `applyDamageBySaves` applies it to each selected creature by its last save from the past 10 minutes (of the spell's save type, when known): none, half, full or double. It posts what each took and clears the save.
 
 ### Data Structure
 

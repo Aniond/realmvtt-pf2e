@@ -15988,10 +15988,10 @@ function executeDamageMacro(
     damageType: damageType,
     traits,
   };
-  // An ability's damage (a breath weapon) is often against a basic save its
-  // description asks for: the card offers Apply by Saves (basic-saves.js)
-  if (category === "standard") {
-    metadata.applyBySaves = true;
+  // Damage against a basic save (updateDamageMacros: the description's save
+  // button is basic): the card offers Apply by Saves (basic-saves.js)
+  if (category === "standard" && context.basicSave?.saveType) {
+    metadata.basicSave = { saveType: context.basicSave.saveType };
   }
   // Where it comes from (updateDamageMacros), for resistances that depend
   // on it and for healing received from a magical item
@@ -16141,6 +16141,10 @@ function updateDamageMacros(description, context = {}) {
     description.includes("replaceWithDamageMacro") &&
     hasMaximizeHealing(creature, item);
 
+  // The basic save its damage is against, for the damage card's Apply by
+  // Saves (basic-saves.js)
+  const basicSave = getDescriptionBasicSave(description, item);
+
   const minimalContext = JSON.stringify({
     _id: item._id,
     recordType: item.recordType,
@@ -16150,7 +16154,18 @@ function updateDamageMacros(description, context = {}) {
     // Where the damage or healing comes from (item, its traits, the creature)
     damageSource: getDamageSource(creature, item, context.tradition || ""),
     ...(maximize ? { maximizeHealing: true } : {}),
+    ...(basicSave ? { basicSave } : {}),
   });
+
+  // An NPC's damage buttons come as executeDamageMacro('formula', 'category',
+  // 'name') with no context: against a basic save, they get its save type
+  if (basicSave) {
+    description = description.replace(
+      /executeDamageMacro\(\s*(['"])([^'"]*)\1\s*,\s*(['"])([^'"]*)\3\s*,\s*(['"])([^'"]*)\5\s*\)/g,
+      (match, q1, formula, q2, category, q3, name) =>
+        `executeDamageMacro(${q1}${formula}${q1}, ${q2}${category}${q2}, ${q3}${name}${q3}, ${JSON.stringify({ basicSave })})`,
+    );
+  }
 
   // Find all instances of replaceWithDamageMacro(...) and replace them
   // Pattern: replaceWithDamageMacro('formula', 'category', 'name') or replaceWithDamageMacro("formula", "category", "name")

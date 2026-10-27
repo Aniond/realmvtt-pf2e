@@ -65,6 +65,11 @@ section("rollSave carries the saver and whether the save is basic");
   assert("a basic save", metadata.basicSave, true);
   ctx.rollSave(kyra, "reflex", 22, true, false, {});
   assert("not basic: no flag", metadata.basicSave, undefined);
+  // An NPC ability's save button, as Sean's converter writes it
+  ctx.api.getSelectedOrDroppedToken = () => [kyra];
+  ctx.rollSavingThrow("reflex", 28, { basic: true });
+  assert("rollSavingThrow passes basic on", [metadata.basicSave, metadata.dc], [true, 28]);
+  ctx.api.getSelectedOrDroppedToken = () => [];
   ctx.api.promptRoll = saved;
 
   const macro = ctx.getSaveMacro("reflex", 22, true, true, ["Fire"], true);
@@ -95,20 +100,36 @@ section("The damage card's Apply by Saves");
 {
   const damage = (metadata) => ({ roll: { dice: [{ type: 6, value: 4 }], total: 20, types: [{ type: "fire", value: 20 }], metadata: { damageType: "fire", ...metadata } } });
   assertIncludes("a basic save spell's damage", runHandler("damage.js", damage({ isSpell: true, basicSave: { saveType: "reflex" } })), "```Apply_by_Saves");
-  assertIncludes("an ability's damage button", runHandler("damage.js", damage({ applyBySaves: true })), "Apply_by_Saves");
+  assertIncludes("an ability's basic save damage", runHandler("damage.js", damage({ basicSave: { saveType: "reflex" } })), "Apply_by_Saves");
   assertNotIncludes("a Strike's damage: no", runHandler("damage.js", damage({ attack: "Longsword" })), "Apply_by_Saves");
   assertNotIncludes("a spell without a basic save: no", runHandler("damage.js", damage({ isSpell: true, basicSave: null })), "Apply_by_Saves");
-  assertNotIncludes("persistent damage: no", runHandler("damage.js", damage({ applyBySaves: true, isPersistant: true })), "Apply_by_Saves");
+  assertNotIncludes("persistent damage: no", runHandler("damage.js", damage({ basicSave: { saveType: "reflex" }, isPersistant: true })), "Apply_by_Saves");
+  assertNotIncludes("other damage: no", runHandler("damage.js", damage({ rollName: "2d12 + 4 bludgeoning Damage" })), "Apply_by_Saves");
 
-  // executeDamageMacro marks an ability's damage
+  // executeDamageMacro takes the basic save from its context
   let metadata = null;
   const saved = ctx.api.promptRoll;
   ctx.api.promptRoll = (name, dice, modifiers, meta) => (metadata = meta);
-  ctx.executeDamageMacro("8d8 bludgeoning", "standard", "Avalanche Breath");
-  assert("standard damage: Apply by Saves", metadata.applyBySaves, true);
-  ctx.executeDamageMacro("2d8 healing", "healing", "Heal");
-  assert("healing: no", metadata.applyBySaves, undefined);
+  ctx.executeDamageMacro("8d8 bludgeoning", "standard", "Avalanche Breath", { basicSave: { saveType: "reflex" } });
+  assert("against a basic save: named on the roll", metadata.basicSave, { saveType: "reflex" });
+  ctx.executeDamageMacro("2d12+4 bludgeoning", "standard", "Swallow Whole");
+  assert("no basic save (an older import, or none): no button", metadata.basicSave, undefined);
+  ctx.executeDamageMacro("2d8 healing", "healing", "Heal", { basicSave: { saveType: "reflex" } });
+  assert("healing: no", metadata.basicSave, undefined);
   ctx.api.promptRoll = saved;
+
+  // An NPC ability's description: its damage buttons get the basic save
+  // when its save button is basic (Sean's converter)
+  const breath = { _id: "act-breath", recordType: "actions", name: "Avalanche Breath", data: {} };
+  const withBasic = "deals ```8d8_Damage\nexecuteDamageMacro('8d8 bludgeoning', 'standard', '8d8 bludgeoning Damage')\n``` in a cone (```Reflex_Save\nrollSavingThrow('reflex', 28, { basic: true });\n``` save)";
+  const updated = ctx.updateDamageMacros(withBasic, { item: breath, creature: { _id: "npc", recordType: "npcs", data: {} } });
+  assertIncludes("the damage button gets the save type", updated, `executeDamageMacro('8d8 bludgeoning', 'standard', '8d8 bludgeoning Damage', {"basicSave":{"saveType":"reflex"}})`);
+  const jsonFlag = withBasic.replace("{ basic: true }", '{"basic":true}');
+  assertIncludes("JSON-style flag too", ctx.updateDamageMacros(jsonFlag, { item: breath, creature: { _id: "npc", recordType: "npcs", data: {} } }), '"basicSave":{"saveType":"reflex"}');
+  const older = withBasic.replace(", { basic: true }", "");
+  assertIncludes("an older import: unchanged", ctx.updateDamageMacros(older, { item: breath, creature: { _id: "npc", recordType: "npcs", data: {} } }), "executeDamageMacro('8d8 bludgeoning', 'standard', '8d8 bludgeoning Damage')\n");
+  assert("no basic save in the description: none", ctx.getDescriptionBasicSave("rollSavingThrow('will', 26);", breath), null);
+  assert("a spell's Basic box", ctx.getDescriptionBasicSave("", { recordType: "spells", data: { defense: { save: { statistic: "Reflex", basic: true } } } }), { saveType: "reflex" });
 
   // A spell's damage button names the save
   const fireball = { _id: "fb", name: "Fireball", recordType: "spells", data: { level: 3, traits: ["Fire"], defense: { save: { statistic: "reflex", basic: true } }, damage: [{ data: { formula: "6d6", type: "fire" } }] } };
@@ -146,12 +167,12 @@ section("Applying by each creature's save");
   assertIncludes("a save over 10 minutes old doesn't count", summaryText, "- Merisiel: no Reflex save rolled");
   assertIncludes("nor another save than the spell's", summaryText, "- Harsk: no Reflex save rolled");
 
-  // An ability's damage doesn't name the save: any recent one counts
+  // An ability's damage, named by its roll
   applied.length = 0;
   ctx.api.getSelectedOrDroppedToken = () => [{ token: token("g", "Harsk", { lastSave: recent(0, "fortitude") }) }];
   ctx.__state.messages = [];
-  ctx.applyDamageBySaves({ total: 10, metadata: { rollName: "Avalanche Breath Damage", applyBySaves: true } });
-  assert("any save type for an ability", applied, [["g", false, false]]);
+  ctx.applyDamageBySaves({ total: 10, metadata: { rollName: "Avalanche Breath Damage", basicSave: { saveType: "fortitude" } } });
+  assert("a selected token wrapped as { token }", applied, [["g", false, false]]);
   assertIncludes("named from the roll", ctx.__state.messages.join("\n"), "**Avalanche Breath Damage: applied by saves**\n- Harsk: Fortitude failure, full damage");
 
   ctx.api.getSelectedOrDroppedToken = () => [];
