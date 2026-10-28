@@ -84,10 +84,16 @@ ctx.castSpell = (record, spell, path) => casts.push({ record, spell, path });
 let added = [];
 let removed = [];
 let bulk = 0;
+// As in Realm, adding a value changes the stored record, not the copy the
+// script holds: only reading the record again sees it
 ctx.api.addValue = (path, value, cb) => {
   added.push([path, value]);
   const record = ctx.record;
-  if (record && path === "data.spells") record.data.spells = [...(record.data.spells || []), value];
+  if (record && path === "data.spells") {
+    const stored = JSON.parse(JSON.stringify(record));
+    stored.data.spells = [...(stored.data.spells || []), value];
+    records[record._id] = stored;
+  }
   if (cb) cb();
 };
 ctx.api.removeValue = (path, index, cb) => {
@@ -182,9 +188,13 @@ section("Using a wand or scroll from the sheet");
   assert("then the wand's use is spent, the wand kept", [sets, recordWrites, bulk], [[], [{ "data.inventory.0.data.uses.value": 0 }], 0]);
   assert("castSpell casts it from there (found by name: the link has the module's id)", [casts[0].path, casts[0].spell._id, casts[0].spell.data.uses], ["data.spells.1.data.spells3.0", "spell-lb", 1]);
 
-  // Later casts write only the Scrolls and Wands entry, with the item's use
+  // Later casts (the record now has the entry) write only the Scrolls and
+  // Wands entry, with the item's use
   reset();
-  ctx.useItemSpell(pc, wand(), "data.inventory.0");
+  const withEntry = records.pc;
+  assert("the stored record has the new entry", withEntry.data.spells[1].name, "Scrolls and Wands");
+  ctx.record = withEntry;
+  ctx.useItemSpell(withEntry, wand(), "data.inventory.0");
   assert("only data.spells.<index>, with the use, in one write", [added.length, recordWrites.length, Object.keys(recordWrites[0]).sort()], [0, 1, ["data.inventory.0.data.uses.value", "data.spells.1"]]);
   assert("not the whole list", "data.spells" in recordWrites[0], false);
 

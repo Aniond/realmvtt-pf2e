@@ -231,13 +231,18 @@ function castItemSpellWith(record, item, itemIndex, spell, rank, casting, note =
     finishItemSpellUse(target, itemIndex, use);
   };
   if (isNew) {
-    // A new entry is added; the item is spent once it's there
+    // A new entry is added; the item is spent once it's there, on the record
+    // read again (the copy from the click doesn't have the entry, and the
+    // write's callback hands that copy back)
     api.addValue("data.spells", entry, () => {
-      if (Object.keys(values).length > 0) {
-        api.setValuesOnRecord(record, values, cast);
-      } else {
-        api.getRecord(record.recordType, record._id, cast);
-      }
+      api.getRecord(record.recordType, record._id, (fresh) => {
+        const current = fresh || record;
+        if (Object.keys(values).length > 0) {
+          api.setValuesOnRecord(current, values, cast);
+        } else {
+          cast(current);
+        }
+      });
     });
   } else {
     api.setValuesOnRecord(record, { ...values, [`data.spells.${index}`]: entry }, cast);
