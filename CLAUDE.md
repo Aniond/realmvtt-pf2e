@@ -133,13 +133,13 @@ When adding a new kind of attack roll, pass `turnAttack` (from `getTurnAttackMet
   - "spells" for damage from a spell
   - "holy" or "unholy" when the attack or spell has that trait
   - "area-damage" when its source has an area (`getDamageSource` sets `damageSource.area` from `data.area`)
-  - "splash-damage" when splash damage is applied on its own
-- A category weakness, like a material one, applies to each damage type in the hit.
+  - "splash-damage" on a hit whose damage includes splash (`metadata.splashDamage`) and when splash damage is applied on its own
+- Weaknesses are checked for each damage type in the hit. Of those that apply to a type (its own, all damage, then each category), only the highest is added, with exceptions and doubleVs counted first: a demon weak to cold iron 5 and holy 5 takes +5 from a holy cold-iron weapon.
 - Legacy data reads as remaster:
   - Damage types: positive becomes vitality and negative becomes void. Good and evil damage becomes spirit damage with the holy or unholy category.
   - Weaknesses, resistances and immunities: positive and negative become vitality and void, and good and evil become holy and unholy, keeping the stronger of a legacy entry and a remaster one.
   - Lawful and chaotic stay as they are.
-- A token immune to a condition is asked about it (`getConditionImmunity` in `addConditionGain`, which every Apply button and maneuver goes through): its immunities list names the condition, or object immunities cover it. The GM can apply it anyway; nothing is refused.
+- A token immune to a condition is asked about it (`getConditionImmunity` in `addConditionGain`, which every Apply button and maneuver goes through): its immunities list names the condition, or object immunities cover it. Vehicles and hazards have object immunities whether or not their data lists them (Foundry adds them to every hazard), nonlethal attacks among them. The GM can apply it anyway; nothing is refused.
 
 ### Scrolls and Wands (casting from items)
 

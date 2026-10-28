@@ -14437,8 +14437,11 @@ function getIWR(target, armorSpecDetails = null, roll = null) {
 
   // Check if target has object immunities
   // Object immunities apply automatically to vehicles, or if explicitly listed in immunities
+  // Vehicles and hazards have object immunities whether or not their data
+  // lists them (Foundry adds them to every hazard)
   const isVehicle =
-    target.recordType === "npcs" && target.data?.type === "vehicle";
+    target.recordType === "npcs" &&
+    (target.data?.type === "vehicle" || target.data?.type === "hazard");
   const hasObjectImmunitiesExplicit = immunityArray.some((immunity) => {
     if (immunity?.data?.type) {
       const type = immunity.data.type.toLowerCase().trim();
@@ -14542,8 +14545,9 @@ function getIWR(target, armorSpecDetails = null, roll = null) {
 //   - "holy" / "unholy": damage with the holy or unholy trait, the attack's
 //     or spell's own (a fiend's weakness to holy);
 //   - "area-damage": from a spell or ability with an area (damageSource.area);
-//   - "splash-damage": the splash damage of a splash weapon, applied on its
-//     own (isSplash; a swarm's weaknesses).
+//   - "splash-damage": a splash weapon's damage, on the hit that includes it
+//     (metadata.splashDamage) and applied on its own (isSplash); a swarm's
+//     weaknesses.
 // Legacy damage types become the remaster's: positive is vitality, negative
 // void, and good and evil damage spirit with the holy or unholy category.
 function withDamageCategories(roll, isSplash = false) {
@@ -14563,7 +14567,10 @@ function withDamageCategories(roll, isSplash = false) {
   if (traits.includes("holy")) add("holy");
   if (traits.includes("unholy")) add("unholy");
   if (meta.damageSource?.area === true) add("area-damage");
-  if (isSplash) add("splash-damage");
+  // Splash damage applied on its own, or a hit whose damage includes splash
+  // (Foundry's damage:component:splash: a bomb's primary target)
+  const splash = String(meta.splashDamage ?? "").trim();
+  if (isSplash || (splash && splash !== "0")) add("splash-damage");
   const changed =
     categories.length !== (meta.damageCategories || []).length ||
     types.some((entry, index) => entry !== roll?.types?.[index]);
@@ -15357,96 +15364,38 @@ function applyDamage(
           }
         }
 
-        // Apply Weaknesses (add extra damage)
+        // Apply Weaknesses (add extra damage). Of the weaknesses that apply
+        // to this damage (its type, all damage, then each of its categories:
+        // cold-iron, holy, area-damage...), only the highest counts ("use
+        // only the highest applicable weakness value"; Foundry's
+        // highestWeakness). A demon weak to cold iron 5 and holy 5 takes +5
+        // from a holy cold-iron weapon, not +10.
         if (!damageIgnoresWeaknesses.includes(lowerType)) {
-          // Track which weaknesses we've applied to avoid duplicates
-          const appliedWeaknesses = new Set();
-
-          // Check for specific type weakness
-          const weakness = IWR.weaknesses[lowerType];
-          // Check for "all damage" weakness
-          const allDamageWeakness =
-            IWR.weaknesses["all damage"] || IWR.weaknesses["all-damage"];
-
-          const applicableWeakness = weakness || allDamageWeakness;
-
-          if (applicableWeakness) {
-            // Check if this weakness has an exception that matches the roll
-            if (
-              applicableWeakness.exceptions &&
-              rollMatchesCondition(roll, applicableWeakness.exceptions, lowerType)
-            ) {
-              // Exception applies - ignore this weakness
-            } else {
-              // Apply weakness value (double it if doubleVs condition matches)
-              let weaknessValue = applicableWeakness.value;
-              if (
-                applicableWeakness.doubleVs &&
-                rollMatchesCondition(roll, applicableWeakness.doubleVs, lowerType)
-              ) {
-                weaknessValue = weaknessValue * 2;
-              }
-              damageOfThisType += weaknessValue;
-              // Mark this weakness as applied
-              if (weakness) appliedWeaknesses.add(lowerType);
-              if (allDamageWeakness) appliedWeaknesses.add("all damage");
+          const normalizeKey = (text) =>
+            String(text || "").toLowerCase().trim().replace(/-/g, "").replace(/ /g, "");
+          // A weakness's value against this roll: 0 when an exception
+          // matches, doubled when its doubleVs does
+          const weaknessValueFor = (entry) => {
+            if (!entry) return 0;
+            if (entry.exceptions && rollMatchesCondition(roll, entry.exceptions, lowerType)) {
+              return 0;
             }
-          }
-
-          // Also check weaknesses against damageCategories (e.g., materials like "cold-iron", "silver")
-          const damageCategories = roll?.metadata?.damageCategories || [];
-          damageCategories.forEach((category) => {
-            const categoryNormalized = category
-              .toLowerCase()
-              .trim()
-              .replace(/-/g, "")
-              .replace(/ /g, "");
-
-            // Find matching weakness by normalizing the weakness type
-            const matchingWeaknessKey = Object.keys(IWR.weaknesses).find(
-              (weaknessKey) => {
-                const weaknessNormalized = weaknessKey
-                  .toLowerCase()
-                  .trim()
-                  .replace(/-/g, "")
-                  .replace(/ /g, "");
-                return weaknessNormalized === categoryNormalized;
-              },
+            const value = parseInt(entry.value, 10) || 0;
+            return entry.doubleVs && rollMatchesCondition(roll, entry.doubleVs, lowerType)
+              ? value * 2
+              : value;
+          };
+          const applicable = [
+            IWR.weaknesses[lowerType],
+            IWR.weaknesses["all damage"] || IWR.weaknesses["all-damage"],
+          ];
+          (roll?.metadata?.damageCategories || []).forEach((category) => {
+            const key = Object.keys(IWR.weaknesses).find(
+              (weaknessKey) => normalizeKey(weaknessKey) === normalizeKey(category),
             );
-
-            if (matchingWeaknessKey) {
-              const matchingWeaknessNormalized = matchingWeaknessKey
-                .toLowerCase()
-                .trim()
-                .replace(/-/g, "")
-                .replace(/ /g, "");
-
-              // Skip if we've already applied this weakness
-              if (appliedWeaknesses.has(matchingWeaknessNormalized)) {
-                return;
-              }
-
-              const categoryWeakness = IWR.weaknesses[matchingWeaknessKey];
-              // Check if this weakness has an exception that matches the roll
-              if (
-                categoryWeakness.exceptions &&
-                rollMatchesCondition(roll, categoryWeakness.exceptions, lowerType)
-              ) {
-                // Exception applies - ignore this weakness
-              } else {
-                // Apply weakness value (double it if doubleVs condition matches)
-                let weaknessValue = categoryWeakness.value;
-                if (
-                  categoryWeakness.doubleVs &&
-                  rollMatchesCondition(roll, categoryWeakness.doubleVs, lowerType)
-                ) {
-                  weaknessValue = weaknessValue * 2;
-                }
-                damageOfThisType += weaknessValue;
-                appliedWeaknesses.add(matchingWeaknessNormalized);
-              }
-            }
+            if (key) applicable.push(IWR.weaknesses[key]);
           });
+          damageOfThisType += Math.max(0, ...applicable.map(weaknessValueFor));
         }
 
         // Apply Resistances (reduce damage)
@@ -19344,7 +19293,8 @@ function getConditionGainValue(token, conditionName, value, context = {}) {
   return { value: Math.max(0, total), sources };
 }
 
-// Conditions object immunities cover (Foundry's object-immunities)
+// Conditions object immunities cover (Foundry's object-immunities), which
+// vehicles and hazards have whether or not their data lists them
 const OBJECT_IMMUNE_CONDITIONS = ["doomed", "drained", "fatigued", "paralyzed", "sickened", "unconscious"];
 
 // What makes a creature immune to a condition: the condition in its
@@ -19359,7 +19309,7 @@ function getConditionImmunity(target, conditionName) {
   if (types.includes(condition)) return String(conditionName).toLowerCase();
   const objectImmune =
     types.some((type) => type === "object-immunities" || type === "object-immunity") ||
-    (target?.recordType === "npcs" && target?.data?.type === "vehicle");
+    (target?.recordType === "npcs" && ["vehicle", "hazard"].includes(target?.data?.type));
   if (objectImmune && OBJECT_IMMUNE_CONDITIONS.includes(condition)) return "object immunities";
   return null;
 }

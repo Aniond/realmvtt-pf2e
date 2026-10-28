@@ -599,4 +599,48 @@ section("Condition immunities: the GM is asked (H12)");
   assert("not immune: added without asking", [confirms.length, added], [2, 2]);
 }
 
+section("Only the highest weakness applies to the same damage (Sean's review of #30)");
+{
+  const demon = makeTarget({ weaknesses: [weak("cold-iron", 5), weak("holy", 5)] });
+  const holyColdIron = sourced("slashing", 10, { ...WEAPON, traits: ["holy"] }, { categories: ["cold-iron"] });
+  assert("a holy cold-iron Strike 10 on a demon weak to both 5 -> 15, not 20", damageDealt(demon, holyColdIron), 15);
+  const swarm = makeTarget({ weaknesses: [weak("fire", 5), weak("area-damage", 5)] });
+  const fireball = sourced("fire", 10, { ...ARCANE_SPELL, area: true }, { isSpell: true });
+  assert("Fireball 10 on a swarm weak to fire 5 and area 5 -> 15, not 20", damageDealt(swarm, fireball), 15);
+  const higherArea = makeTarget({ weaknesses: [weak("fire", 3), weak("area-damage", 8)] });
+  assert("... the higher of fire 3 and area 8 -> 18", damageDealt(higherArea, fireball), 18);
+  const allAndType = makeTarget({ weaknesses: [weak("fire", 4), weak("all-damage", 2)] });
+  assert("fire 4 and all damage 2: fire 10 -> 14", damageDealt(allAndType, roll("fire", 10)), 14);
+  const doubled = makeTarget({ weaknesses: [weak("holy", 3, { doubleVs: ["non-magical"] }), weak("cold-iron", 5)] });
+  const plainHoly = sourced("slashing", 10, { ...WEAPON, traits: ["holy"] }, { categories: ["cold-iron", "non-magical"] });
+  assert("doubleVs counts before the highest is taken (holy 3x2=6 over cold iron 5) -> 16", damageDealt(doubled, plainHoly), 16);
+  const excepted = makeTarget({ weaknesses: [weak("holy", 9, { exceptions: ["cold-iron"] }), weak("cold-iron", 5)] });
+  assert("an exception drops that weakness from the choice (holy 9 except cold iron) -> 15", damageDealt(excepted, holyColdIron), 15);
+  const types = multiRoll([["slashing", 10], ["fire", 4]], { categories: ["cold-iron"] });
+  const coldIronFire = makeTarget({ weaknesses: [weak("cold-iron", 5), weak("fire", 2)] });
+  assert("per damage type: slashing gets cold iron 5, fire the higher of cold iron 5 and fire 2 -> 24", damageDealt(coldIronFire, types), 24);
+}
+
+section("Splash weakness on the primary target too (Sean's review of #30)");
+{
+  const swarm = makeTarget({ weaknesses: [weak("splash-damage", 5)] });
+  const bomb = roll("fire", 4);
+  bomb.metadata.splashDamage = "1";
+  assert("a bomb hit with splash 1 on a swarm weak to splash 5 -> 9", damageDealt(swarm, bomb), 9);
+  const noSplash = roll("fire", 4);
+  noSplash.metadata.splashDamage = "";
+  assert("no splash on the weapon -> 4", damageDealt(swarm, noSplash), 4);
+  const fireToo = makeTarget({ weaknesses: [weak("splash-damage", 5), weak("fire", 3)] });
+  assert("splash 5 and fire 3: only the higher -> 9", damageDealt(fireToo, bomb), 9);
+}
+
+section("Hazards have object immunities (Sean's review of #30)");
+{
+  const hazard = makeTarget({ type: "hazard" });
+  assert("a hazard: paralyzed is covered by object immunities", ctx.getConditionImmunity(hazard, "Paralyzed"), "object immunities");
+  assert("a hazard takes no bleed damage", damageDealt(hazard, roll("bleed", 5)), 0);
+  assert("... but fire as usual", damageDealt(hazard, roll("fire", 5)), 5);
+  assert("a creature isn't covered", ctx.getConditionImmunity(makeTarget({ type: "creature" }), "Paralyzed"), null);
+}
+
 process.exit(summary());
