@@ -72,6 +72,20 @@ const setPath = (target, path, value) => {
   at[keys[keys.length - 1]] = value;
 };
 const getPath = (target, path) => path.split(".").reduce((value, key) => value?.[key], target);
+// With late on, the server's answers arrive later, as in Realm: a write
+// changes the store when it's sent, a read copies it then, and the callbacks
+// wait until settle() runs them in order
+let late = false;
+let waiting = [];
+const respond = (cb, value) => {
+  if (!cb) return;
+  if (late) waiting.push(() => cb(value));
+  else cb(value);
+};
+function settle() {
+  while (waiting.length > 0) waiting.shift()();
+  late = false;
+}
 const spellsByName = { "Lightning Bolt": LIGHTNING_BOLT, Heal: HEAL };
 ctx.getNearestParentDataPath = (path) => `${path}`.replace(/\.data\.[^.]+\.\d+$/, "");
 ctx.api.richTextToMarkdown = (text) => `${text || ""}`;
@@ -80,17 +94,17 @@ ctx.api.getValueOnRecord = (target, path) => getPath(target, path);
 ctx.api.getValue = (path) => getPath(store[ctx.record?._id] || ctx.record, path);
 ctx.api.showNotification = (message) => notices.push(message);
 ctx.api.getRecord = (type, id, cb) => {
-  if (type === "spells") return cb(Object.values(spellsByName).find((s) => s._id === id) || null);
-  cb(store[id] ? copy(store[id]) : null);
+  if (type === "spells") return respond(cb, Object.values(spellsByName).find((s) => s._id === id) || null);
+  respond(cb, store[id] ? copy(store[id]) : null);
 };
 // The description links the module's spell id: only the name finds it
-ctx.api.getRecordByTypeAndName = (type, name, cb) => cb(spellsByName[name] || null);
+ctx.api.getRecordByTypeAndName = (type, name, cb) => respond(cb, spellsByName[name] || null);
 ctx.api.setValuesOnRecord = (record, values, cb) => {
   recordWrites.push(values);
   const stored = store[record._id] || copy(record);
   Object.entries(values).forEach(([path, value]) => setPath(stored, path, copy(value)));
   store[record._id] = stored;
-  if (cb) cb(copy(stored));
+  respond(cb, copy(stored));
 };
 ctx.api.setValues = (values, cb) => ctx.api.setValuesOnRecord(ctx.record, values, cb);
 ctx.api.addValue = (path, value, cb) => {
@@ -98,12 +112,12 @@ ctx.api.addValue = (path, value, cb) => {
   const stored = store[ctx.record._id];
   getPath(stored, path).push(copy(value));
   // The callback hands back the copy from before
-  if (cb) cb(ctx.record);
+  respond(cb, ctx.record);
 };
 ctx.api.removeValue = (path, index, cb) => {
   removed.push([path, index]);
   getPath(store[ctx.record._id], path).splice(index, 1);
-  if (cb) cb(ctx.record);
+  respond(cb, ctx.record);
 };
 ctx.updateTotalBulk = (record, write = true) => {
   bulk += 1;
@@ -355,6 +369,54 @@ section("Use on a wand or scroll casts its row");
   assert("a potion: Use as before", ctx.useItemSpell(ctx.record, potion, "data.inventory.0"), false);
   assert("an NPC: Use as before", ctx.useItemSpell({ ...ctx.record, recordType: "npcs" }, wand(), "data.inventory.0"), false);
   assert("nothing written", [added, recordWrites], [[], []]);
+}
+
+section("Answers that arrive late (Sean's races)");
+{
+  const names = () => stored().data.spells.map((e) => e.name);
+  const divine = () => entry("Divine Prepared Spells", { tradition: "Divine", attribute: "wis", dc: 19, mod: 9 });
+
+  // 1. The last scrolls deleted quickly: two syncs, one entry to remove
+  open(character([divine()], {}, [scroll(2)]));
+  ctx.syncItemSpells(ctx.record);
+  stored().data.spells.push(entry("Focus Spells", { type: "focus" }));
+  stored().data.inventory = [];
+  ctx.record = copy(stored());
+  late = true;
+  ctx.syncItemSpells(ctx.record);
+  ctx.syncItemSpells(ctx.record);
+  settle();
+  assert("two syncs at once remove only Scrolls and Wands", names(), ["Divine Prepared Spells", "Focus Spells"]);
+
+  // 2. Two wands equipped quickly: two syncs, one entry to add
+  open(character([divine()], {}, [wand()]));
+  let calls = 0;
+  late = true;
+  ctx.syncItemSpells(ctx.record, () => (calls += 1));
+  ctx.syncItemSpells(ctx.record, () => (calls += 1));
+  ctx.syncItemSpells(ctx.record, () => (calls += 1));
+  settle();
+  assert("syncs at once add one entry", names(), ["Divine Prepared Spells", "Scrolls and Wands"]);
+  assert("and each one's callback runs", calls, 3);
+
+  // 3. Use double-clicked on the last scroll, a potion after it
+  const lastScroll = { ...scroll(1), data: { ...scroll(1).data, uses: { autoDestroy: true } } };
+  open(character([divine()], {}, [lastScroll, potion]));
+  ctx.syncItemSpells(ctx.record);
+  const before = copy(stored());
+  const path = "data.spells.1.data.spells1.0";
+  late = true;
+  ctx.castSpell(copy(before), getPath(before, path), path);
+  ctx.castSpell(copy(before), getPath(before, path), path);
+  settle();
+  assert("a double click removes the scroll, not the potion", stored().data.inventory.map((i) => i.name), ["Healing Potion (Minor)"]);
+  assert("and the entry with it", names(), ["Divine Prepared Spells"]);
+
+  // Use finds its row by the item's id, if the inventory moved since
+  open(character([divine()], {}, [potion, scroll(2)]));
+  ctx.syncItemSpells(ctx.record);
+  assert("the row by the item's id", ctx.getItemSpellRowPath(stored(), 0, "item-scroll"), "data.spells.1.data.spells1.0");
+  assert("not the row at the old index", ctx.getItemSpellRowPath(stored(), 1, "item-wand"), null);
 }
 
 section("Trick Magic Item without the tradition: it just casts");
