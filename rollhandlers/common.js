@@ -13962,6 +13962,10 @@ function getDamageSource(creature, item = null, tradition = "") {
       source.type = String(item.recordType).replace(/s$/, "");
     }
     if (traits.length > 0) source.traits = traits;
+    // A spell or ability with an area deals area damage (a swarm's weakness)
+    if (item.data?.area?.type || parseInt(item.data?.area?.value, 10) > 0) {
+      source.area = true;
+    }
   }
   if (creature) {
     const data = creature.data || creature.record?.data || {};
@@ -14065,21 +14069,48 @@ function parseIWRExceptions(raw) {
 }
 
 // Physical resistance, weakness or immunity is to bludgeoning, piercing and
-// slashing (Fury Instinct): the "physical" entry becomes those three, each
-// keeping the stronger of it and an entry already there
+// slashing (Fury Instinct), and energy to acid, cold, electricity, fire,
+// sonic, force, vitality and void (Foundry's ENERGY_DAMAGE_TYPES): the
+// "physical" or "energy" entry becomes those types, each keeping the stronger
+// of it and an entry already there
 const PHYSICAL_DAMAGE_TYPES = ["bludgeoning", "piercing", "slashing"];
+const ENERGY_DAMAGE_TYPES = ["acid", "cold", "electricity", "fire", "sonic", "force", "vitality", "void"];
+const IWR_DAMAGE_GROUPS = { physical: PHYSICAL_DAMAGE_TYPES, energy: ENERGY_DAMAGE_TYPES };
 
 function expandPhysicalIWR(map, keepHigher = true) {
-  const physical = map["physical"];
-  if (!physical) return;
-  delete map["physical"];
-  PHYSICAL_DAMAGE_TYPES.forEach((type) => {
+  Object.entries(IWR_DAMAGE_GROUPS).forEach(([group, types]) => {
+    const entry = map[group];
+    if (!entry) return;
+    delete map[group];
+    types.forEach((type) => {
+      const existing = map[type];
+      if (
+        !existing ||
+        (keepHigher && (entry.value || 0) > (existing.value || 0))
+      ) {
+        map[type] = { ...entry, type };
+      }
+    });
+  });
+}
+
+// Legacy (pre-remaster) damage types as the remaster has them: positive is
+// vitality, negative is void, and good and evil damage is spirit damage with
+// the holy or unholy trait, so a weakness to good is a weakness to holy.
+// Lawful and chaotic have no remaster type and stay as they are.
+const LEGACY_DAMAGE_TYPES = { positive: "vitality", negative: "void", good: "spirit", evil: "spirit" };
+const LEGACY_IWR_TYPES = { positive: "vitality", negative: "void", good: "holy", evil: "unholy" };
+
+// A legacy entry in an IWR map renamed to its remaster type, keeping the
+// stronger of it and an entry already there
+function renameLegacyIWR(map) {
+  Object.entries(LEGACY_IWR_TYPES).forEach(([legacy, type]) => {
+    const entry = map[legacy];
+    if (!entry) return;
+    delete map[legacy];
     const existing = map[type];
-    if (
-      !existing ||
-      (keepHigher && (physical.value || 0) > (existing.value || 0))
-    ) {
-      map[type] = { ...physical, type };
+    if (!existing || (entry.value || 0) > (existing.value || 0)) {
+      map[type] = { ...entry, type };
     }
   });
 }
@@ -14406,8 +14437,11 @@ function getIWR(target, armorSpecDetails = null, roll = null) {
 
   // Check if target has object immunities
   // Object immunities apply automatically to vehicles, or if explicitly listed in immunities
+  // Vehicles and hazards have object immunities whether or not their data
+  // lists them (Foundry adds them to every hazard)
   const isVehicle =
-    target.recordType === "npcs" && target.data?.type === "vehicle";
+    target.recordType === "npcs" &&
+    (target.data?.type === "vehicle" || target.data?.type === "hazard");
   const hasObjectImmunitiesExplicit = immunityArray.some((immunity) => {
     if (immunity?.data?.type) {
       const type = immunity.data.type.toLowerCase().trim();
@@ -14452,10 +14486,12 @@ function getIWR(target, armorSpecDetails = null, roll = null) {
     });
   }
 
-  // Physical means bludgeoning, piercing and slashing
-  expandPhysicalIWR(immunitiesMap);
-  expandPhysicalIWR(weaknessesMap);
-  expandPhysicalIWR(resistancesMap);
+  // Legacy types as the remaster has them; physical means bludgeoning,
+  // piercing and slashing, energy the energy types
+  [immunitiesMap, weaknessesMap, resistancesMap].forEach((map) => {
+    renameLegacyIWR(map);
+    expandPhysicalIWR(map);
+  });
 
   // suppressIWR: field immunity, resistance, weakness, "all" (all three) or
   // empty (immunity and resistance, the usual case); value the damage types
@@ -14479,8 +14515,8 @@ function getIWR(target, armorSpecDetails = null, roll = null) {
       .map(normalize)
       .filter(Boolean)
       .forEach((type) => {
-        if (type === "physical") {
-          PHYSICAL_DAMAGE_TYPES.forEach((t) => types.add(t));
+        if (IWR_DAMAGE_GROUPS[type]) {
+          IWR_DAMAGE_GROUPS[type].forEach((t) => types.add(t));
         } else {
           types.add(type);
         }
@@ -14501,18 +14537,48 @@ function getIWR(target, armorSpecDetails = null, roll = null) {
   };
 }
 
-// A damage roll whose damage comes from a spell (metadata.isSpell, or a
-// spell damageSource) with "spells" added to its damage categories, so a
-// weakness or resistance to spells applies to it (Foundry's "spells" IWR
-// type). Other rolls come back as they are.
-function withSpellDamageCategory(roll) {
+// A damage roll with the damage categories Foundry's IWR types test for that
+// its types and materials don't carry, so weakness, resistance or immunity to
+// them applies:
+//   - "spells": damage from a spell (metadata.isSpell, or a spell
+//     damageSource; Curse of the Mortal Warrior);
+//   - "holy" / "unholy": damage with the holy or unholy trait, the attack's
+//     or spell's own (a fiend's weakness to holy);
+//   - "area-damage": from a spell or ability with an area (damageSource.area);
+//   - "splash-damage": a splash weapon's damage, on the hit that includes it
+//     (metadata.splashDamage) and applied on its own (isSplash); a swarm's
+//     weaknesses.
+// Legacy damage types become the remaster's: positive is vitality, negative
+// void, and good and evil damage spirit with the holy or unholy category.
+function withDamageCategories(roll, isSplash = false) {
   const meta = roll?.metadata || {};
-  const isSpell = meta.isSpell === true || meta.damageSource?.type === "spell";
-  const categories = Array.isArray(meta.damageCategories) ? meta.damageCategories : [];
-  if (!isSpell || categories.includes("spells")) return roll;
+  const categories = Array.isArray(meta.damageCategories) ? [...meta.damageCategories] : [];
+  const add = (category) => {
+    if (!categories.includes(category)) categories.push(category);
+  };
+  const types = (roll?.types || []).map((entry) => {
+    const type = String(entry?.type || "").toLowerCase().trim();
+    if (!LEGACY_DAMAGE_TYPES[type]) return entry;
+    if (LEGACY_IWR_TYPES[type] === "holy" || LEGACY_IWR_TYPES[type] === "unholy") add(LEGACY_IWR_TYPES[type]);
+    return { ...entry, type: LEGACY_DAMAGE_TYPES[type] };
+  });
+  if (meta.isSpell === true || meta.damageSource?.type === "spell") add("spells");
+  const traits = getTraitNameList([...(meta.traits || []), ...(meta.damageSource?.traits || [])]);
+  if (traits.includes("holy")) add("holy");
+  if (traits.includes("unholy")) add("unholy");
+  if (meta.damageSource?.area === true) add("area-damage");
+  // Splash damage applied on its own, or a hit whose damage includes splash
+  // (Foundry's damage:component:splash: a bomb's primary target)
+  const splash = String(meta.splashDamage ?? "").trim();
+  if (isSplash || (splash && splash !== "0")) add("splash-damage");
+  const changed =
+    categories.length !== (meta.damageCategories || []).length ||
+    types.some((entry, index) => entry !== roll?.types?.[index]);
+  if (!changed) return roll;
   return {
     ...roll,
-    metadata: { ...meta, damageCategories: [...categories, "spells"] },
+    ...(Array.isArray(roll?.types) ? { types } : {}),
+    metadata: { ...meta, damageCategories: categories },
   };
 }
 
@@ -14553,7 +14619,7 @@ function getDamageIgnoreList(modifiers, kind) {
 
 // Reads a metadata ignore list: { types: damage types ignored entirely,
 // amounts: { type: how much of its resistance is ignored } }. "physical" is
-// bludgeoning, piercing and slashing.
+// bludgeoning, piercing and slashing, "energy" the energy types.
 function parseDamageIgnoreList(text) {
   const types = [];
   const amounts = {};
@@ -14564,7 +14630,7 @@ function parseDamageIgnoreList(text) {
     .forEach((entry) => {
       const [type, amountText] = entry.split(":");
       const amount = parseInt(amountText, 10);
-      const expanded = type === "physical" ? PHYSICAL_DAMAGE_TYPES : [type];
+      const expanded = IWR_DAMAGE_GROUPS[type] || [type];
       expanded.forEach((t) => {
         if (amount > 0) {
           amounts[t] = Math.max(amounts[t] || 0, amount);
@@ -14572,7 +14638,7 @@ function parseDamageIgnoreList(text) {
           types.push(t);
         }
       });
-      if (type === "physical" && !(amount > 0) && !types.includes(type)) {
+      if (IWR_DAMAGE_GROUPS[type] && !(amount > 0) && !types.includes(type)) {
         types.push(type);
       }
     });
@@ -14736,14 +14802,20 @@ function applyDamage(
   // splashDamage should be an object like: { type: "fire", value: 3 }
   // We still use the roll object for metadata (traits, ignore resistances, etc.)
   const isApplyingSplash = splashDamage !== null;
-  // Spell damage is also of the "spells" category, so weakness or resistance
-  // to spells applies (Curse of the Mortal Warrior)
-  roll = withSpellDamageCategory(roll);
+  // Spell, holy, unholy, area and splash damage are also of those
+  // categories, and legacy damage types are the remaster's (withDamageCategories)
+  roll = withDamageCategories(roll, isApplyingSplash);
+  if (isApplyingSplash && LEGACY_DAMAGE_TYPES[String(splashDamage?.type || "").toLowerCase()]) {
+    splashDamage = { ...splashDamage, type: LEGACY_DAMAGE_TYPES[String(splashDamage.type).toLowerCase()] };
+  }
   const traits = roll.metadata?.traits || [];
-  const hasVitalityTrait = traits.some(
-    (trait) => trait?.toLowerCase() === "vitality",
+  // (legacy positive and negative are vitality and void)
+  const hasVitalityTrait = traits.some((trait) =>
+    ["vitality", "positive"].includes(trait?.toLowerCase()),
   );
-  const hasVoidTrait = traits.some((trait) => trait?.toLowerCase() === "void");
+  const hasVoidTrait = traits.some((trait) =>
+    ["void", "negative"].includes(trait?.toLowerCase()),
+  );
 
   // Extract values from metadata
   // Splash damage is never a critical hit and never has death trait
@@ -14997,6 +15069,11 @@ function applyDamage(
       // case: force is excepted, the precision is removed by immunity, and the
       // base type resistance no longer double-dips the already-removed
       // precision.
+      // A precision weakness counts in the main loop's highest-weakness
+      // choice for the type the precision damage is part of (Foundry's
+      // highestWeakness), not on top of it
+      let precisionWeaknessValue = 0;
+      let precisionWeaknessType = null;
       if (precisionIndices.length > 0 && !isApplyingSplash) {
         // Reconstruct the precision amount at the same (post-critical) scale as
         // it currently sits inside the base damage type bucket.
@@ -15023,7 +15100,8 @@ function applyDamage(
           // Immunity to precision negates the precision portion entirely.
           survivingPrecision = 0;
         } else {
-          // Precision weakness adds extra damage to the precision portion.
+          // Precision weakness: its value goes into the main loop's choice of
+          // the highest weakness for the base damage type
           const precisionWeakness = IWR.weaknesses["precision"];
           if (
             precisionWeakness &&
@@ -15044,7 +15122,10 @@ function applyDamage(
             ) {
               weaknessValue *= 2;
             }
-            survivingPrecision += weaknessValue;
+            if (precisionInBucket > 0) {
+              precisionWeaknessValue = weaknessValue;
+              precisionWeaknessType = String(baseDamageType || "").toLowerCase();
+            }
           }
 
           // Precision resistance reduces the precision portion.
@@ -15292,96 +15373,40 @@ function applyDamage(
           }
         }
 
-        // Apply Weaknesses (add extra damage)
+        // Apply Weaknesses (add extra damage). Of the weaknesses that apply
+        // to this damage (its type, all damage, then each of its categories:
+        // cold-iron, holy, area-damage...), only the highest counts ("use
+        // only the highest applicable weakness value"; Foundry's
+        // highestWeakness). A demon weak to cold iron 5 and holy 5 takes +5
+        // from a holy cold-iron weapon, not +10.
         if (!damageIgnoresWeaknesses.includes(lowerType)) {
-          // Track which weaknesses we've applied to avoid duplicates
-          const appliedWeaknesses = new Set();
-
-          // Check for specific type weakness
-          const weakness = IWR.weaknesses[lowerType];
-          // Check for "all damage" weakness
-          const allDamageWeakness =
-            IWR.weaknesses["all damage"] || IWR.weaknesses["all-damage"];
-
-          const applicableWeakness = weakness || allDamageWeakness;
-
-          if (applicableWeakness) {
-            // Check if this weakness has an exception that matches the roll
-            if (
-              applicableWeakness.exceptions &&
-              rollMatchesCondition(roll, applicableWeakness.exceptions, lowerType)
-            ) {
-              // Exception applies - ignore this weakness
-            } else {
-              // Apply weakness value (double it if doubleVs condition matches)
-              let weaknessValue = applicableWeakness.value;
-              if (
-                applicableWeakness.doubleVs &&
-                rollMatchesCondition(roll, applicableWeakness.doubleVs, lowerType)
-              ) {
-                weaknessValue = weaknessValue * 2;
-              }
-              damageOfThisType += weaknessValue;
-              // Mark this weakness as applied
-              if (weakness) appliedWeaknesses.add(lowerType);
-              if (allDamageWeakness) appliedWeaknesses.add("all damage");
+          const normalizeKey = (text) =>
+            String(text || "").toLowerCase().trim().replace(/-/g, "").replace(/ /g, "");
+          // A weakness's value against this roll: 0 when an exception
+          // matches, doubled when its doubleVs does
+          const weaknessValueFor = (entry) => {
+            if (!entry) return 0;
+            if (entry.exceptions && rollMatchesCondition(roll, entry.exceptions, lowerType)) {
+              return 0;
             }
-          }
-
-          // Also check weaknesses against damageCategories (e.g., materials like "cold-iron", "silver")
-          const damageCategories = roll?.metadata?.damageCategories || [];
-          damageCategories.forEach((category) => {
-            const categoryNormalized = category
-              .toLowerCase()
-              .trim()
-              .replace(/-/g, "")
-              .replace(/ /g, "");
-
-            // Find matching weakness by normalizing the weakness type
-            const matchingWeaknessKey = Object.keys(IWR.weaknesses).find(
-              (weaknessKey) => {
-                const weaknessNormalized = weaknessKey
-                  .toLowerCase()
-                  .trim()
-                  .replace(/-/g, "")
-                  .replace(/ /g, "");
-                return weaknessNormalized === categoryNormalized;
-              },
+            const value = parseInt(entry.value, 10) || 0;
+            return entry.doubleVs && rollMatchesCondition(roll, entry.doubleVs, lowerType)
+              ? value * 2
+              : value;
+          };
+          const applicable = [
+            IWR.weaknesses[lowerType],
+            IWR.weaknesses["all damage"] || IWR.weaknesses["all-damage"],
+          ];
+          (roll?.metadata?.damageCategories || []).forEach((category) => {
+            const key = Object.keys(IWR.weaknesses).find(
+              (weaknessKey) => normalizeKey(weaknessKey) === normalizeKey(category),
             );
-
-            if (matchingWeaknessKey) {
-              const matchingWeaknessNormalized = matchingWeaknessKey
-                .toLowerCase()
-                .trim()
-                .replace(/-/g, "")
-                .replace(/ /g, "");
-
-              // Skip if we've already applied this weakness
-              if (appliedWeaknesses.has(matchingWeaknessNormalized)) {
-                return;
-              }
-
-              const categoryWeakness = IWR.weaknesses[matchingWeaknessKey];
-              // Check if this weakness has an exception that matches the roll
-              if (
-                categoryWeakness.exceptions &&
-                rollMatchesCondition(roll, categoryWeakness.exceptions, lowerType)
-              ) {
-                // Exception applies - ignore this weakness
-              } else {
-                // Apply weakness value (double it if doubleVs condition matches)
-                let weaknessValue = categoryWeakness.value;
-                if (
-                  categoryWeakness.doubleVs &&
-                  rollMatchesCondition(roll, categoryWeakness.doubleVs, lowerType)
-                ) {
-                  weaknessValue = weaknessValue * 2;
-                }
-                damageOfThisType += weaknessValue;
-                appliedWeaknesses.add(matchingWeaknessNormalized);
-              }
-            }
+            if (key) applicable.push(IWR.weaknesses[key]);
           });
+          const values = applicable.map(weaknessValueFor);
+          if (precisionWeaknessType === lowerType) values.push(precisionWeaknessValue);
+          damageOfThisType += Math.max(0, ...values);
         }
 
         // Apply Resistances (reduce damage)
@@ -16112,6 +16137,15 @@ function maximizeDice(formula) {
  *   - level: optional override level (e.g., casting rank for heightened spells)
  * @returns {string} - Updated description with function calls replaced
  */
+// Whether an ability's text gives it an area ("deals 8d8 bludgeoning damage
+// in a 30 ft. Cone"): about as reliable as Foundry's area-damage flag, which
+// the converted data drops
+function hasAreaText(text) {
+  return /\b\d+[- ](?:ft\.?|foot|feet) (?:cone|burst|line|emanation)\b/i.test(
+    String(text || "").replace(/<[^>]+>/g, " "),
+  );
+}
+
 function updateDamageMacros(description, context = {}) {
   if (!description || typeof description !== "string") {
     return description;
@@ -16151,25 +16185,33 @@ function updateDamageMacros(description, context = {}) {
     basicSave.source = item.name;
   }
 
+  // Where the damage or healing comes from (item, its traits, the creature).
+  // An ability whose text gives an area ("in a 30 ft. Cone") deals area
+  // damage: the converted NPC data keeps the area only in the text
+  const damageSource = getDamageSource(creature, item, context.tradition || "");
+  if (!damageSource.area && hasAreaText(description)) damageSource.area = true;
+
   const minimalContext = JSON.stringify({
     _id: item._id,
     recordType: item.recordType,
     level: level,
     originTokenId: tokenId,
     originTokenName: tokenName,
-    // Where the damage or healing comes from (item, its traits, the creature)
-    damageSource: getDamageSource(creature, item, context.tradition || ""),
+    damageSource,
     ...(maximize ? { maximizeHealing: true } : {}),
     ...(basicSave ? { basicSave } : {}),
   });
 
   // An NPC's damage buttons come as executeDamageMacro('formula', 'category',
-  // 'name') with no context: against a basic save, they get its save type
-  if (basicSave) {
+  // 'name') with no context: against a basic save or with an area, they get
+  // the save type and where the damage comes from (area damage, the
+  // ability's holy or unholy trait)
+  if (basicSave || damageSource.area) {
+    const bareContext = JSON.stringify({ ...(basicSave ? { basicSave } : {}), damageSource });
     description = description.replace(
       /executeDamageMacro\(\s*(['"])([^'"]*)\1\s*,\s*(['"])([^'"]*)\3\s*,\s*(['"])([^'"]*)\5\s*\)/g,
       (match, q1, formula, q2, category, q3, name) =>
-        `executeDamageMacro(${q1}${formula}${q1}, ${q2}${category}${q2}, ${q3}${name}${q3}, ${JSON.stringify({ basicSave })})`,
+        `executeDamageMacro(${q1}${formula}${q1}, ${q2}${category}${q2}, ${q3}${name}${q3}, ${bareContext})`,
     );
   }
 
@@ -19279,13 +19321,52 @@ function getConditionGainValue(token, conditionName, value, context = {}) {
   return { value: Math.max(0, total), sources };
 }
 
+// Conditions object immunities cover (Foundry's object-immunities), which
+// vehicles and hazards have whether or not their data lists them
+const OBJECT_IMMUNE_CONDITIONS = ["doomed", "drained", "fatigued", "paralyzed", "sickened", "unconscious"];
+
+// What makes a creature immune to a condition: the condition in its
+// immunities ("paralyzed"), or object immunities for the conditions they
+// cover; null when it isn't immune
+function getConditionImmunity(target, conditionName) {
+  const condition = toSlug(String(conditionName || ""));
+  if (!condition) return null;
+  const types = (target?.data?.immunities || []).map((immunity) =>
+    toSlug(String(immunity?.data?.type || "")),
+  );
+  if (types.includes(condition)) return String(conditionName).toLowerCase();
+  const objectImmune =
+    types.some((type) => type === "object-immunities" || type === "object-immunity") ||
+    (target?.recordType === "npcs" && ["vehicle", "hazard"].includes(target?.data?.type));
+  if (objectImmune && OBJECT_IMMUNE_CONDITIONS.includes(condition)) return "object immunities";
+  return null;
+}
+
 // Gives a token a condition at a value, as one gain: the value after the
 // token's conditionGain modifiers (Bravery takes 1 off the frightened you
 // gain, once per gain, not per point), and the token ends at the higher of
 // that and the value it already has (Player Core pg. 442), so addStacks gets
 // the stacks to add, if any. A gain the modifiers change says so in chat.
-// Returns the value gained after the modifiers.
+// Returns the value gained after the modifiers. A token immune to the
+// condition asks first whether to apply it anyway (assist, never refuse), and
+// returns 0 while it asks.
 function addConditionGain(target, effectName, times = 1, addStacks) {
+  const immunity = getConditionImmunity(target, effectName);
+  if (immunity) {
+    const condition = String(effectName || "").toLowerCase();
+    api.showConfirm(
+      "Immune",
+      `${getTokenDisplayName(target)} is immune to ${condition}${immunity === condition ? "" : ` (${immunity})`}. Apply it anyway?`,
+      "Apply Anyway",
+      "Cancel",
+      () => addConditionGainNow(target, effectName, times, addStacks),
+    );
+    return 0;
+  }
+  return addConditionGainNow(target, effectName, times, addStacks);
+}
+
+function addConditionGainNow(target, effectName, times, addStacks) {
   const gained = Math.max(0, parseInt(times, 10) || 0);
   const gain = getConditionGainValue(target, effectName, gained);
   if (gain.sources.length > 0 && gain.value !== gained) {

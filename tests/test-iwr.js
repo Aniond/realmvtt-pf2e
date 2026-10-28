@@ -5,7 +5,7 @@
 // Run: node tests/test-iwr.js   (or via tests/run-all.js)
 
 const { createSandbox } = require("./sandbox");
-const { assert, section, summary } = require("./test-helpers");
+const { assert, assertIncludes, section, summary } = require("./test-helpers");
 
 const ctx = createSandbox();
 
@@ -517,6 +517,165 @@ section("Strike materials from a modifier (Metal Strikes, engine group G3)");
   const byDefinition = withMods([{ type: "resistance", field: "", valueType: "number", value: "4", definition: '["item:material:silver"]' }]);
   assert("a definition reads item:material:silver (10 -> 6)", damageDealt(byDefinition, strike(monk(metal))), 6);
   assert("... and doesn't match an ordinary fist (10)", damageDealt(byDefinition, strike(monk([]))), 10);
+}
+
+section("Energy is acid, cold, electricity, fire, sonic, force, vitality and void (H12)");
+{
+  const t = makeTarget({ resistances: [res("energy", 5)] });
+  assert("fire 10 vs energy 5 -> 5", damageDealt(t, roll("fire", 10)), 5);
+  assert("sonic 10 vs energy 5 -> 5", damageDealt(t, roll("sonic", 10)), 5);
+  assert("force 10 vs energy 5 -> 5", damageDealt(t, roll("force", 10)), 5);
+  assert("slashing 10 vs energy 5 -> 10", damageDealt(t, roll("slashing", 10)), 10);
+  const both = makeTarget({ resistances: [res("energy", 3), res("cold", 8)] });
+  assert("a stronger cold resistance is kept: cold 10 -> 2", damageDealt(both, roll("cold", 10)), 2);
+  const weakT = makeTarget({ weaknesses: [weak("energy", 4)] });
+  assert("energy weakness 4: acid 10 -> 14", damageDealt(weakT, roll("acid", 10)), 14);
+  const ignore = sourced("fire", 10, WEAPON, { ignoreResistances: "energy" });
+  assert("ignore energy resistance: fire 10 -> 10", damageDealt(t, ignore), 10);
+}
+
+section("Holy and unholy by the attack's or spell's traits (H12)");
+{
+  const fiend = makeTarget({ weaknesses: [weak("holy", 10)] });
+  assert("a holy spirit attack 6 vs holy weakness 10 -> 16", damageDealt(fiend, roll("spirit", 6, { traits: ["holy"] })), 16);
+  assert("a holy-rune slashing Strike 6 -> 16", damageDealt(fiend, sourced("slashing", 6, { ...WEAPON, traits: ["holy", "magical"] })), 16);
+  assert("spirit 6 without the trait -> 6", damageDealt(fiend, roll("spirit", 6)), 6);
+  assert("unholy 6 against holy weakness -> 6", damageDealt(fiend, roll("spirit", 6, { traits: ["unholy"] })), 6);
+  const celestial = makeTarget({ resistances: [res("unholy", 5)] });
+  assert("unholy 10 vs unholy resistance 5 -> 5", damageDealt(celestial, roll("spirit", 10, { traits: ["Unholy"] })), 5);
+}
+
+section("Area damage and splash damage (H12, a swarm's weaknesses)");
+{
+  const swarm = makeTarget({ weaknesses: [weak("area-damage", 5), weak("splash damage", 5)] });
+  assert("a spell with an area: fire 10 -> 15", damageDealt(swarm, sourced("fire", 10, { ...ARCANE_SPELL, area: true }, { isSpell: true })), 15);
+  assert("a single-target spell: fire 10 -> 10", damageDealt(swarm, sourced("fire", 10, ARCANE_SPELL, { isSpell: true })), 10);
+  ctx.__state.lastSet = null;
+  ctx.applyDamage(swarm, roll("fire", 4), false, { type: "fire", value: 2 }, false);
+  const set = ctx.__state.lastSet || {};
+  assert("splash 2 applied on its own -> 7", START_HP - ("data.curhp" in set ? set["data.curhp"] : START_HP), 7);
+  assert("the hit itself isn't splash: fire 4 -> 4", damageDealt(swarm, roll("fire", 4)), 4);
+  assert("getDamageSource marks a spell with an area", ctx.getDamageSource(null, { recordType: "spells", name: "Fireball", data: { area: { type: "burst", value: 20 } } }).area, true);
+  assert("... and not one without", ctx.getDamageSource(null, { recordType: "spells", name: "Shocking Grasp", data: {} }).area, undefined);
+}
+
+section("Legacy damage types are the remaster's (H12)");
+{
+  const legacy = makeTarget({ resistances: [res("negative", 5)], weaknesses: [weak("good", 10)] });
+  assert("legacy negative 10 vs legacy negative resistance 5 -> 5", damageDealt(legacy, roll("negative", 10)), 5);
+  assert("remaster void 10 vs legacy negative resistance 5 -> 5", damageDealt(legacy, roll("void", 10)), 5);
+  assert("legacy good 6 vs legacy good weakness 10 -> 16 (spirit, holy)", damageDealt(legacy, roll("good", 6)), 16);
+  assert("a remaster holy attack vs legacy good weakness -> 16", damageDealt(legacy, roll("spirit", 6, { traits: ["holy"] })), 16);
+  const remaster = makeTarget({ resistances: [res("vitality", 5)] });
+  assert("legacy positive 10 vs vitality resistance 5 -> 5", damageDealt(remaster, roll("positive", 10)), 5);
+  const both = makeTarget({ resistances: [res("negative", 8), res("void", 3)] });
+  assert("the stronger of legacy and remaster is kept: void 10 -> 2", damageDealt(both, roll("void", 10)), 2);
+}
+
+section("Condition immunities: the GM is asked (H12)");
+{
+  const confirms = [];
+  let answer = false;
+  ctx.api.showConfirm = (title, message, yes, no, onYes) => {
+    confirms.push(message);
+    if (answer) onYes();
+  };
+  const golem = makeTarget({ immunities: [imm("paralyzed"), imm("Frightened")] });
+  const turret = makeTarget({ immunities: [imm("object immunities")] });
+  assert("immune to paralyzed", ctx.getConditionImmunity(golem, "Paralyzed"), "paralyzed");
+  assert("immune to frightened (any case)", ctx.getConditionImmunity(golem, "frightened"), "frightened");
+  assert("not to slowed", ctx.getConditionImmunity(golem, "Slowed"), null);
+  assert("object immunities cover sickened", ctx.getConditionImmunity(turret, "Sickened"), "object immunities");
+  assert("... but not prone", ctx.getConditionImmunity(turret, "Prone"), null);
+
+  let added = 0;
+  ctx.addConditionGain(golem, "Paralyzed", 1, (stacks) => (added += stacks));
+  assert("asked, nothing added on Cancel", [confirms.length, added], [1, 0]);
+  assertIncludes("the question names it", confirms[0], "is immune to paralyzed. Apply it anyway?");
+  answer = true;
+  ctx.addConditionGain(golem, "Paralyzed", 1, (stacks) => (added += stacks));
+  assert("Apply Anyway adds it", added, 1);
+  ctx.addConditionGain(makeTarget({}), "Paralyzed", 1, (stacks) => (added += stacks));
+  assert("not immune: added without asking", [confirms.length, added], [2, 2]);
+}
+
+section("Only the highest weakness applies to the same damage (Sean's review of #30)");
+{
+  const demon = makeTarget({ weaknesses: [weak("cold-iron", 5), weak("holy", 5)] });
+  const holyColdIron = sourced("slashing", 10, { ...WEAPON, traits: ["holy"] }, { categories: ["cold-iron"] });
+  assert("a holy cold-iron Strike 10 on a demon weak to both 5 -> 15, not 20", damageDealt(demon, holyColdIron), 15);
+  const swarm = makeTarget({ weaknesses: [weak("fire", 5), weak("area-damage", 5)] });
+  const fireball = sourced("fire", 10, { ...ARCANE_SPELL, area: true }, { isSpell: true });
+  assert("Fireball 10 on a swarm weak to fire 5 and area 5 -> 15, not 20", damageDealt(swarm, fireball), 15);
+  const higherArea = makeTarget({ weaknesses: [weak("fire", 3), weak("area-damage", 8)] });
+  assert("... the higher of fire 3 and area 8 -> 18", damageDealt(higherArea, fireball), 18);
+  const allAndType = makeTarget({ weaknesses: [weak("fire", 4), weak("all-damage", 2)] });
+  assert("fire 4 and all damage 2: fire 10 -> 14", damageDealt(allAndType, roll("fire", 10)), 14);
+  const doubled = makeTarget({ weaknesses: [weak("holy", 3, { doubleVs: ["non-magical"] }), weak("cold-iron", 5)] });
+  const plainHoly = sourced("slashing", 10, { ...WEAPON, traits: ["holy"] }, { categories: ["cold-iron", "non-magical"] });
+  assert("doubleVs counts before the highest is taken (holy 3x2=6 over cold iron 5) -> 16", damageDealt(doubled, plainHoly), 16);
+  const excepted = makeTarget({ weaknesses: [weak("holy", 9, { exceptions: ["cold-iron"] }), weak("cold-iron", 5)] });
+  assert("an exception drops that weakness from the choice (holy 9 except cold iron) -> 15", damageDealt(excepted, holyColdIron), 15);
+  const types = multiRoll([["slashing", 10], ["fire", 4]], { categories: ["cold-iron"] });
+  const coldIronFire = makeTarget({ weaknesses: [weak("cold-iron", 5), weak("fire", 2)] });
+  assert("per damage type: slashing gets cold iron 5, fire the higher of cold iron 5 and fire 2 -> 24", damageDealt(coldIronFire, types), 24);
+}
+
+section("Splash weakness on the primary target too (Sean's review of #30)");
+{
+  const swarm = makeTarget({ weaknesses: [weak("splash-damage", 5)] });
+  const bomb = roll("fire", 4);
+  bomb.metadata.splashDamage = "1";
+  assert("a bomb hit with splash 1 on a swarm weak to splash 5 -> 9", damageDealt(swarm, bomb), 9);
+  const noSplash = roll("fire", 4);
+  noSplash.metadata.splashDamage = "";
+  assert("no splash on the weapon -> 4", damageDealt(swarm, noSplash), 4);
+  const fireToo = makeTarget({ weaknesses: [weak("splash-damage", 5), weak("fire", 3)] });
+  assert("splash 5 and fire 3: only the higher -> 9", damageDealt(fireToo, bomb), 9);
+}
+
+section("Hazards have object immunities (Sean's review of #30)");
+{
+  const hazard = makeTarget({ type: "hazard" });
+  assert("a hazard: paralyzed is covered by object immunities", ctx.getConditionImmunity(hazard, "Paralyzed"), "object immunities");
+  assert("a hazard takes no bleed damage", damageDealt(hazard, roll("bleed", 5)), 0);
+  assert("... but fire as usual", damageDealt(hazard, roll("fire", 5)), 5);
+  assert("a creature isn't covered", ctx.getConditionImmunity(makeTarget({ type: "creature" }), "Paralyzed"), null);
+}
+
+section("Area damage from an NPC ability's text (Sean's second review of #30)");
+{
+  assert("'in a 30 ft. Cone' is an area", ctx.hasAreaText("deals 8d8 bludgeoning damage in a 30 ft. Cone"), true);
+  assert("'a 15-foot emanation' too", ctx.hasAreaText("<p>Each creature in a 15-foot emanation takes 2d6 fire</p>"), true);
+  assert("'60-foot line'", ctx.hasAreaText("breathes a 60-foot line of acid"), true);
+  assert("a single-target ability isn't", ctx.hasAreaText("The dragon makes a jaws Strike against a creature within 30 feet."), false);
+
+  const npc = { _id: "npc", recordType: "npcs", data: { traits: ["Dragon"] } };
+  const breath = { _id: "act-breath", name: "Avalanche Breath", recordType: "actions", data: { traits: ["Arcane", "Earth"] } };
+  const cone = "deals ```8d8_Damage\nexecuteDamageMacro('8d8 bludgeoning', 'standard', '8d8 bludgeoning Damage')\n``` in a 30 ft. Cone";
+  const updated = ctx.updateDamageMacros(cone, { item: breath, creature: npc });
+  const match = updated.match(/executeDamageMacro\('8d8 bludgeoning', 'standard', '8d8 bludgeoning Damage', (\{.*\})\)/);
+  assert("a bare NPC damage button with an area gets a context", !!match, true);
+  const context = match ? JSON.parse(match[1]) : {};
+  assert("... whose damageSource has the area", context.damageSource?.area, true);
+  assert("... and no basic save it doesn't have", "basicSave" in context, false);
+  const swarm = makeTarget({ weaknesses: [weak("area-damage", 5)] });
+  assert("applied to a swarm weak to area damage 5: 20 -> 25", damageDealt(swarm, sourced("bludgeoning", 20, context.damageSource || {})), 25);
+
+  const bite = "deals ```2d8_Damage\nexecuteDamageMacro('2d8 piercing', 'standard', '2d8 piercing Damage')\n``` to the target";
+  assert("no area text: the button is left as it is", ctx.updateDamageMacros(bite, { item: { ...breath, name: "Jaws" }, creature: npc }), bite);
+  assert("... and a swarm takes no area weakness from it", damageDealt(swarm, sourced("piercing", 9, ctx.getDamageSource(npc, breath))), 9);
+}
+
+section("A precision weakness counts in the highest-weakness choice (Sean's third review of #30)");
+{
+  const both = makeTarget({ weaknesses: [weak("precision", 5), weak("piercing", 3)] });
+  const r = multiRoll([["piercing", 3], ["precision", 2]], { damageType: "piercing" });
+  assert("piercing 3 + precision 2 vs precision 5 and piercing 3: only the 5 -> 10", damageDealt(both, r), 10);
+  const typeHigher = makeTarget({ weaknesses: [weak("precision", 2), weak("piercing", 6)] });
+  assert("... and the type's 6 when it's higher -> 11", damageDealt(typeHigher, r), 11);
+  const noPrecision = makeTarget({ weaknesses: [weak("precision", 5)] });
+  assert("no precision in the hit: no precision weakness", damageDealt(noPrecision, roll("piercing", 5)), 5);
 }
 
 process.exit(summary());

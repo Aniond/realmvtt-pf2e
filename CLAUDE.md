@@ -124,6 +124,23 @@ When adding a new kind of attack roll, pass `turnAttack` (from `getTurnAttackMet
 
 `rollhandlers/concealment.js` (Player Core pg. 442-447): a Strike or spell attack against a concealed target (DC 5), or a hidden, invisible or undetected one (DC 11), or from a dazzled (DC 5) or blinded (DC 11) attacker, carries the worst flat check as `metadata.concealment`. `attack.js` shows it as a line and a Flat Check button; nothing is rolled or refused automatically. A hidden, invisible or undetected attacker makes its target off-guard, applied to the AC as flanking is. Effects aren't per observer, so a condition on a token counts against everyone; the GM removes it when it no longer applies.
 
+### Immunities, weaknesses and resistances
+
+`applyDamage` reads them from `getIWR` and matches each damage type, then the roll's `metadata.damageCategories`. The categories follow Foundry's IWR types (`actor/data/iwr.ts`):
+
+- "physical" means bludgeoning, piercing and slashing. "energy" means acid, cold, electricity, fire, sonic, force, vitality and void. Both are expanded into those types (`IWR_DAMAGE_GROUPS`) in the IWR lists, in "ignore ... resistance" modifiers and in suppressIWR.
+- `withDamageCategories` adds the categories a roll's types don't carry:
+  - "spells" for damage from a spell
+  - "holy" or "unholy" when the attack or spell has that trait
+  - "area-damage" when its source has an area: `getDamageSource` sets `damageSource.area` from `data.area`, and `updateDamageMacros` also from the ability's text ("in a 30 ft. Cone", `hasAreaText`), since the converted NPC data keeps the area only there. A bare NPC `executeDamageMacro('formula', 'category', 'name')` gets a context (`damageSource`, plus `basicSave` when there is one) when it has a basic save or an area.
+  - "splash-damage" on a hit whose damage includes splash (`metadata.splashDamage`) and when splash damage is applied on its own
+- Weaknesses are checked for each damage type in the hit. Of those that apply to a type (its own, all damage, then each category), only the highest is added, with exceptions and doubleVs counted first: a demon weak to cold iron 5 and holy 5 takes +5 from a holy cold-iron weapon. A precision weakness is part of that choice for the type the precision damage rides on.
+- Legacy data reads as remaster:
+  - Damage types: positive becomes vitality and negative becomes void. Good and evil damage becomes spirit damage with the holy or unholy category.
+  - Weaknesses, resistances and immunities: positive and negative become vitality and void, and good and evil become holy and unholy, keeping the stronger of a legacy entry and a remaster one.
+  - Lawful and chaotic stay as they are.
+- A token immune to a condition is asked about it (`getConditionImmunity` in `addConditionGain`, which every Apply button and maneuver goes through): its immunities list names the condition, or object immunities cover it. Vehicles and hazards have object immunities whether or not their data lists them (Foundry adds them to every hazard), nonlethal attacks among them. The GM can apply it anyway; nothing is refused.
+
 ### Scrolls and Wands (casting from items)
 
 `rollhandlers/item-spells.js` lets Use on a scroll or wand cast its spell with the character's own spellcasting.

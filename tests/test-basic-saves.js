@@ -124,7 +124,8 @@ section("The damage card's Apply by Saves");
   const breath = { _id: "act-breath", recordType: "actions", name: "Avalanche Breath", data: {} };
   const withBasic = "deals ```8d8_Damage\nexecuteDamageMacro('8d8 bludgeoning', 'standard', '8d8 bludgeoning Damage')\n``` in a cone (```Reflex_Save\nrollSavingThrow('reflex', 28, { basic: true });\n``` save)";
   const updated = ctx.updateDamageMacros(withBasic, { item: breath, creature: { _id: "npc", recordType: "npcs", data: {} } });
-  assertIncludes("the damage button gets the save type", updated, `executeDamageMacro('8d8 bludgeoning', 'standard', '8d8 bludgeoning Damage', {"basicSave":{"saveType":"reflex","source":"Avalanche Breath"}})`);
+  // ... and where the damage comes from (H12: area damage, holy/unholy traits)
+  assertIncludes("the damage button gets the save type", updated, `executeDamageMacro('8d8 bludgeoning', 'standard', '8d8 bludgeoning Damage', {"basicSave":{"saveType":"reflex","source":"Avalanche Breath"},"damageSource":{`);
   const jsonFlag = withBasic.replace("{ basic: true }", '{"basic":true}');
   assertIncludes("JSON-style flag too", ctx.updateDamageMacros(jsonFlag, { item: breath, creature: { _id: "npc", recordType: "npcs", data: {} } }), '"basicSave":{"saveType":"reflex","source":"Avalanche Breath"}');
   // A basic save without a DC (Sean's review: @Check[fortitude|against:spell|basic])

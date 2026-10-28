@@ -161,8 +161,12 @@ section("Damage through applyDamage");
   r = hit(npc(), roll(9, { traits: ["nonlethal"] }));
   assert("but is knocked out by nonlethal damage", [r.calls.some((c) => c[1] === "Dead"), r.calls.some((c) => c.includes("Unconscious"))], [false, true]);
   assertIncludes("which the message says", r.message, "knocked out by nonlethal damage");
+  // A hazard has object immunities (H12), nonlethal attacks among them, so
+  // a nonlethal hit does nothing; a lethal one destroys it at 0 HP
   r = hit(npc({ type: "hazard" }), roll(9, { traits: ["nonlethal"] }));
-  assert("an object is destroyed either way", r.calls.some((c) => c[1] === "Dead"), true);
+  assert("a hazard is immune to nonlethal attacks", [r.calls.some((c) => c[1] === "Dead"), "data.curhp" in r.set ? r.set["data.curhp"] : 5], [false, 5]);
+  r = hit(npc({ type: "hazard" }), roll(9));
+  assert("an object is destroyed at 0 HP", r.calls.some((c) => c[1] === "Dead"), true);
 
   // Healing through applyDamage (negative damage)
   const heal = (target, amount) => {
