@@ -56,6 +56,9 @@
         "data.reach": ancestryObj.data?.reach,
         // Default to false on add of ancestry
         "data.alternateAncestryBoosts": false,
+        // An animal companion takes its type's picture as its portrait and
+        // token, unless it already has its own (animal-companions.js)
+        ...getCompanionImageValues(record, recordLink.value),
       },
       (updatedRecord) => {
         // Show ancestry UI, then prompt for heritage

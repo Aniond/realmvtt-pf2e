@@ -32,6 +32,21 @@ function isAnimalCompanionAncestry(ancestry) {
   return traits.includes("animal") && !traits.includes("humanoid");
 }
 
+// Whether a picture is one of Realm's placeholders (or none)
+const isDefaultImage = (path) => !path || /default-icons|\/icons\/fantasy\/default/.test(String(path));
+
+// The portrait and token image an animal companion takes from its type's
+// ancestry when dropped: the ancestry's picture, for whichever of the two
+// is still empty or a placeholder (a picture of the player's own stays)
+function getCompanionImageValues(character, ancestry) {
+  const image = ancestry?.portrait;
+  if (!isAnimalCompanionAncestry(ancestry) || isDefaultImage(image)) return {};
+  const values = {};
+  if (isDefaultImage(character?.portrait)) values.portrait = image;
+  if (isDefaultImage(character?.token?.imageUrl)) values["token.imageUrl"] = image;
+  return values;
+}
+
 // The modifier kinds an animal companion's item bonuses still count for
 const ANIMAL_COMPANION_ITEM_BONUS_TYPES = ["armorClassBonus", "speedBonus", "speed"];
 

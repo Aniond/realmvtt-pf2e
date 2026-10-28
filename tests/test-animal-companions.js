@@ -102,6 +102,22 @@ section("Which characters are animal companions");
   assert("a companion ancestry, flagged", ctx.isAnimalCompanionAncestry({ data: { animalCompanion: true, traits: [] } }), true);
   assert("an animal ancestry (the records loaded before the flag)", ctx.isAnimalCompanionAncestry({ data: { traits: ["Animal"] } }), true);
   assert("a playable ancestry isn't", ctx.isAnimalCompanionAncestry({ data: { traits: ["Uncommon", "Humanoid", "Kobold"] } }), false);
+
+  // ... and gives a new companion its type's picture
+  const bearType = { portrait: "/icons/fantasy/spells/animal-form-bear.webp", data: { animalCompanion: true, traits: ["Animal"] } };
+  assert(
+    "a new companion takes its type's portrait and token image",
+    ctx.getCompanionImageValues({ portrait: "", token: {} }, bearType),
+    { portrait: bearType.portrait, "token.imageUrl": bearType.portrait },
+  );
+  assert(
+    "a placeholder portrait is replaced, a token image of its own kept",
+    ctx.getCompanionImageValues({ portrait: "/icons/fantasy/default-icons/character.svg", token: { imageUrl: "/images/my-bear.webp" } }, bearType),
+    { portrait: bearType.portrait },
+  );
+  assert("its own portrait and token are kept", ctx.getCompanionImageValues({ portrait: "/images/bruno.webp", token: { imageUrl: "/images/bruno-token.webp" } }, bearType), {});
+  assert("a playable ancestry changes no picture", ctx.getCompanionImageValues({ portrait: "" }, { portrait: "/icons/x.webp", data: { traits: ["Humanoid"] } }), {});
+  assert("a companion type without a real picture changes nothing", ctx.getCompanionImageValues({ portrait: "" }, { portrait: "/icons/fantasy/default-icons/npc.svg", data: { animalCompanion: true } }), {});
 }
 
 section("No Automatic Bonus Progression, no attribute boosts at Level Up");
