@@ -69,12 +69,11 @@ function getBasicSaveLine(metadata, degree) {
   return result ? `**Basic save:** ${result.label}.` : "";
 }
 
-// A creature's most recent save (of the save type, when the damage names
-// one), or null. No time limit: the GM decides when a save still applies.
-function getLastSave(creature, saveType = "") {
+// A creature's most recent save, or null. No time limit and no save-type
+// check: the GM decides which save applies, and the card says which it used.
+function getLastSave(creature) {
   const save = creature?.data?.lastSave || creature?.record?.data?.lastSave;
   if (!save || !Number.isFinite(save.degree)) return null;
-  if (saveType && save.saveType && save.saveType !== saveType) return null;
   return save;
 }
 
@@ -100,7 +99,7 @@ function applyDamageBySaves(roll) {
   const lines = [];
   creatures.forEach((creature) => {
     const name = getTokenDisplayName(creature);
-    const save = getLastSave(creature, saveType);
+    const save = getLastSave(creature);
     if (!save) {
       lines.push(`**${source}: not applied, no ${saveType ? `${capitalize(saveType)} ` : ""}save rolled** (${name})`);
       return;

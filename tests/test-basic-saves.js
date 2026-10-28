@@ -170,7 +170,7 @@ section("Applying by each creature's save");
   sets = [];
   ctx.__state.messages = [];
   ctx.applyDamageBySaves(roll);
-  assert("success: half; failure: full; critical failure: double; critical success: nothing; no time limit", applied, [["b", true, false], ["c", false, false], ["d", false, true], ["f", true, false]]);
+  assert("success: half; failure: full; critical failure: double; critical success: nothing; no time limit or type check", applied, [["b", true, false], ["c", false, false], ["d", false, true], ["f", true, false], ["g", true, false]]);
   assert("the saves are left as they are (Sean: let them apply again)", sets, []);
   const summaryText = ctx.__state.messages.join("\n");
   // One card each (Sean: two cards per creature was messy): the damage card
@@ -180,12 +180,13 @@ section("Applying by each creature's save");
     ["c", "**Fireball: applied by Reflex failure, full damage**", undefined],
     ["d", "**Fireball: applied by Reflex critical failure, double damage**", "critical failure on a save"],
     ["f", "**Fireball: applied by Reflex success, half damage**", undefined],
+    ["g", "**Fireball: applied by Fortitude success, half damage**", undefined],
   ]);
   assertIncludes("the rest share one card, one bold line each (Sean)", summaryText, "**Fireball: applied by Reflex critical success, no damage** (Amiri)\n**Fireball: not applied, no Reflex save rolled** (Valeros)");
   assertNotIncludes("those with a damage card aren't listed again", summaryText, "Kyra");
   assertIncludes("no save: nothing applied", summaryText, "**Fireball: not applied, no Reflex save rolled** (Valeros)");
   assertNotIncludes("a save from a day ago (an older save with a time) still counts", summaryText, "Merisiel");
-  assertIncludes("nor another save than the spell's", summaryText, "**Fireball: not applied, no Reflex save rolled** (Harsk)");
+  assertNotIncludes("another save than the spell's still applies: the GM's call, and the card names it", summaryText, "Harsk");
 
   // Applied again (another damage part, or redoing it), even if an older
   // card marked the save as used: the save still counts
