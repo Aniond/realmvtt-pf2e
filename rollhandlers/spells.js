@@ -1326,6 +1326,11 @@ api.getRecord('${record.recordType}', '${record._id}', (record) => {
         });
         targetIsOffGuard = targetIsOffGuardDueToFlanking;
       }
+      // A hidden, invisible or undetected caster (concealment.js)
+      if (!targetIsOffGuard && isUnseenAttacker(ourToken)) {
+        targetIsOffGuard = true;
+        targetIsOffGuardDueToFlanking = true;
+      }
   
       // Calculate target DC using proper functions
       let targetDC = 10;
@@ -1366,6 +1371,9 @@ api.getRecord('${record.recordType}', '${record._id}', (record) => {
         tokenName: tokenName,
         targetId: targetToken?._id,
         turnAttack: getTurnAttack(targetToken?._id),
+        // The flat check to target a concealed or hidden creature
+        // (concealment.js)
+        concealment: getConcealmentFlatCheck(ourToken, targetToken),
         // Fortification on the target's armor (property-runes.js)
         fortification: ${isAC} ? getFortification(targetToken) : null,
         damage: "${spellDamage.damageString}",

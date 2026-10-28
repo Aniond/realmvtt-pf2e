@@ -12982,6 +12982,12 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber) {
         targetIsOffGuard = true;
         targetIsOffGuardDueToFlanking = true;
       }
+      // A hidden, invisible or undetected attacker: its target is off-guard
+      // to it, applied to the AC as flanking is (concealment.js)
+      if (!targetIsOffGuard && isUnseenAttacker(ourToken)) {
+        targetIsOffGuard = true;
+        targetIsOffGuardDueToFlanking = true;
+      }
 
       // Activate sneak attack modifiers if conditions are met
       const finalDamageModifiers = applyTargetOffGuardDamage(
@@ -13059,6 +13065,9 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber) {
             : ourToken?.record?.name,
         targetId: target?.token?._id,
         turnAttack: getTurnAttack(target?.token?._id),
+        // The flat check to target a concealed or hidden creature
+        // (concealment.js)
+        concealment: getConcealmentFlatCheck(ourToken, target?.token),
         // Fortification on the target's armor (property-runes.js)
         fortification: getFortification(target?.token),
         autoCritical: autoCritical,
@@ -13752,6 +13761,10 @@ function performDamageRoll(record, weapon, weaponDataPath, isCritical) {
           target: target,
         });
         targetIsOffGuard = targetIsOffGuardDueToFlanking;
+      }
+      // A hidden, invisible or undetected attacker (concealment.js)
+      if (!targetIsOffGuard && isUnseenAttacker(ourToken)) {
+        targetIsOffGuard = true;
       }
 
       // Get damage effects for the target

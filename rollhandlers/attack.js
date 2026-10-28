@@ -238,6 +238,15 @@ message += getRollNotesText(data?.roll?.metadata?.notes, noteDegree);
 
 // The attack goes in the creature's log for this turn (attack-log.js)
 logTurnAttack(data?.roll?.metadata?.turnAttack, noteDegree);
+// A concealed or hidden target: the flat check, as a button (concealment.js)
+{
+  const concealmentLine = getConcealmentLine(data?.roll?.metadata?.concealment);
+  if (concealmentLine) {
+    message += `
+
+${concealmentLine}`;
+  }
+}
 
 // Only add "Attack" tag if there is no "Attack" trait
 const hasAttackTrait = traits.some(
