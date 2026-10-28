@@ -6,15 +6,12 @@
 //   - the damage card of a spell with a basic save, or of the damage button
 //     of an ability whose save button is basic, has an Apply by Saves
 //     button: for each selected creature it applies the damage by that
-//     creature's last save and says what each took. Each card's damage
-//     buttons share a use id, and the save is marked with it: it covers
-//     every damage part of that use (two damage buttons under one save), but
-//     not a later use.
+//     creature's last save and says what each took. Nothing stops the GM
+//     applying it again (another damage part, or redoing it): a save is
+//     never marked used, and there is no time limit, only the creature's
+//     most recent save.
 // Loaded as one of the ruleset's scripts (ruleset.config.json,
 // otherSettings.scripts), so it shares common.js's scope at runtime.
-
-// How long a save stays good for Apply by Saves
-const LAST_SAVE_MINUTES = 10;
 
 const BASIC_SAVE_RESULTS = {
   2: { name: "critical success", label: "no damage", multiplier: 0 },
@@ -44,7 +41,6 @@ function getLastSaveValues(metadata, degree) {
       degree,
       saveType: metadata.saveType || "",
       dc: parseInt(metadata.dc, 10) || 0,
-      time: Date.now(),
     },
   };
 }
@@ -53,23 +49,17 @@ function getLastSaveValues(metadata, degree) {
 // Basic box, or the description's save button with basic: true (the module
 // converter writes rollSavingThrow('reflex', 28, { basic: true }) for
 // Foundry's @Check[reflex|dc:28|basic], and undefined for the DC of one
-// without a DC, like @Check[fortitude|against:spell|basic]). { saveType,
-// useId } or null; older imports without the flag have none.
+// without a DC, like @Check[fortitude|against:spell|basic]). { saveType }
+// or null; older imports without the flag have none.
 function getDescriptionBasicSave(description, item) {
   const save = item?.data?.defense?.save;
   if (item?.recordType === "spells" && save?.statistic && (save.basic === true || save.basic === "true")) {
-    return { saveType: String(save.statistic).toLowerCase(), useId: getBasicSaveUseId() };
+    return { saveType: String(save.statistic).toLowerCase() };
   }
   const match = String(description || "").match(
     /rollSavingThrow\(\s*\\?['"](fortitude|reflex|will)\\?['"]\s*,\s*(?:\d+|undefined)\s*,\s*\{[^}]*?\bbasic\\?['"]?\s*:\s*true/i,
   );
-  return match ? { saveType: match[1].toLowerCase(), useId: getBasicSaveUseId() } : null;
-}
-
-// A new id for one use of an ability or one cast of a spell: every damage
-// button on its card carries it
-function getBasicSaveUseId() {
-  return `${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
+  return match ? { saveType: match[1].toLowerCase() } : null;
 }
 
 // The save card's line for a basic save, or ""
@@ -79,18 +69,16 @@ function getBasicSaveLine(metadata, degree) {
   return result ? `**Basic save:** ${result.label}.` : "";
 }
 
-// A creature's last save, if it is recent enough (and of the save type,
-// when the damage names one), or null
-function getRecentSave(creature, saveType = "", now = Date.now()) {
+// A creature's most recent save, or null. No time limit and no save-type
+// check: the GM decides which save applies, and the card says which it used.
+function getLastSave(creature) {
   const save = creature?.data?.lastSave || creature?.record?.data?.lastSave;
-  if (!save || !Number.isFinite(save.degree) || !Number.isFinite(save.time)) return null;
-  if (now - save.time > LAST_SAVE_MINUTES * 60 * 1000) return null;
-  if (saveType && save.saveType && save.saveType !== saveType) return null;
+  if (!save || !Number.isFinite(save.degree)) return null;
   return save;
 }
 
 // The damage card's Apply by Saves button. The roll's metadata.basicSave
-// ({ saveType, useId }) names the save and the use it is for.
+// ({ saveType }) names the save.
 function getApplyBySavesButton(roll) {
   const fence = "```";
   return `${fence}Apply_by_Saves\napplyDamageBySaves(${JSON.stringify(roll)});\n${fence}`;
@@ -102,25 +90,21 @@ function getApplyBySavesButton(roll) {
 // (a critical success, or no save to use) share one card, a line each.
 function applyDamageBySaves(roll) {
   const saveType = roll?.metadata?.basicSave?.saveType || "";
-  const useId = roll?.metadata?.basicSave?.useId || "";
   const creatures = (api.getSelectedOrDroppedToken() || []).map((t) => t?.token || t).filter(Boolean);
   if (creatures.length === 0) {
     api.showNotification("Select the creatures that saved, then click again.", "yellow", "Notice");
     return;
   }
-  const source = roll?.metadata?.attack || roll?.metadata?.rollName || "Damage";
+  // The spell or ability by name (an ability's damage roll is only named
+  // by its formula, "8d8 bludgeoning Damage")
+  const source =
+    roll?.metadata?.basicSave?.source || roll?.metadata?.attack || roll?.metadata?.rollName || "Damage";
   const lines = [];
   creatures.forEach((creature) => {
     const name = getTokenDisplayName(creature);
-    const save = getRecentSave(creature, saveType);
+    const save = getLastSave(creature);
     if (!save) {
       lines.push(`**${source}: not applied, no ${saveType ? `${capitalize(saveType)} ` : ""}save rolled** (${name})`);
-      return;
-    }
-    // A save already applied to another use's damage needs a new save; the
-    // same use's other damage parts can use it again
-    if (save.usedBy && save.usedBy !== useId) {
-      lines.push(`**${source}: not applied, ${capitalize(save.saveType || "save")} save already used for other damage** (${name})`);
       return;
     }
     const result = BASIC_SAVE_RESULTS[save.degree];
@@ -144,11 +128,6 @@ function applyDamageBySaves(roll) {
         { ...header, criticalLabel: "critical failure on a save" },
       );
     }
-    // Used for this use: its other damage parts can use it, a later use
-    // needs a new save (without a use id, it's used up)
-    api.setValuesOnTokenById(creature._id, creature.recordType, {
-      "data.lastSave": useId ? { ...save, usedBy: useId } : null,
-    });
   });
   if (lines.length > 0) {
     api.sendMessage(lines.join("\n"));

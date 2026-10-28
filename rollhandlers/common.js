@@ -15991,7 +15991,7 @@ function executeDamageMacro(
   if (category === "standard" && context.basicSave?.saveType) {
     metadata.basicSave = {
       saveType: context.basicSave.saveType,
-      ...(context.basicSave.useId ? { useId: context.basicSave.useId } : {}),
+      ...(context.basicSave.source ? { source: context.basicSave.source } : {}),
     };
   }
   // Where it comes from (updateDamageMacros), for resistances that depend
@@ -16144,7 +16144,12 @@ function updateDamageMacros(description, context = {}) {
 
   // The basic save its damage is against, for the damage card's Apply by
   // Saves (basic-saves.js)
+  // The ability's name goes with it, for Apply by Saves' line ("Avalanche
+  // Breath: applied by Reflex success, half damage")
   const basicSave = getDescriptionBasicSave(description, item);
+  if (basicSave && item.name) {
+    basicSave.source = item.name;
+  }
 
   const minimalContext = JSON.stringify({
     _id: item._id,
