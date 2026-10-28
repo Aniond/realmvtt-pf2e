@@ -6,8 +6,10 @@
 //   - the damage card of a spell with a basic save, or of the damage button
 //     of an ability whose save button is basic, has an Apply by Saves
 //     button: for each selected creature it applies the damage by that
-//     creature's last save, says what each took, and clears the save so it
-//     can't be used twice.
+//     creature's last save and says what each took. Each card's damage
+//     buttons share a use id, and the save is marked with it: it covers
+//     every damage part of that use (two damage buttons under one save), but
+//     not a later use.
 // Loaded as one of the ruleset's scripts (ruleset.config.json,
 // otherSettings.scripts), so it shares common.js's scope at runtime.
 
@@ -50,17 +52,24 @@ function getLastSaveValues(metadata, degree) {
 // The basic save a description's damage buttons are against: a spell's
 // Basic box, or the description's save button with basic: true (the module
 // converter writes rollSavingThrow('reflex', 28, { basic: true }) for
-// Foundry's @Check[reflex|dc:28|basic]). { saveType } or null; older imports
-// without the flag have none.
+// Foundry's @Check[reflex|dc:28|basic], and undefined for the DC of one
+// without a DC, like @Check[fortitude|against:spell|basic]). { saveType,
+// useId } or null; older imports without the flag have none.
 function getDescriptionBasicSave(description, item) {
   const save = item?.data?.defense?.save;
   if (item?.recordType === "spells" && save?.statistic && (save.basic === true || save.basic === "true")) {
-    return { saveType: String(save.statistic).toLowerCase() };
+    return { saveType: String(save.statistic).toLowerCase(), useId: getBasicSaveUseId() };
   }
   const match = String(description || "").match(
-    /rollSavingThrow\(\s*\\?['"](fortitude|reflex|will)\\?['"]\s*,\s*\d+\s*,\s*\{[^}]*?\bbasic\\?['"]?\s*:\s*true/i,
+    /rollSavingThrow\(\s*\\?['"](fortitude|reflex|will)\\?['"]\s*,\s*(?:\d+|undefined)\s*,\s*\{[^}]*?\bbasic\\?['"]?\s*:\s*true/i,
   );
-  return match ? { saveType: match[1].toLowerCase() } : null;
+  return match ? { saveType: match[1].toLowerCase(), useId: getBasicSaveUseId() } : null;
+}
+
+// A new id for one use of an ability or one cast of a spell: every damage
+// button on its card carries it
+function getBasicSaveUseId() {
+  return `${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
 }
 
 // The save card's line for a basic save, or ""
@@ -81,7 +90,7 @@ function getRecentSave(creature, saveType = "", now = Date.now()) {
 }
 
 // The damage card's Apply by Saves button. The roll's metadata.basicSave
-// ({ saveType }) names the save when it is known (a spell's).
+// ({ saveType, useId }) names the save and the use it is for.
 function getApplyBySavesButton(roll) {
   const fence = "```";
   return `${fence}Apply_by_Saves\napplyDamageBySaves(${JSON.stringify(roll)});\n${fence}`;
@@ -91,6 +100,7 @@ function getApplyBySavesButton(roll) {
 // each took
 function applyDamageBySaves(roll) {
   const saveType = roll?.metadata?.basicSave?.saveType || "";
+  const useId = roll?.metadata?.basicSave?.useId || "";
   const creatures = (api.getSelectedOrDroppedToken() || []).map((t) => t?.token || t).filter(Boolean);
   if (creatures.length === 0) {
     api.showNotification("Select the creatures that saved, then click again.", "yellow", "Notice");
@@ -104,6 +114,12 @@ function applyDamageBySaves(roll) {
       lines.push(`- ${name}: no ${saveType ? `${capitalize(saveType)} ` : ""}save rolled, nothing applied`);
       return;
     }
+    // A save already applied to another use's damage needs a new save; the
+    // same use's other damage parts can use it again
+    if (save.usedBy && save.usedBy !== useId) {
+      lines.push(`- ${name}: ${capitalize(save.saveType || "save")} save already used for other damage, nothing applied`);
+      return;
+    }
     const result = BASIC_SAVE_RESULTS[save.degree];
     lines.push(`- ${name}: ${capitalize(save.saveType || "save")} ${result.name}, ${result.label}`);
     if (result.multiplier === 0.5) {
@@ -113,8 +129,11 @@ function applyDamageBySaves(roll) {
     } else if (result.multiplier === 2) {
       applyDamage(creature, { ...roll, metadata: { ...(roll?.metadata || {}), critical: true } }, false);
     }
-    // Used: the next damage needs a new save
-    api.setValuesOnTokenById(creature._id, creature.recordType, { "data.lastSave": null });
+    // Used for this use: its other damage parts can use it, a later use
+    // needs a new save (without a use id, it's used up)
+    api.setValuesOnTokenById(creature._id, creature.recordType, {
+      "data.lastSave": useId ? { ...save, usedBy: useId } : null,
+    });
   });
   const source = roll?.metadata?.attack || roll?.metadata?.rollName || "Damage";
   api.sendMessage(`**${source}: applied by saves**\n${lines.join("\n")}`);

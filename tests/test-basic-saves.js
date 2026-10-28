@@ -123,19 +123,28 @@ section("The damage card's Apply by Saves");
   const breath = { _id: "act-breath", recordType: "actions", name: "Avalanche Breath", data: {} };
   const withBasic = "deals ```8d8_Damage\nexecuteDamageMacro('8d8 bludgeoning', 'standard', '8d8 bludgeoning Damage')\n``` in a cone (```Reflex_Save\nrollSavingThrow('reflex', 28, { basic: true });\n``` save)";
   const updated = ctx.updateDamageMacros(withBasic, { item: breath, creature: { _id: "npc", recordType: "npcs", data: {} } });
-  assertIncludes("the damage button gets the save type", updated, `executeDamageMacro('8d8 bludgeoning', 'standard', '8d8 bludgeoning Damage', {"basicSave":{"saveType":"reflex"}})`);
+  assertIncludes("the damage button gets the save type and a use id", updated, `executeDamageMacro('8d8 bludgeoning', 'standard', '8d8 bludgeoning Damage', {"basicSave":{"saveType":"reflex","useId":"`);
   const jsonFlag = withBasic.replace("{ basic: true }", '{"basic":true}');
-  assertIncludes("JSON-style flag too", ctx.updateDamageMacros(jsonFlag, { item: breath, creature: { _id: "npc", recordType: "npcs", data: {} } }), '"basicSave":{"saveType":"reflex"}');
+  assertIncludes("JSON-style flag too", ctx.updateDamageMacros(jsonFlag, { item: breath, creature: { _id: "npc", recordType: "npcs", data: {} } }), '"basicSave":{"saveType":"reflex","useId":');
+  // A basic save without a DC (Sean's review: @Check[fortitude|against:spell|basic])
+  const noDC = "```Damage\nexecuteDamageMacro('6d6 fire', 'standard', '6d6 fire Damage')\n``` (```Fortitude_Save\nrollSavingThrow('fortitude', undefined, { basic: true });\n```)";
+  assertIncludes("no DC: still basic", ctx.updateDamageMacros(noDC, { item: breath, creature: { _id: "npc", recordType: "npcs", data: {} } }), '"basicSave":{"saveType":"fortitude","useId":');
+  // Two damage parts under one save (Kuribu's Blessed Aspect): one use id
+  const twoParts = "```A\nexecuteDamageMacro('2d10 sonic', 'standard', '2d10 sonic Damage')\n``` and ```B\nexecuteDamageMacro('4d6 bludgeoning', 'standard', '4d6 bludgeoning Damage')\n``` (```Reflex_Save\nrollSavingThrow('reflex', 30, { basic: true });\n```)";
+  const ids = [...ctx.updateDamageMacros(twoParts, { item: breath, creature: { _id: "npc", recordType: "npcs", data: {} } }).matchAll(/"useId":"([^"]+)"/g)].map((m) => m[1]);
+  assert("both damage buttons share the use's id", [ids.length, ids[0] === ids[1]], [2, true]);
+  const again = [...ctx.updateDamageMacros(twoParts, { item: breath, creature: { _id: "npc", recordType: "npcs", data: {} } }).matchAll(/"useId":"([^"]+)"/g)].map((m) => m[1]);
+  assert("the next use: a new id", again[0] !== ids[0], true);
   const older = withBasic.replace(", { basic: true }", "");
   assertIncludes("an older import: unchanged", ctx.updateDamageMacros(older, { item: breath, creature: { _id: "npc", recordType: "npcs", data: {} } }), "executeDamageMacro('8d8 bludgeoning', 'standard', '8d8 bludgeoning Damage')\n");
   assert("no basic save in the description: none", ctx.getDescriptionBasicSave("rollSavingThrow('will', 26);", breath), null);
-  assert("a spell's Basic box", ctx.getDescriptionBasicSave("", { recordType: "spells", data: { defense: { save: { statistic: "Reflex", basic: true } } } }), { saveType: "reflex" });
+  assert("a spell's Basic box", ctx.getDescriptionBasicSave("", { recordType: "spells", data: { defense: { save: { statistic: "Reflex", basic: true } } } }).saveType, "reflex");
 
   // A spell's damage button names the save
   const fireball = { _id: "fb", name: "Fireball", recordType: "spells", data: { level: 3, traits: ["Fire"], defense: { save: { statistic: "reflex", basic: true } }, damage: [{ data: { formula: "6d6", type: "fire" } }] } };
   const caster = { _id: "pc", recordType: "characters", data: { level: 5 } };
   ctx.calculateSpellDamage = () => ({ hasDamage: true, damageString: "6d6 fire", persistentDamage: "", splashDamageValue: 0, splashDamageType: "" });
-  assertIncludes("a basic save spell's damage names the save", ctx.getSpellDamageMacro(caster, fireball, "data.spells.0.data.spells3.0"), 'basicSave: {"saveType":"reflex"}');
+  assertIncludes("a basic save spell's damage names the save, with a use id per cast", ctx.getSpellDamageMacro(caster, fireball, "data.spells.0.data.spells3.0"), 'basicSave: {"saveType":"reflex","useId":"');
   const notBasic = { ...fireball, data: { ...fireball.data, defense: { save: { statistic: "reflex", basic: false } } } };
   assertIncludes("not basic: null", ctx.getSpellDamageMacro(caster, notBasic, "data.spells.0.data.spells3.0"), "basicSave: null");
 }
@@ -145,7 +154,7 @@ section("Applying by each creature's save");
   const applied = [];
   const savedApply = ctx.applyDamage;
   ctx.applyDamage = (target, roll, half) => applied.push([target._id, half, roll.metadata.critical === true]);
-  const roll = { total: 20, types: [{ type: "fire", value: 20 }], metadata: { attack: "Fireball", isSpell: true, basicSave: { saveType: "reflex" } } };
+  const roll = { total: 20, types: [{ type: "fire", value: 20 }], metadata: { attack: "Fireball", isSpell: true, basicSave: { saveType: "reflex", useId: "use-1" } } };
   const creatures = [
     token("a", "Amiri", { lastSave: recent(2) }),
     token("b", "Kyra", { lastSave: recent(1) }),
@@ -160,12 +169,29 @@ section("Applying by each creature's save");
   ctx.__state.messages = [];
   ctx.applyDamageBySaves(roll);
   assert("success: half; failure: full; critical failure: double; critical success: nothing", applied, [["b", true, false], ["c", false, false], ["d", false, true]]);
-  assert("each save used is cleared", sets.map(([id, , v]) => [id, v["data.lastSave"]]), [["a", null], ["b", null], ["c", null], ["d", null]]);
+  assert("each save used is marked with the use", sets.map(([id, , v]) => [id, v["data.lastSave"].usedBy, v["data.lastSave"].degree]), [["a", "use-1", 2], ["b", "use-1", 1], ["c", "use-1", 0], ["d", "use-1", -1]]);
   const summaryText = ctx.__state.messages.join("\n");
   assertIncludes("chat says what each took", summaryText, "**Fireball: applied by saves**\n- Amiri: Reflex critical success, no damage\n- Kyra: Reflex success, half damage\n- Seelah: Reflex failure, full damage\n- Ezren: Reflex critical failure, double damage");
   assertIncludes("no save: nothing applied", summaryText, "- Valeros: no Reflex save rolled, nothing applied");
   assertIncludes("a save over 10 minutes old doesn't count", summaryText, "- Merisiel: no Reflex save rolled");
   assertIncludes("nor another save than the spell's", summaryText, "- Harsk: no Reflex save rolled");
+
+  // The same use's other damage part: the save covers it; a later use: not
+  applied.length = 0;
+  ctx.api.getSelectedOrDroppedToken = () => [token("b", "Kyra", { lastSave: { ...recent(1), usedBy: "use-1" } })];
+  ctx.__state.messages = [];
+  ctx.applyDamageBySaves(roll);
+  assert("the same use's second damage part: applied again", applied, [["b", true, false]]);
+  applied.length = 0;
+  ctx.__state.messages = [];
+  ctx.applyDamageBySaves({ ...roll, metadata: { ...roll.metadata, basicSave: { saveType: "reflex", useId: "use-2" } } });
+  assert("a later use: not applied", applied, []);
+  assertIncludes("it says the save was used", ctx.__state.messages.join("\n"), "- Kyra: Reflex save already used for other damage, nothing applied");
+  // Without a use id (a card from before this change): used up
+  sets = [];
+  ctx.api.getSelectedOrDroppedToken = () => [token("c", "Seelah", { lastSave: recent(0) })];
+  ctx.applyDamageBySaves({ ...roll, metadata: { ...roll.metadata, basicSave: { saveType: "reflex" } } });
+  assert("no use id: the save is cleared", sets.map(([id, , v]) => [id, v["data.lastSave"]]), [["c", null]]);
 
   // An ability's damage, named by its roll
   applied.length = 0;
