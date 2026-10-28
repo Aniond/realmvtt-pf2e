@@ -131,11 +131,10 @@ function buildClass() {
           data: {
             level: 1,
             type: "classfeature",
-            description: p("Your companion has the animal and minion traits."),
-            modifiers: [
-              modifier("Animal Companion", { type: "trait", valueType: "string", value: "Minion" }),
-              modifier("Animal Companion", { type: "trait", valueType: "string", value: "Animal" }),
-            ],
+            description: p("Your companion has the minion trait, and its type's traits (usually animal)."),
+            // Its creature type (animal, or the sapling's plant and the
+            // drake's dragon) comes from its ancestry
+            modifiers: [modifier("Animal Companion", { type: "trait", valueType: "string", value: "Minion" })],
           },
         },
       ],
@@ -168,10 +167,20 @@ const SPECIALIZATIONS = {
     proficiencies: [["acrobatics", 3], ["unarmored", 2]],
   },
   Racer: {
-    text: "Your companion races. It gains a +10-foot status bonus to its Speed, swim Speed, or fly Speed (your choice). Its proficiency in Fortitude saves increases to legendary, and its Constitution modifier increases by 1.",
+    text: "Your companion races. It gains a +10-foot status bonus to its Speed, swim Speed, or fly Speed (your choice: turn on Racer's Land, Swim or Fly Speed toggle). Its proficiency in Fortitude saves increases to legendary, and its Constitution modifier increases by 1.",
     attributes: { con: 1 },
     proficiencies: [["fortitude", 4]],
-    modifiers: [{ type: "speedBonus", modifierType: "status", value: "10" }],
+    // The +10 feet goes to the Speed the player picks on the sheet's toggles
+    modifiers: [
+      { type: "speedBonus", modifierType: "status", value: "10", predicate: '["racer:land"]' },
+      { type: "speedBonus", modifierType: "status", field: "swim", value: "10", predicate: '["racer:swim"]' },
+      { type: "speedBonus", modifierType: "status", field: "fly", value: "10", predicate: '["racer:fly"]' },
+    ],
+    toggleOptions: [
+      ["Land Speed", "racer:land"],
+      ["Swim Speed", "racer:swim"],
+      ["Fly Speed", "racer:fly"],
+    ],
   },
   Tracker: {
     text: "Your companion is an incredible tracker. It can move at full Speed while following tracks. Its proficiency rank in Survival increases to expert (or master if it was already an expert from its type), and its Wisdom modifier increases by 1.",
@@ -190,7 +199,7 @@ const SPECIALIZATIONS = {
 // feat (masterLevel: the master's feat level, for the text). It's level 1:
 // Realm counts a feat's proficiencies only from its level on, and the
 // companion's level is its master's.
-function feat(name, masterLevel, description, { modifiers = [], proficiencies = [], traits = ["Animal Companion"] } = {}) {
+function feat(name, masterLevel, description, { modifiers = [], proficiencies = [], traits = ["Animal Companion"], toggleOptions = [] } = {}) {
   const level = 1;
   return {
     _id: idFor("feat", name),
@@ -211,6 +220,18 @@ function feat(name, masterLevel, description, { modifiers = [], proficiencies = 
       traitsList: traitsList(traits),
       modifiers,
       proficiencies: proficiencies.map(([skill, rank, predicate]) => proficiency(skill, rank, predicate)),
+      // A choice on the sheet's toggles, one at a time (group)
+      ...(toggleOptions.length > 0
+        ? {
+            toggleOptions: toggleOptions.map(([label, predicateValue]) => ({
+              _id: idFor("toggle", name, label),
+              name: label,
+              recordType: "records",
+              identified: true,
+              data: { predicateValue, group: "choice" },
+            })),
+          }
+        : {}),
       publication: PUBLICATION,
     },
     fields: { actions: { hidden: true }, keyOptions: { hidden: true }, levelLabel: { hidden: false } },
@@ -234,7 +255,7 @@ function buildFeats() {
     ),
     feat(
       "Nimble Animal Companion",
-      6,
+      8,
       p("Your mature companion becomes nimble. Increase its Dexterity modifier by 2 and its Strength, Constitution, and Wisdom modifiers by 1. Increase its proficiency rank in Acrobatics to expert. It deals 2 additional damage with its unarmed attacks. Its attacks become magical for the purpose of ignoring resistances. It learns the advanced maneuver for its type."),
       {
         modifiers: [
@@ -247,7 +268,7 @@ function buildFeats() {
     ),
     feat(
       "Savage Animal Companion",
-      6,
+      8,
       p("Your mature companion becomes savage. If it is Medium or smaller, it grows by one size. Increase its Strength modifier by 2 and its Dexterity, Constitution, and Wisdom modifiers by 1. Increase its proficiency rank in Athletics to expert. It deals 3 additional damage with its unarmed attacks. Its attacks become magical for the purpose of ignoring resistances. It learns the advanced maneuver for its type."),
       {
         modifiers: [
@@ -283,6 +304,7 @@ function buildFeats() {
           ...(spec.modifiers || []).map((data) => modifier(name, data)),
         ],
         proficiencies: spec.proficiencies,
+        toggleOptions: spec.toggleOptions || [],
         traits: ["Animal Companion", "Specialization"],
       }),
     );
@@ -328,6 +350,15 @@ function weapon(type, attack) {
     },
   };
 }
+
+// A type's traits when they aren't just animal (Player Core: the arboreal
+// sapling "has the plant trait instead of the animal trait", the riding
+// drake the dragon trait, and the shark is aquatic)
+const TYPE_TRAITS = {
+  "Arboreal Sapling": ["Plant"],
+  "Riding Drake": ["Dragon"],
+  Shark: ["Animal", "Aquatic"],
+};
 
 function buildAncestry(type) {
   const name = type.name;
@@ -384,8 +415,8 @@ function buildAncestry(type) {
         p(`An animal companion type (Player Core ${type.page}). Use it as the ancestry of an animal companion character, with the Animal Companion class.`) +
         (type.sizes.length > 1 ? p(`It can start ${type.sizes.map((s) => s[0].toUpperCase() + s.slice(1)).join(" or ")}; change the character's size if you pick another.`) : "") +
         special,
-      traits: ["Animal"],
-      traitsList: traitsList(["Animal"]),
+      traits: TYPE_TRAITS[name] || ["Animal"],
+      traitsList: traitsList(TYPE_TRAITS[name] || ["Animal"]),
       features: [
         {
           _id: idFor("feature", name, "companion"),

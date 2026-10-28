@@ -27,7 +27,7 @@ const featNamed = (name) => copy(RECORDS.feats.find((f) => f.name === name));
 // A companion character from the module's records: its type's ancestry, the
 // Animal Companion class and stage feats, worked out as the sheet does
 // (onAddEditFeature, run until it settles)
-function companion(type, level, feats = [], { size } = {}) {
+function companion(type, level, feats = [], { size, toggles = [] } = {}) {
   const ancestry = copy(RECORDS.ancestry.find((a) => a.name === type));
   const record = {
     _id: `c-${type}-${level}`,
@@ -48,6 +48,11 @@ function companion(type, level, feats = [], { size } = {}) {
       actions: [],
       size: size || ancestry.data.size,
       speed: ancestry.data.speed,
+      // Its ancestry's traits, as dropping the ancestry copies them
+      traits: [...(ancestry.data.traits || [])],
+      // Toggles turned on (a Racer's Speed choice), named as the sheet names
+      // them ("<feat>: <option>")
+      toggles: toggles.map(([name, predicateValue]) => ({ name, data: { predicateValue, toggled: true } })),
     },
   };
   const write = (values, cb) => {
@@ -89,6 +94,18 @@ section("The module's records");
   assert("every record has a portrait", [...RECORDS.ancestry, ...RECORDS.class, ...RECORDS.feats].every((r) => r.portrait), true);
 }
 
+section("Traits (Player Core: the sapling is a plant, the drake a dragon, the shark aquatic)");
+{
+  const traitsOf = (name) => RECORDS.ancestry.find((a) => a.name === name).data.traits;
+  assert("bear: animal", traitsOf("Bear"), ["Animal"]);
+  assert("arboreal sapling: plant instead of animal", traitsOf("Arboreal Sapling"), ["Plant"]);
+  assert("riding drake: dragon instead of animal", traitsOf("Riding Drake"), ["Dragon"]);
+  assert("shark: animal and aquatic", traitsOf("Shark"), ["Animal", "Aquatic"]);
+  const sapling = companion("Arboreal Sapling", 1);
+  assert("a sapling companion: plant and minion, not animal", [sapling.data.traits.includes("Plant"), sapling.data.traits.includes("Minion"), sapling.data.traits.includes("Animal")], [true, true, false]);
+  assert("Nimble and Savage name the earliest feat (8th)", ["Nimble Animal Companion", "Savage Animal Companion"].map((n) => /feat 8 or higher/.test(featNamed(n).data.description)), [true, true]);
+}
+
 section("A young bear at 1st level (Player Core pg. 206)");
 {
   const bear = companion("Bear", 1);
@@ -119,21 +136,23 @@ section("Mature (Player Core pg. 211)");
 
 section("Savage and nimble (Player Core pg. 211)");
 {
-  const bear = companion("Bear", 7, ["Mature Animal Companion", "Savage Animal Companion"]);
+  // 8th level: the earliest feat that makes a companion nimble or savage
+  // (Druid's Incredible Companion)
+  const bear = companion("Bear", 8, ["Mature Animal Companion", "Savage Animal Companion"]);
   const d = bear.data;
-  assert("savage grows again: Large; 78 HP", [d.size, d.hitpoints], ["large", 78]);
+  assert("savage grows again: Large; 88 HP (8 + 10 x 8)", [d.size, d.hitpoints], ["large", 88]);
   assert("Str 6, Dex 4, Con 4, Wis 3", [d.strMod, d.dexMod, d.conMod, d.wisMod], [6, 4, 4, 3]);
-  assert("Athletics expert: 17", [d.athletics, d.athleticsMod], ["2", 17]);
+  assert("Athletics expert: 18", [d.athletics, d.athleticsMod], ["2", 18]);
   const jaws = strike(bear, "Jaws");
-  assert("jaws +15 for 2d8+9 (Str 6 + 3), magical", [jaws.bonus, jaws.damage, jaws.traits.includes("Magical")], [15, "2d8+9 piercing", true]);
+  assert("jaws +16 for 2d8+9 (Str 6 + 3), magical", [jaws.bonus, jaws.damage, jaws.traits.includes("Magical")], [16, "2d8+9 piercing", true]);
   assert("learns Bear Hug", d.actions.map((a) => a.name), ["Support", "Bear Hug"]);
 
-  const wolf = companion("Wolf", 7, ["Mature Animal Companion", "Nimble Animal Companion"]);
+  const wolf = companion("Wolf", 8, ["Mature Animal Companion", "Nimble Animal Companion"]);
   const w = wolf.data;
   assert("a nimble wolf stays Medium", w.size, "medium");
   assert("Acrobatics expert", w.acrobatics, "2");
   const bite = strike(wolf, "Jaws");
-  assert("finesse jaws use Dex: +15 for 2d8+6 (Str 4 + 2), magical", [bite.bonus, bite.damage, bite.traits.includes("Magical")], [15, "2d8+6 piercing", true]);
+  assert("finesse jaws use Dex: +16 for 2d8+6 (Str 4 + 2), magical", [bite.bonus, bite.damage, bite.traits.includes("Magical")], [16, "2d8+6 piercing", true]);
   assert("learns Takedown", w.actions.map((a) => a.name), ["Support", "Takedown"]);
 }
 
@@ -148,8 +167,16 @@ section("Specialized (Player Core pg. 211)");
   const jaws = strike(bear, "Jaws");
   assert("expert unarmed, three dice, extra damage 3 -> 6: jaws +25 for 3d8+13", [jaws.bonus, jaws.damage], [7 + 4 + 14, "3d8+13 piercing"]);
 
-  const racer = companion("Wolf", 14, ["Mature Animal Companion", "Nimble Animal Companion", "Specialized Animal Companion", "Racer"]);
+  const racerFeats = ["Mature Animal Companion", "Nimble Animal Companion", "Specialized Animal Companion", "Racer"];
+  const racer = companion("Wolf", 14, racerFeats);
   assert("racer: legendary Fortitude", racer.data.fortitude, "4");
+  // +10 feet to the Speed the player picks (Rules ID 2120)
+  const racerFeat = RECORDS.feats.find((f) => f.name === "Racer");
+  assert("racer offers Land, Swim and Fly as one choice", racerFeat.data.toggleOptions.map((o) => [o.name, o.data.group]), [["Land Speed", "choice"], ["Swim Speed", "choice"], ["Fly Speed", "choice"]]);
+  assert("nothing picked: no bonus yet", racer.data.speed, "40 feet");
+  assert("land picked: Speed 50", companion("Wolf", 14, racerFeats, { toggles: [["Racer: Land Speed", "racer:land"]] }).data.speed, "50 feet");
+  const shark = companion("Shark", 14, racerFeats, { toggles: [["Racer: Swim Speed", "racer:swim"]] });
+  assert("a shark picks swim: swim 50, still no land Speed", [shark.data.otherSpeeds?.swim, String(shark.data.speed).startsWith("0 feet")], [50, true]);
 }
 
 process.exitCode = summary() > 0 ? 1 : 0;

@@ -126,8 +126,9 @@ Animal companions are characters, as Foundry's PF2e Companion Compendia builds t
 
 - `isAnimalCompanionCharacter`: the class is named Animal Companion, or has `data.animalCompanion: true`. Such a character:
   - has no Automatic Bonus Progression (`isAbpCharacter`) and gains no attribute boosts at Level Up (`getLevelUpGains`)
-  - benefits only from item bonuses to AC and Speed (`withoutAnimalCompanionItemBonuses`, in `getEffectsAndModifiersForToken`)
-  - gets at most +3 to AC from its armor (barding), potency included (`getACForArmor`)
+  - benefits only from item bonuses to AC and Speed (`withoutAnimalCompanionItemBonuses`, in `getEffectsAndModifiersForToken`; an effect rule's `-item` suffix is stripped first)
+  - gets at most +3 to AC from item bonuses all told: its armor's (barding's, potency included, `getACForArmor`), and the rest of the +3 for any other
+  - shows no free boost fields when its level is typed in by hand (`getFreeBoostFieldsForLevel`)
 - Its attributes are `attributeBonus` modifiers on the ancestry's feature. Its ancestry has no boosts or flaws. `attributeBonus` values are added as numbers, and inactive ones are skipped.
 - Modifiers the module's feats use:
   - `weaponDiceCount`: the number of base damage dice for matching weapons (`getAlteredWeapon`), the highest wins. Striking runes still add to it. Mature uses 2 and Specialized 3, with predicate `["item:category:unarmed"]`.
@@ -136,6 +137,11 @@ Animal companions are characters, as Foundry's PF2e Companion Compendia builds t
 - Pictures:
   - Dropping a companion ancestry gives the character the ancestry's portrait, and its `data.tokenImage` (or portrait) as the token image. This only fills a picture that's still empty or a placeholder (`getCompanionImageValues`).
   - The Notes tab's **Use art from creature** picker copies any NPC's portrait and token (`onCompanionArtChange`), so a table's own licensed creature art can be used; the module ships none.
+- Rules choices:
+  - The module's README lists them under "Rules notes".
+  - A specialization's "master if it was already expert from its type" is read literally: a savage Bully's Athletics stays expert, where Foundry raises it to master.
+  - Barding is modeled as light and heavy armor proficiency.
+  - No ABP is Foundry's convention, not a printed rule.
 - Companions skip the creation wizard, which requires a key attribute and boosts. You make one by dropping the ancestry and the class on a new character.
 
 ### Concealment and detection

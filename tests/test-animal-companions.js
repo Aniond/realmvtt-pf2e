@@ -132,6 +132,10 @@ section("No Automatic Bonus Progression, no attribute boosts at Level Up");
   assert("... an animal companion doesn't", ctx.isAbpCharacter(character(), abp), false);
   assert("Level Up to 5th: a fighter's 4 boosts", ctx.getLevelUpGains(fighter({ level: 4 }), 5, {}).boostCount, 4);
   assert("... an animal companion's none", ctx.getLevelUpGains(character({ level: 4 }), 5, {}).boostCount, 0);
+  // A level typed in by hand shows no free boost sets either
+  const fighterBoosts = ctx.getFreeBoostFieldsForLevel(fighter(), 10, {});
+  assert("level 10 by hand: a fighter's 5th and 10th boost sets show", [fighterBoosts["fields.freeBoostsLevel5.hidden"], fighterBoosts["fields.freeBoostsLevel10.hidden"]], [false, false]);
+  assert("... a companion's stay hidden", Object.values(ctx.getFreeBoostFieldsForLevel(character(), 10, {})).every((hidden) => hidden === true), true);
 }
 
 section("Item bonuses: only to AC and Speed (Player Core pg. 206)");
@@ -153,6 +157,16 @@ section("Item bonuses: only to AC and Speed (Player Core pg. 206)");
   );
   assert("a fighter keeps them all", kinds(fighter({ feats: [collar] }), types).length, 5);
 
+  // An effect's rule keeps its bonus type as a suffix (Eagle-Eye Elixir)
+  const elixir = { name: "Eagle-Eye Elixir", type: "item", modifierType: "perceptionBonus-item", value: 1, isEffect: true };
+  const bark = { name: "Barkskin", type: "item", modifierType: "armorClassBonus-item", value: 2, isEffect: true };
+  assert("an effect's item bonus to Perception is dropped too", ctx.withoutAnimalCompanionItemBonuses([elixir]), []);
+  assert("an effect's item bonus to AC stays", ctx.withoutAnimalCompanionItemBonuses([bark]).length, 1);
+  // +3 to AC all told: barding's item bonus counts toward it
+  const ring = { name: "Ring", type: "item", modifierType: "armorClassBonus", value: 2 };
+  assert("barding +2: another item bonus to AC gets only +1", ctx.withoutAnimalCompanionItemBonuses([ring], 2)[0].value, 1);
+  assert("barding +3: none", ctx.withoutAnimalCompanionItemBonuses([ring], 3)[0].value, 0);
+  assert("no barding: up to +3", ctx.withoutAnimalCompanionItemBonuses([{ ...ring, value: 4 }], 0)[0].value, 3);
   const barding = { _id: "bard", name: "Heavy Barding", data: { type: "armor", acBonus: 2, runes: { potency: 2 }, invested: "true" } };
   assert("barding +2 with a +2 rune: +3 at most for a companion", ctx.getACForArmor(barding, character()), 3);
   assert("... +4 for a fighter", ctx.getACForArmor(barding, fighter()), 4);
@@ -199,7 +213,8 @@ section("Attribute modifiers from the ancestry (attributeBonus)");
 section("The Notes tab's companion box");
 {
   assert("shown for an animal companion", recalc(character())["fields.companionProperties.hidden"], false);
-  assert("hidden for anyone else", recalc(fighter())["fields.companionProperties.hidden"], true);
+  assert("anyone else: nothing written (unset counts as hidden)", "fields.companionProperties.hidden" in recalc(fighter()), false);
+  assert("hidden again when no longer a companion", recalc({ ...fighter(), fields: { companionProperties: { hidden: false } } })["fields.companionProperties.hidden"], true);
   assert("nothing written when already right", "fields.companionProperties.hidden" in recalc({ ...character(), fields: { companionProperties: { hidden: false } } }), false);
 }
 

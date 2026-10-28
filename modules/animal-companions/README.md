@@ -18,6 +18,13 @@ Animal companions for the PF2e ruleset as **characters**, the way Foundry's [PF2
 2. On the Notes tab, set **Animal Companion of** to its master. Its level becomes the master's. Use **Match Master's Level** after the master levels up. To give it a creature's art, pick one under **Use art from creature**.
 3. When the master takes Mature Animal Companion (or Incredible Companion, Specialized Animal Companion), add the matching feat here: Mature, then Nimble or Savage, then Specialized and one specialization.
 
+## Rules notes
+
+- **Specialization skills:** "expert (or master if it was already expert from its type)" is read literally. Ambusher, Bully and Tracker make the type's own skill master. A skill that's expert from Savage or Nimble stays expert (a savage Bully's Athletics). Foundry raises those to master too.
+- **Barding:** the class is trained in light and heavy armor, because barding is light or heavy armor in Realm's data. So the companion also counts as trained in ordinary light and heavy armor. Its item bonus to AC is capped at +3 either way.
+- **Racer:** turn on one of Racer's toggles (Land, Swim or Fly Speed) to choose which Speed gets the +10 feet.
+- **No Automatic Bonus Progression** for companions is Foundry's convention (its class sets `disableABP`), not a printed rule.
+
 ## Building
 
 - `source/player-core-types.json` is the companion types from Archives of Nethys (ORC): attacks, attributes, HP, skill, senses, Speeds, special, Support benefit and advanced maneuver.

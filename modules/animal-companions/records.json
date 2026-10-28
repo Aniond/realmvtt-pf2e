@@ -317,12 +317,12 @@
     },
     "description": "<p>An animal companion type (Player Core pg. 206). Use it as the ancestry of an animal companion character, with the Animal Companion class.</p>",
     "traits": [
-     "Animal"
+     "Plant"
     ],
     "traitsList": [
      {
-      "_id": "ac-trait-animal",
-      "name": "Animal",
+      "_id": "ac-trait-plant",
+      "name": "Plant",
       "identified": true,
       "data": {}
      }
@@ -3658,12 +3658,12 @@
     },
     "description": "<p>An animal companion type (Player Core pg. 209). Use it as the ancestry of an animal companion character, with the Animal Companion class.</p><p><strong>Mount</strong> Your companion is especially suited for riding: a rider doesn't keep it from using its other Speeds or from moving and Supporting you on the same turn.</p>",
     "traits": [
-     "Animal"
+     "Dragon"
     ],
     "traitsList": [
      {
-      "_id": "ac-trait-animal",
-      "name": "Animal",
+      "_id": "ac-trait-dragon",
+      "name": "Dragon",
       "identified": true,
       "data": {}
      }
@@ -4312,12 +4312,19 @@
     },
     "description": "<p>An animal companion type (Player Core pg. 210). Use it as the ancestry of an animal companion character, with the Animal Companion class.</p><p><strong>Special</strong> The shark has the aquatic trait. Its blood scent enables it to smell blood in the water from up to 1 mile away.</p>",
     "traits": [
-     "Animal"
+     "Animal",
+     "Aquatic"
     ],
     "traitsList": [
      {
       "_id": "ac-trait-animal",
       "name": "Animal",
+      "identified": true,
+      "data": {}
+     },
+     {
+      "_id": "ac-trait-aquatic",
+      "name": "Aquatic",
       "identified": true,
       "data": {}
      }
@@ -5312,7 +5319,7 @@
       "data": {
        "level": 1,
        "type": "classfeature",
-       "description": "<p>Your companion has the animal and minion traits.</p>",
+       "description": "<p>Your companion has the minion trait, and its type's traits (usually animal).</p>",
        "modifiers": [
         {
          "_id": "ac-mod-animal-companion-trait--minion-",
@@ -5327,21 +5334,6 @@
           "field": "",
           "type": "trait",
           "value": "Minion"
-         }
-        },
-        {
-         "_id": "ac-mod-animal-companion-trait--animal-",
-         "name": "Animal Companion",
-         "unidentifiedName": "Modifier",
-         "recordType": "records",
-         "identified": true,
-         "data": {
-          "modifierType": "none",
-          "valueType": "string",
-          "active": true,
-          "field": "",
-          "type": "trait",
-          "value": "Animal"
          }
         }
        ]
@@ -5587,7 +5579,7 @@
     "actionType": "passive",
     "actions": "",
     "prerequisites": "Animal Companion",
-    "description": "<p>Your mature companion becomes nimble. Increase its Dexterity modifier by 2 and its Strength, Constitution, and Wisdom modifiers by 1. Increase its proficiency rank in Acrobatics to expert. It deals 2 additional damage with its unarmed attacks. Its attacks become magical for the purpose of ignoring resistances. It learns the advanced maneuver for its type.</p><p><em>Add this feat to your animal companion when you take the matching feat (feat 6 or higher for you). Player Core pg. 211.</em></p>",
+    "description": "<p>Your mature companion becomes nimble. Increase its Dexterity modifier by 2 and its Strength, Constitution, and Wisdom modifiers by 1. Increase its proficiency rank in Acrobatics to expert. It deals 2 additional damage with its unarmed attacks. Its attacks become magical for the purpose of ignoring resistances. It learns the advanced maneuver for its type.</p><p><em>Add this feat to your animal companion when you take the matching feat (feat 8 or higher for you). Player Core pg. 211.</em></p>",
     "traits": [
      "Animal Companion"
     ],
@@ -5738,7 +5730,7 @@
     "actionType": "passive",
     "actions": "",
     "prerequisites": "Animal Companion",
-    "description": "<p>Your mature companion becomes savage. If it is Medium or smaller, it grows by one size. Increase its Strength modifier by 2 and its Dexterity, Constitution, and Wisdom modifiers by 1. Increase its proficiency rank in Athletics to expert. It deals 3 additional damage with its unarmed attacks. Its attacks become magical for the purpose of ignoring resistances. It learns the advanced maneuver for its type.</p><p><em>Add this feat to your animal companion when you take the matching feat (feat 6 or higher for you). Player Core pg. 211.</em></p>",
+    "description": "<p>Your mature companion becomes savage. If it is Medium or smaller, it grows by one size. Increase its Strength modifier by 2 and its Dexterity, Constitution, and Wisdom modifiers by 1. Increase its proficiency rank in Athletics to expert. It deals 3 additional damage with its unarmed attacks. Its attacks become magical for the purpose of ignoring resistances. It learns the advanced maneuver for its type.</p><p><em>Add this feat to your animal companion when you take the matching feat (feat 8 or higher for you). Player Core pg. 211.</em></p>",
     "traits": [
      "Animal Companion"
     ],
@@ -6376,7 +6368,7 @@
     "actionType": "passive",
     "actions": "",
     "prerequisites": "Animal Companion",
-    "description": "<p>Your companion races. It gains a +10-foot status bonus to its Speed, swim Speed, or fly Speed (your choice). Its proficiency in Fortitude saves increases to legendary, and its Constitution modifier increases by 1.</p><p><em>Add this feat to your animal companion when you take the matching feat (feat 14 or higher for you). Player Core pg. 211.</em></p>",
+    "description": "<p>Your companion races. It gains a +10-foot status bonus to its Speed, swim Speed, or fly Speed (your choice: turn on Racer's Land, Swim or Fly Speed toggle). Its proficiency in Fortitude saves increases to legendary, and its Constitution modifier increases by 1.</p><p><em>Add this feat to your animal companion when you take the matching feat (feat 14 or higher for you). Player Core pg. 211.</em></p>",
     "traits": [
      "Animal Companion",
      "Specialization"
@@ -6412,7 +6404,7 @@
       }
      },
      {
-      "_id": "ac-mod-racer-speedbonus--10-",
+      "_id": "ac-mod-racer-speedbonus--10-racer-land",
       "name": "Racer",
       "unidentifiedName": "Modifier",
       "recordType": "records",
@@ -6423,7 +6415,40 @@
        "active": true,
        "field": "",
        "type": "speedBonus",
-       "value": "10"
+       "value": "10",
+       "predicate": "[\"racer:land\"]"
+      }
+     },
+     {
+      "_id": "ac-mod-racer-speedbonus-swim-10-racer-swim",
+      "name": "Racer",
+      "unidentifiedName": "Modifier",
+      "recordType": "records",
+      "identified": true,
+      "data": {
+       "modifierType": "status",
+       "valueType": "number",
+       "active": true,
+       "field": "swim",
+       "type": "speedBonus",
+       "value": "10",
+       "predicate": "[\"racer:swim\"]"
+      }
+     },
+     {
+      "_id": "ac-mod-racer-speedbonus-fly-10-racer-fly",
+      "name": "Racer",
+      "unidentifiedName": "Modifier",
+      "recordType": "records",
+      "identified": true,
+      "data": {
+       "modifierType": "status",
+       "valueType": "number",
+       "active": true,
+       "field": "fly",
+       "type": "speedBonus",
+       "value": "10",
+       "predicate": "[\"racer:fly\"]"
       }
      }
     ],
@@ -6437,6 +6462,38 @@
        "name": "fortitude",
        "rank": "4",
        "field": ""
+      }
+     }
+    ],
+    "toggleOptions": [
+     {
+      "_id": "ac-toggle-racer-land-speed",
+      "name": "Land Speed",
+      "recordType": "records",
+      "identified": true,
+      "data": {
+       "predicateValue": "racer:land",
+       "group": "choice"
+      }
+     },
+     {
+      "_id": "ac-toggle-racer-swim-speed",
+      "name": "Swim Speed",
+      "recordType": "records",
+      "identified": true,
+      "data": {
+       "predicateValue": "racer:swim",
+       "group": "choice"
+      }
+     },
+     {
+      "_id": "ac-toggle-racer-fly-speed",
+      "name": "Fly Speed",
+      "recordType": "records",
+      "identified": true,
+      "data": {
+       "predicateValue": "racer:fly",
+       "group": "choice"
       }
      }
     ],

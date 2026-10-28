@@ -3610,7 +3610,7 @@ function getEffectsAndModifiersForToken(
   // An animal companion benefits only from item bonuses to AC and Speed
   // (Player Core pg. 206; animal-companions.js)
   if (isAnimalCompanionCharacter(target)) {
-    results = withoutAnimalCompanionItemBonuses(results);
+    results = withoutAnimalCompanionItemBonuses(results, bestArmor?.armor?.acBonus || 0);
   }
   results.push(...getAbpModifiers(target));
 
@@ -8354,7 +8354,7 @@ function onAddEditFeature(
   // The Notes tab's Animal Companion box (master, level) shows for a
   // character whose class is Animal Companion
   const hideCompanionBox = !isAnimalCompanionCharacter(record);
-  if (record.fields?.companionProperties?.hidden !== hideCompanionBox) {
+  if ((record.fields?.companionProperties?.hidden ?? true) !== hideCompanionBox) {
     valuesToSet["fields.companionProperties.hidden"] = hideCompanionBox;
   }
 
@@ -17416,6 +17416,13 @@ function getDedicationWarning(record, feat) {
 // Ability Boosts it holds one per level reached within the set.
 function getFreeBoostFieldsForLevel(record, level, variants = getVariantRules()) {
   const valuesToSet = {};
+  // An animal companion gains no attribute boosts (animal-companions.js)
+  if (isAnimalCompanionCharacter(record)) {
+    LEVEL_UP_BOOST_LEVELS.forEach((setLevel) => {
+      valuesToSet[`fields.freeBoostsLevel${setLevel}.hidden`] = true;
+    });
+    return valuesToSet;
+  }
   for (const setLevel of LEVEL_UP_BOOST_LEVELS) {
     const start = getBoostSetStartLevel(setLevel, variants);
     const allowed = variants.gradualBoosts

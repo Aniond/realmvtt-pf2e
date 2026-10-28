@@ -4,11 +4,14 @@
 // (Mature, Nimble, Savage, Specialized) are feats, all in a data module. The
 // ruleset's part is here and where common.js calls it:
 //   - a character whose class is Animal Companion gets no Automatic Bonus
-//     Progression (isAbpCharacter) and no attribute boosts at levels 5, 10,
-//     15 and 20 (getLevelUpGains);
+//     Progression (isAbpCharacter; not a printed rule but Foundry's
+//     convention, its companion class sets flags.system.disableABP) and no
+//     attribute boosts at levels 5, 10, 15 and 20 (getLevelUpGains, and the
+//     free boost fields stay hidden: getFreeBoostFieldsForLevel);
 //   - the only item bonuses it benefits from are to AC and Speed, and its
-//     armor's (barding's) item bonus to AC is at most +3 (Player Core pg. 206;
-//     getEffectsAndModifiersForToken, getACForArmor);
+//     item bonus to AC is at most +3 all told, its armor's (barding's) and
+//     any other's (Player Core pg. 206; getEffectsAndModifiersForToken,
+//     getACForArmor);
 //   - its level is its master's, set from the Notes tab's Master field and
 //     its Match Master's Level button (there's no level-up hook).
 // The extra damage dice of mature and specialized companions are the
@@ -54,17 +57,29 @@ function getCompanionImageValues(character, ancestry) {
 const ANIMAL_COMPANION_ITEM_BONUS_TYPES = ["armorClassBonus", "speedBonus", "speed"];
 
 // An animal companion's modifiers without the item bonuses it can't benefit
-// from (all but AC and Speed); item penalties still apply
-function withoutAnimalCompanionItemBonuses(results) {
-  return results.filter(
-    (r) =>
-      !(
-        r.type === "item" &&
-        `${r.modifierType || ""}`.endsWith("Bonus") &&
-        !ANIMAL_COMPANION_ITEM_BONUS_TYPES.includes(r.modifierType) &&
-        !(parseFloat(r.value) < 0)
-      ),
-  );
+// from (all but AC and Speed); item penalties still apply. An effect rule's
+// modifierType keeps its bonus type as a suffix ("perceptionBonus-item"),
+// so that's stripped first. Its item bonus to AC is at most +3 all told:
+// armorItemBonus is what its armor already gives (getACForArmor), and an
+// item bonus to AC from anything else gets only the rest of the +3.
+function withoutAnimalCompanionItemBonuses(results, armorItemBonus = 0) {
+  const kind = (r) => `${r.modifierType || ""}`.replace(/-(item|status|circumstance)$/, "");
+  const roomForAc = Math.max(0, ANIMAL_COMPANION_MAX_ARMOR_AC - Math.max(0, armorItemBonus));
+  return results
+    .filter(
+      (r) =>
+        !(
+          r.type === "item" &&
+          kind(r).endsWith("Bonus") &&
+          !ANIMAL_COMPANION_ITEM_BONUS_TYPES.includes(kind(r)) &&
+          !(parseFloat(r.value) < 0)
+        ),
+    )
+    .map((r) =>
+      r.type === "item" && kind(r) === "armorClassBonus" && parseFloat(r.value) > roomForAc
+        ? { ...r, value: roomForAc }
+        : r,
+    );
 }
 
 // The most an animal companion's armor (barding) adds to its AC as an item
