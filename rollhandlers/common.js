@@ -9668,15 +9668,6 @@ function performSkillAction(record, skill, actionName, isMacro = false, options 
     extraModifiers,
     ...(maneuver ? { maneuver } : {}),
     ...(turnAttack ? { turnAttack } : {}),
-    // After a finisher this turn, no attack is allowed (action-limits.js)
-    ...(action.attack
-      ? {
-          attackNumberHint: getAfterFinisherWarning(
-            getOpenTurnActionLog(record, attackerToken),
-            getOpenTurnAttackLog(record, attackerToken),
-          ),
-        }
-      : {}),
     dcName: options.escape?.dcName || (action.defense && target ? `${capitalize(action.defense)} DC` : undefined),
     // Notes on the target for being forced to move (Rock Dwarf), shown with
     // a Shove or Reposition result
@@ -10656,20 +10647,9 @@ function useAction(action, actionDataPath = null) {
     isMagicalSource(traits),
   );
 
-  // The limits its traits set on the creature's turn (flourish, press...);
-  // the use goes in the turn's action log (action-limits.js)
-  const limits = checkActionLimits(
-    (typeof record !== "undefined" && record) || null,
-    api.getToken(),
-    actionName,
-    traits,
-    "action",
-  );
-  const limitLines = limits.lines.map((line) => `${line}\n`).join("");
-
   const message = `
 #### ${portrait}${actionName}${actionIcon ? "&nbsp;" : ""}${actionIcon}
-${usesLine ? `${usesLine}\n` : ""}${limitLines}
+${usesLine ? `${usesLine}\n` : ""}
 ---
 ${actionDescription}
 ${effectMacros}${getActionHealingMacros(action)}${getFirstAidActionMacro(action)}${getSkillActionMacros(action)}
@@ -11929,12 +11909,6 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber) {
   const attackerToken = api.getToken();
   const turnAttackLog = getOpenTurnAttackLog(record, attackerToken);
   const loggedAttackNumber = getNextAttackNumber(record, attackerToken);
-  // After a finisher this turn, the card says no attack is allowed
-  // (action-limits.js)
-  const attackNumberHint = getAfterFinisherWarning(
-    getOpenTurnActionLog(record, attackerToken),
-    turnAttackLog,
-  );
   if (!attackNumber) {
     attackNumber = loggedAttackNumber || 1;
   }
@@ -13085,7 +13059,6 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber) {
             : ourToken?.record?.name,
         targetId: target?.token?._id,
         turnAttack: getTurnAttack(target?.token?._id),
-        attackNumberHint,
         // Fortification on the target's armor (property-runes.js)
         fortification: getFortification(target?.token),
         autoCritical: autoCritical,
@@ -13178,7 +13151,6 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber) {
           ? ourToken?.record?.unidentifiedName
           : ourToken?.record?.name,
       turnAttack: getTurnAttack(null),
-      attackNumberHint,
       damage: damage,
       persistentDamage: persistentDamage,
       criticalPersistentDamage: criticalPersistentDamage,

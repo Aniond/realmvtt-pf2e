@@ -244,21 +244,21 @@ section("Strikes: the buttons and the log");
   // Off the creature's turn: as before
   let roll = strike(record, sword, { attackNumber: 2 });
   assert("off its turn: button 2 is -5", named(roll.modifiers, "Mutliple Attack Penalty").map((m) => m.value), [-5]);
-  assert("no hint", roll.metadata.attackNumberHint, "");
+  assert("no hint", roll.metadata.attackNumberHint, undefined);
   assert("nothing logged", roll.metadata.turnAttack, null);
 
   const key = startTurn(token);
   roll = strike(record, sword, { attackNumber: 1 });
   assert("1st attack, button 1: no penalty", named(roll.modifiers, "Mutliple Attack Penalty"), []);
-  assert("no hint", roll.metadata.attackNumberHint, "");
+  assert("no hint", roll.metadata.attackNumberHint, undefined);
   assert("logged as a Strike with this weapon", [roll.metadata.turnAttack.entry.kind, roll.metadata.turnAttack.entry.weaponId], ["strike", "w-Longsword"]);
 
   record.data.turnAttacks = { turnKey: key, attacks: [logged("strike", { weaponId: "w-Longsword" })] };
   roll = strike(record, sword, { attackNumber: 1 });
   assert("2nd attack, button 1: the button wins", named(roll.modifiers, "Mutliple Attack Penalty"), []);
-  assert("and no hint: the count can lag behind a quick roll", roll.metadata.attackNumberHint, "");
+  assert("and no hint: the count can lag behind a quick roll", roll.metadata.attackNumberHint, undefined);
   roll = strike(record, sword, { attackNumber: 2 });
-  assert("button 2: -5, no hint", [named(roll.modifiers, "Mutliple Attack Penalty").map((m) => m.value), roll.metadata.attackNumberHint], [[-5], ""]);
+  assert("button 2: -5, no hint", [named(roll.modifiers, "Mutliple Attack Penalty").map((m) => m.value), roll.metadata.attackNumberHint], [[-5], undefined]);
   roll = strike(record, sword, {});
   assert("no button (Elemental Blast): the log sets -5", named(roll.modifiers, "Mutliple Attack Penalty").map((m) => m.value), [-5]);
   roll = strike(record, sword, { targets: [target("orc")], attackNumber: 2 });
