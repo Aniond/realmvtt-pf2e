@@ -107,18 +107,31 @@ ctx.api.setValuesOnRecord = (record, values, cb) => {
   respond(cb, copy(stored));
 };
 ctx.api.setValues = (values, cb) => ctx.api.setValuesOnRecord(ctx.record, values, cb);
-ctx.api.addValue = (path, value, cb) => {
-  added.push([path, copy(value)]);
-  const stored = store[ctx.record._id];
-  getPath(stored, path).push(copy(value));
+// As in Realm: an added value gets a new _id, and a remove finds the value
+// at the index in the record it's given (removeValue: the sheet's, bound when
+// the script started) and pulls it by its _id, so removing one already gone
+// removes nothing
+let nextId = 0;
+const addTo = (target, path, values, cb) => {
+  values.forEach((value) => {
+    added.push([path, copy(value)]);
+    getPath(store[target._id], path).push({ ...copy(value), _id: `added-${(nextId += 1)}` });
+  });
   // The callback hands back the copy from before
-  respond(cb, ctx.record);
+  respond(cb, target);
 };
-ctx.api.removeValue = (path, index, cb) => {
+const removeFrom = (target, path, index, cb) => {
   removed.push([path, index]);
-  getPath(store[ctx.record._id], path).splice(index, 1);
-  respond(cb, ctx.record);
+  const id = getPath(target, path)?.[index]?._id;
+  const list = getPath(store[target._id], path);
+  const at = list.findIndex((value) => value?._id === id);
+  if (id && at >= 0) list.splice(at, 1);
+  respond(cb, copy(store[target._id]));
 };
+ctx.api.addValue = (path, value, cb) => addTo(ctx.record, path, [value], cb);
+ctx.api.addValuesToRecord = (target, path, values, cb) => addTo(target, path, values, cb);
+ctx.api.removeValue = (path, index, cb) => removeFrom(ctx.record, path, index, cb);
+ctx.api.removeValueFromRecord = (target, path, index, cb) => removeFrom(target, path, index, cb);
 ctx.updateTotalBulk = (record, write = true) => {
   bulk += 1;
   return 0;
@@ -371,12 +384,15 @@ section("Use on a wand or scroll casts its row");
   assert("nothing written", [added, recordWrites], [[], []]);
 }
 
-section("Answers that arrive late (Sean's races)");
+section("Answers that arrive late: overlapping syncs and casts");
 {
+  // Realm runs every click as a script of its own, so nothing is shared
+  // between two syncs: each reads, writes against its read, and removes by
+  // _id. Here their answers arrive late, so they overlap.
   const names = () => stored().data.spells.map((e) => e.name);
   const divine = () => entry("Divine Prepared Spells", { tradition: "Divine", attribute: "wis", dc: 19, mod: 9 });
 
-  // 1. The last scrolls deleted quickly: two syncs, one entry to remove
+  // The last scrolls deleted quickly: two syncs remove the entry
   open(character([divine()], {}, [scroll(2)]));
   ctx.syncItemSpells(ctx.record);
   stored().data.spells.push(entry("Focus Spells", { type: "focus" }));
@@ -388,7 +404,8 @@ section("Answers that arrive late (Sean's races)");
   settle();
   assert("two syncs at once remove only Scrolls and Wands", names(), ["Divine Prepared Spells", "Focus Spells"]);
 
-  // 2. Two wands equipped quickly: two syncs, one entry to add
+  // Two wands equipped quickly: both syncs add the entry, then each reads
+  // again and removes any but the first
   open(character([divine()], {}, [wand()]));
   let calls = 0;
   late = true;
@@ -396,10 +413,16 @@ section("Answers that arrive late (Sean's races)");
   ctx.syncItemSpells(ctx.record, () => (calls += 1));
   ctx.syncItemSpells(ctx.record, () => (calls += 1));
   settle();
-  assert("syncs at once add one entry", names(), ["Divine Prepared Spells", "Scrolls and Wands"]);
+  assert("syncs at once leave one entry", names(), ["Divine Prepared Spells", "Scrolls and Wands"]);
+  assert("the first one added", itemEntry()._id, "added-" + (nextId - 2));
   assert("and each one's callback runs", calls, 3);
 
-  // 3. Use double-clicked on the last scroll, a potion after it
+  // A leftover second entry with no scrolls or wands left: both go
+  open(character([divine(), entry("Scrolls and Wands", { type: "item", itemSpells: true }), entry("Scrolls and Wands 2", { type: "item", itemSpells: true })]));
+  ctx.syncItemSpells(ctx.record);
+  assert("none left: every Scrolls and Wands entry goes", names(), ["Divine Prepared Spells"]);
+
+  // Use double-clicked on the last scroll, a potion after it
   const lastScroll = { ...scroll(1), data: { ...scroll(1).data, uses: { autoDestroy: true } } };
   open(character([divine()], {}, [lastScroll, potion]));
   ctx.syncItemSpells(ctx.record);
@@ -411,6 +434,27 @@ section("Answers that arrive late (Sean's races)");
   settle();
   assert("a double click removes the scroll, not the potion", stored().data.inventory.map((i) => i.name), ["Healing Potion (Minor)"]);
   assert("and the entry with it", names(), ["Divine Prepared Spells"]);
+
+  // The inventory moves before the used-up scroll is removed (another
+  // client drops the potion in front of it): the scroll goes, by its id
+  open(character([divine()], {}, [potion, lastScroll]));
+  ctx.syncItemSpells(ctx.record);
+  const moved = copy(stored());
+  late = true;
+  ctx.castSpell(copy(moved), getPath(moved, path), path);
+  stored().data.inventory.shift();
+  settle();
+  assert("the moved scroll is removed, nothing else", stored().data.inventory.map((i) => i.name), []);
+
+  // More scrolls of it added before the removal: it stays
+  open(character([divine()], {}, [lastScroll]));
+  ctx.syncItemSpells(ctx.record);
+  const restocked = copy(stored());
+  late = true;
+  ctx.castSpell(copy(restocked), getPath(restocked, "data.spells.1.data.spells1.0"), "data.spells.1.data.spells1.0");
+  stored().data.inventory[0].data.count = 3;
+  settle();
+  assert("restocked meanwhile: the scroll stays", stored().data.inventory.map((i) => i.data.count), [3]);
 
   // Use finds its row by the item's id, if the inventory moved since
   open(character([divine()], {}, [potion, scroll(2)]));

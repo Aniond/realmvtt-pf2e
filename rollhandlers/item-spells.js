@@ -242,12 +242,18 @@ function getItemSpellFromRow(row) {
   return { _id: itemSpell?.spellId || "", name: row?.name, portrait: row?.portrait, data };
 }
 
+// Which scroll or wand a spell was found for: its id (its index if it has
+// none), so a spell found before a read still matches the item after it
+function getItemSpellKey(item, index) {
+  return item?._id || `#${index}`;
+}
+
 // The Scrolls and Wands entry as the inventory has it, given each item's
-// spell ({ [inventory index]: spell }): a row per scroll and wand at the
+// spell ({ [getItemSpellKey]: spell }): a row per scroll and wand at the
 // item's rank, and the caster's numbers for the first one (every cast works
 // them out again for its own spell). null when there are none.
-function buildItemSpellsEntry(record, spellsByIndex) {
-  const listed = getInventoryItemSpells(record).filter(({ index }) => spellsByIndex[index]);
+function buildItemSpellsEntry(record, spellsByItem) {
+  const listed = getInventoryItemSpells(record).filter(({ item, index }) => spellsByItem[getItemSpellKey(item, index)]);
   if (listed.length === 0) return null;
   const entries = record?.data?.spells || [];
   const current =
@@ -264,7 +270,7 @@ function buildItemSpellsEntry(record, spellsByIndex) {
     data[list] = [];
   });
   listed.forEach(({ item, index, kind }) => {
-    const spell = spellsByIndex[index];
+    const spell = spellsByItem[getItemSpellKey(item, index)];
     const rank = Math.min(10, getItemSpellRank(item) || parseInt(spell?.data?.level, 10) || 1);
     data[`spells${rank}`].push(buildItemSpellRow(item, index, kind, spell));
   });
@@ -274,7 +280,8 @@ function buildItemSpellsEntry(record, spellsByIndex) {
       fields[`${list}Box`] = { hidden: data[list].length === 0 };
     }
   });
-  Object.assign(data, getItemSpellCasting(record, spellsByIndex[listed[0].index]).casting);
+  const first = listed[0];
+  Object.assign(data, getItemSpellCasting(record, spellsByItem[getItemSpellKey(first.item, first.index)]).casting);
   return { ...current, data, fields };
 }
 
@@ -289,110 +296,99 @@ function findItemSpell(ref, callback) {
   api.getRecord("spells", ref._id, (spell) => (spell ? callback(spell) : byName()));
 }
 
-// Syncs and used-up scroll removals for a character run one at a time on
-// this client: two at once would both read the same record, then both add the
-// entry, or both remove by the same index (and the second removes whatever
-// moved into it). A task that never finishes is passed after 10 seconds.
-const itemSpellQueues = {};
-function queueItemSpellTask(id, task) {
-  const queue = (itemSpellQueues[id] = itemSpellQueues[id] || { busy: false, since: 0, tasks: [] });
-  queue.tasks.push(task);
-  const next = () => {
-    const nextTask = queue.tasks.shift();
-    queue.busy = !!nextTask;
-    queue.since = Date.now();
-    if (nextTask) nextTask(next);
-  };
-  if (!queue.busy || Date.now() - queue.since > 10000) next();
-}
-
 // Brings the Scrolls and Wands entry in line with the inventory, when a
 // scroll or wand is added, equipped, counted or deleted: a row for each one
 // with a spell, none for one that's gone, and no entry when there are none.
-// It reads the record again first (an add's or a delete's callback hands back
-// the copy from before), looks up only the spells it doesn't have yet, and
-// writes only the entry, only when it changed. callback(record) gets the
-// record as it is after. A sync asked for while another is waiting its turn
-// joins that one.
+// callback(record) gets the record read after.
+// Realm runs every click as a script of its own, so two syncs can overlap
+// (two quick deletes, or two clients) and nothing here can wait for the
+// other. Each one writes against a record it has just read, and only what
+// changed:
+//   - the spells it has to look up take round trips, so it reads again after
+//     them and builds from that read (the spells are kept by item id);
+//   - it removes by id (removeValueFromRecord on the record it read), so two
+//     syncs removing the entry at once remove it once;
+//   - two adding it at once can leave two entries: each reads again after
+//     its write and removes any but the first (by id, so both doing it
+//     remove the extra once).
 function syncItemSpells(record, callback) {
-  if (record?.recordType !== "characters") {
-    if (callback) callback(record);
-    return;
-  }
-  const waiting = itemSpellQueues[record._id]?.tasks.find((task) => task.sync);
-  if (waiting) {
-    if (callback) waiting.callbacks.push(callback);
-    return;
-  }
-  const task = (next) =>
-    runItemSpellSync(record, (updated) => {
-      try {
-        task.callbacks.forEach((cb) => cb(updated));
-      } finally {
-        next();
-      }
-    });
-  task.sync = true;
-  task.callbacks = callback ? [callback] : [];
-  queueItemSpellTask(record._id, task);
-}
-
-function runItemSpellSync(record, done) {
-  api.getRecord(record.recordType, record._id, (fresh) => {
-    const current = fresh || record;
-    const entries = current.data?.spells || [];
-    const entryIndex = entries.findIndex(isItemSpellsEntry);
+  const done = (updated) => {
+    if (callback) callback(updated);
+  };
+  if (record?.recordType !== "characters") return done(record);
+  const read = (then) => rereadItemSpells(record, then);
+  read((current) => {
     const items = getInventoryItemSpells(current);
-    if (items.length === 0 && entryIndex < 0) return done(current);
+    if (items.length === 0 && !(current.data?.spells || []).some(isItemSpellsEntry)) return done(current);
 
-    const reread = () => api.getRecord(current.recordType, current._id, (after) => done(after || current));
-    // Finds the entry again just before writing (the spell lookups take
-    // round trips), so it adds, removes or sets the one that's there now
-    const write = (spellsByIndex) => {
-      const entry = buildItemSpellsEntry(current, spellsByIndex);
-      api.getRecord(current.recordType, current._id, (latest) => {
-        const now = latest || current;
-        const nowEntries = now.data?.spells || [];
-        const nowIndex = nowEntries.findIndex(isItemSpellsEntry);
-        if (!entry) {
-          if (nowIndex < 0) return done(now);
-          api.removeValue("data.spells", nowIndex, reread);
-        } else if (nowIndex < 0) {
-          api.addValue("data.spells", entry, reread);
-        } else if (JSON.stringify(entry) === JSON.stringify(nowEntries[nowIndex])) {
-          done(now);
-        } else {
-          api.setValuesOnRecord(now, { [`data.spells.${nowIndex}`]: entry }, reread);
-        }
-      });
-    };
-
-    // A row already made for the same item and spell keeps its spell
-    const rows = SPELL_RANK_LISTS.flatMap((list) => entries[entryIndex]?.data?.[list] || []);
-    const spellsByIndex = {};
-    let pending = items.length;
-    if (pending === 0) return write(spellsByIndex);
-    const found = () => {
-      pending -= 1;
-      if (pending === 0) write(spellsByIndex);
-    };
+    // A row already made for the same item and spell keeps its spell; only
+    // the others are looked up
+    const entry = (current.data?.spells || []).find(isItemSpellsEntry);
+    const rows = SPELL_RANK_LISTS.flatMap((list) => entry?.data?.[list] || []);
+    const spellsByItem = {};
+    const missing = [];
     items.forEach(({ item, index, ref }) => {
       const row = rows.find(
         (r) =>
           r?.data?.itemSpell?.itemId === (item._id || "") &&
           String(r?.name || "").trim().toLowerCase() === String(ref.name || "").trim().toLowerCase(),
       );
-      if (row) {
-        spellsByIndex[index] = getItemSpellFromRow(row);
-        found();
-        return;
-      }
-      findItemSpell(ref, (spell) => {
-        if (spell) spellsByIndex[index] = spell;
-        found();
-      });
+      if (row) spellsByItem[getItemSpellKey(item, index)] = getItemSpellFromRow(row);
+      else missing.push({ item, index, ref });
     });
+    if (missing.length === 0) return writeItemSpells(current, spellsByItem, done);
+    let pending = missing.length;
+    missing.forEach(({ item, index, ref }) =>
+      findItemSpell(ref, (spell) => {
+        if (spell) spellsByItem[getItemSpellKey(item, index)] = spell;
+        pending -= 1;
+        if (pending === 0) read((latest) => writeItemSpells(latest, spellsByItem, done));
+      }),
+    );
   });
+}
+
+// The character read again, for after a write (its callback can hand back
+// the copy from before)
+function rereadItemSpells(record, then) {
+  api.getRecord(record.recordType, record._id, (fresh) => then(fresh || record));
+}
+
+// syncItemSpells' one write against the record just read: the entry added,
+// set or removed, or nothing when it's as it should be. done(record) gets
+// the record after, read again when something was written.
+function writeItemSpells(current, spellsByItem, done) {
+  const entries = current.data?.spells || [];
+  const entryIndex = entries.findIndex(isItemSpellsEntry);
+  const entry = buildItemSpellsEntry(current, spellsByItem);
+  const written = () => rereadItemSpells(current, (after) => removeItemSpellsEntries(after, 1, done));
+  if (!entry) {
+    // None left: every Scrolls and Wands entry goes
+    removeItemSpellsEntries(current, 0, done);
+  } else if (entryIndex < 0) {
+    api.addValuesToRecord(current, "data.spells", [entry], written);
+  } else if (JSON.stringify(entry) === JSON.stringify(entries[entryIndex])) {
+    removeItemSpellsEntries(current, 1, done);
+  } else {
+    api.setValuesOnRecord(current, { [`data.spells.${entryIndex}`]: entry }, written);
+  }
+}
+
+// Removes the Scrolls and Wands entries after the first `keep` (1: a second
+// one, from two syncs adding it at once; 0: all), by id, from the last so the
+// indexes before it hold; then done(record), read again if one was removed
+function removeItemSpellsEntries(record, keep, done) {
+  const extras = (record.data?.spells || [])
+    .map((entry, index) => (isItemSpellsEntry(entry) ? index : -1))
+    .filter((index) => index >= 0)
+    .slice(keep)
+    .reverse();
+  if (extras.length === 0) return done(record);
+  const next = () => {
+    if (extras.length === 0) return rereadItemSpells(record, done);
+    api.removeValueFromRecord(record, "data.spells", extras.shift(), next);
+  };
+  next();
 }
 
 // Whether the inventory has anything for the Scrolls and Wands entry, or the
@@ -479,30 +475,24 @@ function getItemSpellCast(record, spell, rowPath, entryPath, isOverlay = false) 
 
 // After castSpell's write: a used-up scroll is removed when it auto-destroys,
 // as other consumables are, and its row with it; then bulk is worked out
-// again. It reads the record first and removes the scroll only while it's
-// there and used up (by its id, if it moved): a second cast of the same last
-// scroll (a double click) finds it gone and removes nothing.
+// again. It reads the record first and removes the scroll by its id
+// (removeValueFromRecord on that read), only while it's there and used up:
+// a double click's two casts remove it once, and never what moved into its
+// place.
 function finishItemSpellCast(record, use) {
   if (!use?.bulk) return;
   const recalc = (updated) => updateTotalBulk(updated || record, true);
-  if (!use.destroy || !Number.isInteger(use.itemIndex) || use.itemIndex < 0) {
-    api.getRecord(record.recordType, record._id, recalc);
-    return;
-  }
-  queueItemSpellTask(record._id, (next) =>
-    api.getRecord(record.recordType, record._id, (fresh) => {
-      const current = fresh || record;
-      const inventory = current.data?.inventory || [];
-      const isScroll = (item) => !!use.itemId && item?._id === use.itemId;
-      const index = isScroll(inventory[use.itemIndex]) ? use.itemIndex : inventory.findIndex(isScroll);
-      const sync = () => {
-        next();
-        syncItemSpells(current, recalc);
-      };
-      if (index < 0 || (parseInt(inventory[index]?.data?.count, 10) || 0) > 0) return sync();
-      api.removeValue("data.inventory", index, sync);
-    }),
-  );
+  api.getRecord(record.recordType, record._id, (fresh) => {
+    const current = fresh || record;
+    if (!use.destroy) return recalc(current);
+    const inventory = current.data?.inventory || [];
+    const index = use.itemId
+      ? inventory.findIndex((item) => item?._id === use.itemId)
+      : inventory[use.itemIndex] && getItemSpellKind(inventory[use.itemIndex]) === "scroll" ? use.itemIndex : -1;
+    const usedUp = index >= 0 && (parseInt(inventory[index].data?.count, 10) || 0) <= 0;
+    if (!usedUp) return syncItemSpells(current, recalc);
+    api.removeValueFromRecord(current, "data.inventory", index, () => syncItemSpells(current, recalc));
+  });
 }
 
 // The path of the row for the inventory item (by its id, else its index), or
