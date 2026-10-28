@@ -1,0 +1,693 @@
+[
+  {
+    "name": "Ape",
+    "sizes": [
+      "small"
+    ],
+    "attacks": [
+      {
+        "name": "Fist",
+        "ranged": false,
+        "die": 8,
+        "type": "bludgeoning",
+        "extra": "",
+        "traits": []
+      }
+    ],
+    "str": 3,
+    "dex": 1,
+    "con": 2,
+    "int": -4,
+    "wis": 2,
+    "cha": 0,
+    "hp": 8,
+    "skill": "Intimidation",
+    "senses": "low-light vision",
+    "speed": {
+      "climb": 25,
+      "land": 25
+    },
+    "special": "",
+    "support": "Your ape threatens your foes with menacing growls. Until the start of your next turn, if you hit and deal damage to a creature in your ape's reach, the creature becomes frightened 1.",
+    "maneuver": {
+      "name": "Frightening Display",
+      "actions": "Single Action",
+      "text": "Your ape makes a loud and frightening display, throwing a foe off balance. The ape attempts to Demoralize the target creature; this display gains the visual trait and doesn't require language. While frightened by this ability, the target is off-guard to your ape."
+    },
+    "page": "pg. 206"
+  },
+  {
+    "name": "Arboreal Sapling",
+    "sizes": [
+      "small"
+    ],
+    "attacks": [
+      {
+        "name": "Branch",
+        "ranged": false,
+        "die": 8,
+        "type": "bludgeoning",
+        "extra": "",
+        "traits": []
+      }
+    ],
+    "str": 3,
+    "dex": 1,
+    "con": 2,
+    "int": -4,
+    "wis": 2,
+    "cha": 0,
+    "hp": 8,
+    "skill": "Stealth",
+    "senses": "low-light vision",
+    "speed": {
+      "land": 25
+    },
+    "special": "",
+    "support": "Your arboreal sapling plants roots around your foe, impeding its movement. Until the start of your next turn, if you hit and deal damage to a creature in your arboreal sapling's reach, the first square the creature moves into after taking that damage is difficult terrain.",
+    "maneuver": {
+      "name": "Throw Rock",
+      "actions": "Single Action",
+      "text": "The arboreal sapling Interacts to pick up a rock within reach or retrieve a stowed rock, then throws it with a ranged rock Strike that deals 2d6 bludgeoning (3d6 for a specialized companion) damage with a range increment of 30 feet."
+    },
+    "page": "pg. 206"
+  },
+  {
+    "name": "Badger",
+    "sizes": [
+      "small"
+    ],
+    "attacks": [
+      {
+        "name": "Jaws",
+        "ranged": false,
+        "die": 8,
+        "type": "piercing",
+        "extra": "",
+        "traits": []
+      },
+      {
+        "name": "Claw",
+        "ranged": false,
+        "die": 6,
+        "type": "slashing",
+        "extra": "",
+        "traits": [
+          "Agile"
+        ]
+      }
+    ],
+    "str": 2,
+    "dex": 2,
+    "con": 2,
+    "int": -4,
+    "wis": 2,
+    "cha": 0,
+    "hp": 8,
+    "skill": "Survival",
+    "senses": "low-light vision, scent (imprecise, 30 feet)",
+    "speed": {
+      "burrow": 10,
+      "climb": 10,
+      "land": 25
+    },
+    "special": "",
+    "support": "Your badger digs around your foe's position, interfering with its footing. Until the start of your next turn, if you hit and deal damage to a creature your badger threatens, the target can't use a Step action (unless it can Step through difficult terrain) until it moves from its current position.",
+    "maneuver": {
+      "name": "Badger Rage",
+      "actions": "Single Action",
+      "text": "Requirements The badger isn't fatigued or raging. The badger enters a state of pure rage that lasts for 1 minute, until there are no enemies it can perceive, or until it falls unconscious, whichever comes first. It can't voluntarily stop raging. While raging, the badger is affected in the following ways. It deals 4 additional damage with its bite attacks and 2 additional damage with its claw attacks. It takes a -1 penalty to AC. It can't use actions that have the concentrate trait. The animal companion can Seek even while raging. After it has stopped raging, it can't use Badger Rage again for 1 minute."
+    },
+    "page": "pg. 207"
+  },
+  {
+    "name": "Bat",
+    "sizes": [
+      "small"
+    ],
+    "attacks": [
+      {
+        "name": "Jaws",
+        "ranged": false,
+        "die": 6,
+        "type": "piercing",
+        "extra": "",
+        "traits": [
+          "Finesse"
+        ]
+      },
+      {
+        "name": "Wing",
+        "ranged": false,
+        "die": 4,
+        "type": "slashing",
+        "extra": "",
+        "traits": [
+          "Agile",
+          "Finesse"
+        ]
+      }
+    ],
+    "str": 2,
+    "dex": 3,
+    "con": 2,
+    "int": -4,
+    "wis": 1,
+    "cha": 0,
+    "hp": 6,
+    "skill": "Stealth",
+    "senses": "echolocation 20 feet (the bat can use hearing as a precise sense within this range), low-light vision",
+    "speed": {
+      "fly": 30,
+      "land": 15
+    },
+    "special": "",
+    "support": "Your bat flaps around your foes' arms and faces, getting in the way of their attacks. Until the start of your next turn, creatures in your bat's reach that you damage with Strikes take a -1 circumstance penalty to their attack rolls.",
+    "maneuver": {
+      "name": "Wing Thrash",
+      "actions": "Two Actions",
+      "text": "The bat thrashes wildly with its wings, making wing Strikes against up to three adjacent foes. Each attack counts toward the bat's multiple attack penalty, but the penalty only increases after all the attacks have been made."
+    },
+    "page": "pg. 207"
+  },
+  {
+    "name": "Bear",
+    "sizes": [
+      "small"
+    ],
+    "attacks": [
+      {
+        "name": "Jaws",
+        "ranged": false,
+        "die": 8,
+        "type": "piercing",
+        "extra": "",
+        "traits": []
+      },
+      {
+        "name": "Claw",
+        "ranged": false,
+        "die": 6,
+        "type": "slashing",
+        "extra": "",
+        "traits": [
+          "Agile"
+        ]
+      }
+    ],
+    "str": 3,
+    "dex": 2,
+    "con": 2,
+    "int": -4,
+    "wis": 1,
+    "cha": 0,
+    "hp": 8,
+    "skill": "Intimidation",
+    "senses": "low-light vision, scent (imprecise, 30 feet)",
+    "speed": {
+      "land": 35
+    },
+    "special": "",
+    "support": "Your bear mauls your enemies when you create an opening. Until the start of your next turn, each time you hit a creature in the bear's reach with a Strike, the creature takes 1d8 slashing damage from the bear. If your bear is nimble or savage, the slashing damage increases to 2d8.",
+    "maneuver": {
+      "name": "Bear Hug",
+      "actions": "Single Action",
+      "text": "Requirements The bear's last action was a successful claw Strike. The bear makes another claw Strike against the same target. If this Strike hits, the target is also grabbed, as if the bear had successfully Grappled the target."
+    },
+    "page": "pg. 207"
+  },
+  {
+    "name": "Bird",
+    "sizes": [
+      "small"
+    ],
+    "attacks": [
+      {
+        "name": "Jaws",
+        "ranged": false,
+        "die": 6,
+        "type": "piercing",
+        "extra": "",
+        "traits": [
+          "Finesse"
+        ]
+      },
+      {
+        "name": "Talon",
+        "ranged": false,
+        "die": 4,
+        "type": "slashing",
+        "extra": "",
+        "traits": [
+          "Agile",
+          "Finesse"
+        ]
+      }
+    ],
+    "str": 2,
+    "dex": 3,
+    "con": 1,
+    "int": -4,
+    "wis": 2,
+    "cha": 0,
+    "hp": 4,
+    "skill": "Stealth",
+    "senses": "low-light vision",
+    "speed": {
+      "fly": 60,
+      "land": 10
+    },
+    "special": "",
+    "support": "The bird pecks at your foes' eyes when you create an opening. Until the start of your next turn, your Strikes that damage a creature that your bird threatens also deal 1d4 persistent bleed damage, and the target is dazzled until it removes the bleed damage. If your bird is nimble or savage, the persistent bleed damage increases to 2d4.",
+    "maneuver": {
+      "name": "Flyby Attack",
+      "actions": "Two Actions",
+      "text": "The bird Flies and makes a talon Strike at any point along the way."
+    },
+    "page": "pg. 208"
+  },
+  {
+    "name": "Boar",
+    "sizes": [
+      "small"
+    ],
+    "attacks": [
+      {
+        "name": "Tusk",
+        "ranged": false,
+        "die": 8,
+        "type": "piercing",
+        "extra": "",
+        "traits": []
+      }
+    ],
+    "str": 3,
+    "dex": 1,
+    "con": 2,
+    "int": -4,
+    "wis": 2,
+    "cha": 0,
+    "hp": 8,
+    "skill": "Survival",
+    "senses": "low-light vision, scent (imprecise, 30 feet)",
+    "speed": {
+      "land": 35
+    },
+    "special": "",
+    "support": "Your boar gores your foes. Until the start of your next turn, your Strikes that damage a creature in your boar's reach also deal 1d6 persistent bleed damage. If your boar is nimble or savage, the persistent bleed damage increases to 2d6.",
+    "maneuver": {
+      "name": "Boar Charge",
+      "actions": "Two Actions",
+      "text": "The boar Strides twice in a straight line and then makes a tusk Strike. As long as it moved at least 20 feet, it gains a +2 circumstance bonus to its attack roll."
+    },
+    "page": "pg. 208"
+  },
+  {
+    "name": "Cat",
+    "sizes": [
+      "small"
+    ],
+    "attacks": [
+      {
+        "name": "Jaws",
+        "ranged": false,
+        "die": 6,
+        "type": "piercing",
+        "extra": "",
+        "traits": [
+          "Finesse"
+        ]
+      },
+      {
+        "name": "Claw",
+        "ranged": false,
+        "die": 4,
+        "type": "slashing",
+        "extra": "",
+        "traits": [
+          "Agile",
+          "Finesse"
+        ]
+      }
+    ],
+    "str": 2,
+    "dex": 3,
+    "con": 1,
+    "int": -4,
+    "wis": 2,
+    "cha": 0,
+    "hp": 4,
+    "skill": "Stealth",
+    "senses": "low-light vision, scent (imprecise, 30 feet)",
+    "speed": {
+      "land": 35
+    },
+    "special": "Your cat deals 1d4 extra precision damage against off-guard targets.",
+    "support": "Your cat throws your enemies off-balance when you create an opening. Until the start of your next turn, your Strikes that deal damage to a creature within your cat's reach make the target off-guard until the end of your next turn.",
+    "maneuver": {
+      "name": "Cat Pounce",
+      "actions": "Single Action",
+      "text": "The cat Strides and then Strikes. If it was undetected at the start of its Cat Pounce, it remains undetected until after the attack."
+    },
+    "page": "pg. 208"
+  },
+  {
+    "name": "Crocodile",
+    "sizes": [
+      "small"
+    ],
+    "attacks": [
+      {
+        "name": "Jaws",
+        "ranged": false,
+        "die": 8,
+        "type": "piercing",
+        "extra": "",
+        "traits": []
+      },
+      {
+        "name": "Tail",
+        "ranged": false,
+        "die": 6,
+        "type": "bludgeoning",
+        "extra": "",
+        "traits": [
+          "Finesse"
+        ]
+      }
+    ],
+    "str": 3,
+    "dex": 2,
+    "con": 2,
+    "int": -4,
+    "wis": 1,
+    "cha": 0,
+    "hp": 6,
+    "skill": "Stealth",
+    "senses": "low-light vision",
+    "speed": {
+      "land": 20,
+      "swim": 25
+    },
+    "special": "The crocodile can hold its breath for about 2 hours.",
+    "support": "Your crocodile clamps its jaws on your foe, refusing to let go. Until the start of your next turn, if your Strike damages a creature in your crocodile's reach, your crocodile can latch onto the creature. While thus attached, the crocodile can move along with the target whenever the target moves until the end of your next turn. Your crocodile can latch onto only one creature in this way, and it must release the creature to make a jaws Strike. If the target is smaller than the crocodile, it takes a -10-foot circumstance penalty to its Speeds and can't Fly while the crocodile is latched on.",
+    "maneuver": {
+      "name": "Death Roll",
+      "actions": "Single Action",
+      "text": "Requirements The crocodile has a creature grabbed. The crocodile tucks its legs and rolls rapidly, twisting its victim. It makes a jaws Strike with a +2 circumstance bonus to the attack roll against the grabbed creature. If it hits, it also knocks the creature prone. If it misses, it releases the creature."
+    },
+    "page": "pg. 208"
+  },
+  {
+    "name": "Dromaeosaur",
+    "sizes": [
+      "small"
+    ],
+    "attacks": [
+      {
+        "name": "Jaws",
+        "ranged": false,
+        "die": 8,
+        "type": "piercing",
+        "extra": "",
+        "traits": [
+          "Finesse"
+        ]
+      },
+      {
+        "name": "Talon",
+        "ranged": false,
+        "die": 6,
+        "type": "slashing",
+        "extra": "",
+        "traits": [
+          "Agile",
+          "Finesse"
+        ]
+      }
+    ],
+    "str": 2,
+    "dex": 3,
+    "con": 2,
+    "int": -4,
+    "wis": 1,
+    "cha": 0,
+    "hp": 6,
+    "skill": "Stealth",
+    "senses": "low-light vision, scent (imprecise, 30 feet)",
+    "speed": {
+      "land": 50
+    },
+    "special": "",
+    "support": "Your raptor constantly darts into flanking position. Until the start of your next turn, it counts as being in its space or an empty space of your choice within 10 feet when determining whether you and your companion are flanking; you can choose a different space for each of your attacks.",
+    "maneuver": {
+      "name": "Darting Attack",
+      "actions": "Single Action",
+      "text": "The raptor Steps up to 10 feet and then Strikes, or Strikes and then Steps up to 10 feet."
+    },
+    "page": "pg. 209"
+  },
+  {
+    "name": "Horse",
+    "sizes": [
+      "medium",
+      "large"
+    ],
+    "attacks": [
+      {
+        "name": "Hoof",
+        "ranged": false,
+        "die": 6,
+        "type": "bludgeoning",
+        "extra": "",
+        "traits": [
+          "Agile"
+        ]
+      }
+    ],
+    "str": 3,
+    "dex": 2,
+    "con": 2,
+    "int": -4,
+    "wis": 1,
+    "cha": 0,
+    "hp": 8,
+    "skill": "Survival",
+    "senses": "low-light vision, scent (imprecise, 30 feet)",
+    "speed": {
+      "land": 40
+    },
+    "special": "mount",
+    "support": "Until the start of your next turn, if you're mounted on your horse and moved 10 feet or more on the action before a melee Strike, add a circumstance bonus to damage for that Strike equal to twice the number of weapon damage dice. If your weapon already has the jousting weapon trait, increase the trait's damage bonus by 2 per die instead.",
+    "maneuver": {
+      "name": "Gallop",
+      "actions": "Two Actions",
+      "text": "The horse Strides twice at a +10-foot circumstance bonus to Speed."
+    },
+    "page": "pg. 209"
+  },
+  {
+    "name": "Riding Drake",
+    "sizes": [
+      "large"
+    ],
+    "attacks": [
+      {
+        "name": "Jaws",
+        "ranged": false,
+        "die": 8,
+        "type": "piercing",
+        "extra": "",
+        "traits": []
+      },
+      {
+        "name": "Tail",
+        "ranged": false,
+        "die": 6,
+        "type": "bludgeoning",
+        "extra": "",
+        "traits": []
+      }
+    ],
+    "str": 2,
+    "dex": 1,
+    "con": 2,
+    "int": -4,
+    "wis": 1,
+    "cha": 2,
+    "hp": 8,
+    "skill": "Intimidation",
+    "senses": "darkvision",
+    "speed": {
+      "land": 45
+    },
+    "special": "mount",
+    "support": "Your drake snorts fire in your foes' faces. Until the start of your next turn, each time you Strike while riding the drake and hit a creature in the drake's reach, the creature takes 1d4 fire damage from the drake. If your drake is nimble or savage, the fire damage increases to 2d4.",
+    "maneuver": {
+      "name": "Fire Breath",
+      "actions": "Two Actions",
+      "text": "Frequency once per hour The riding drake breathes a 30-foot cone of fire, dealing 1d6 fire damage for every 2 levels the drake has to all creatures in the area (basic Reflex save). This uses a trained DC using the drake's Constitution modifier or an expert DC if the drake is specialized."
+    },
+    "page": "pg. 209"
+  },
+  {
+    "name": "Scorpion",
+    "sizes": [
+      "small"
+    ],
+    "attacks": [
+      {
+        "name": "Stinger",
+        "ranged": false,
+        "die": 6,
+        "type": "piercing",
+        "extra": "plus poison",
+        "traits": []
+      },
+      {
+        "name": "Pincer",
+        "ranged": false,
+        "die": 6,
+        "type": "slashing",
+        "extra": "",
+        "traits": [
+          "Agile"
+        ]
+      }
+    ],
+    "str": 3,
+    "dex": 3,
+    "con": 1,
+    "int": -4,
+    "wis": 1,
+    "cha": 0,
+    "hp": 6,
+    "skill": "Stealth",
+    "senses": "darkvision",
+    "speed": {
+      "land": 30
+    },
+    "special": "The scorpion's stinger attack deals an additional 1d4 poison damage or 2d4 poison damage if the scorpion is a specialized companion.",
+    "support": "Your scorpion drips poison from its stinger when you create an opening. Until the start of your next turn, your Strikes that damage a creature in your scorpion's reach also deal 1d6 persistent poison damage. If your scorpion is nimble or savage, the persistent poison damage increases to 2d6.",
+    "maneuver": {
+      "name": "Grab and Sting",
+      "actions": "Two Actions",
+      "text": "The scorpion holds its foe in place with its pincers in order to sting it. It makes a pincer Strike. If the Strike hits, the target creature automatically becomes grabbed by the scorpion, which then makes a stinger Strike against it. The grabbed condition lasts until the end of your next turn."
+    },
+    "page": "pg. 210"
+  },
+  {
+    "name": "Shark",
+    "sizes": [
+      "small"
+    ],
+    "attacks": [
+      {
+        "name": "Jaws",
+        "ranged": false,
+        "die": 8,
+        "type": "piercing",
+        "extra": "",
+        "traits": []
+      }
+    ],
+    "str": 3,
+    "dex": 2,
+    "con": 2,
+    "int": -4,
+    "wis": 1,
+    "cha": 0,
+    "hp": 6,
+    "skill": "Stealth",
+    "senses": "blood scent, scent (imprecise, 60 feet)",
+    "speed": {
+      "swim": 40
+    },
+    "special": "The shark has the aquatic trait. Its blood scent enables it to smell blood in the water from up to 1 mile away.",
+    "support": "When your shark senses blood, it tears into your enemies. Until the start of your next turn, each time you hit a creature in the shark's reach with a Strike and deal slashing or piercing damage, the creature takes 1d8 slashing damage from the shark. If your shark is nimble or savage, the slashing damage increases to 2d8.",
+    "maneuver": {
+      "name": "Shred",
+      "actions": "Single Action",
+      "text": "Requirements The shark hit with a jaws Strike on its most recent action this turn. The shark viciously rips into the wound. The target of the shark's Strike takes 2d8 slashing damage (3d8 for a specialized companion)."
+    },
+    "page": "pg. 210"
+  },
+  {
+    "name": "Snake",
+    "sizes": [
+      "small"
+    ],
+    "attacks": [
+      {
+        "name": "Jaws",
+        "ranged": false,
+        "die": 8,
+        "type": "piercing",
+        "extra": "",
+        "traits": [
+          "Finesse"
+        ]
+      }
+    ],
+    "str": 3,
+    "dex": 3,
+    "con": 1,
+    "int": -4,
+    "wis": 1,
+    "cha": 0,
+    "hp": 6,
+    "skill": "Stealth",
+    "senses": "low-light vision, scent (imprecise, 30 feet)",
+    "speed": {
+      "climb": 20,
+      "land": 20,
+      "swim": 20
+    },
+    "special": "",
+    "support": "Your snake holds your enemies with its coils, interfering with reactions. Until the start of your next turn, any creature your snake threatens can't use reactions triggered by your actions unless its level is higher than yours.",
+    "maneuver": {
+      "name": "Constrict",
+      "actions": "Single Action",
+      "text": "Requirements The snake has a smaller creature grabbed. The snake deals 12 bludgeoning damage to the grabbed creature; the creature must attempt a basic Fortitude save against your class DC. If the snake is a specialized animal companion, increase this damage to 20."
+    },
+    "page": "pg. 210"
+  },
+  {
+    "name": "Wolf",
+    "sizes": [
+      "small"
+    ],
+    "attacks": [
+      {
+        "name": "Jaws",
+        "ranged": false,
+        "die": 8,
+        "type": "piercing",
+        "extra": "",
+        "traits": [
+          "Finesse"
+        ]
+      }
+    ],
+    "str": 2,
+    "dex": 3,
+    "con": 2,
+    "int": -4,
+    "wis": 1,
+    "cha": 0,
+    "hp": 6,
+    "skill": "Survival",
+    "senses": "low-light vision, scent (imprecise, 30 feet)",
+    "speed": {
+      "land": 40
+    },
+    "special": "",
+    "support": "Your wolf tears tendons with each opening. Until the start of your next turn, your Strikes that damage creatures your wolf threatens give the target a -5-foot status penalty to its Speeds for 1 minute (-10 on a critical success).",
+    "maneuver": {
+      "name": "Takedown",
+      "actions": "Single Action",
+      "text": "Requirements The animal companion's last action was a successful jaws Strike. The wolf automatically knocks the target of its jaws Strike prone."
+    },
+    "page": "pg. 210"
+  }
+]
