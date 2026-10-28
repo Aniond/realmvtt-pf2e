@@ -206,15 +206,16 @@ function findItemSpell(ref, callback) {
   api.getRecord("spells", ref._id, (spell) => (spell ? callback(spell) : byName()));
 }
 
-// Casts the spell into the Scrolls and Wands entry and posts its card
-function castItemSpellWith(record, item, spell, rank, casting, note = "") {
+// Casts the spell into the Scrolls and Wands entry and posts its card.
+// useValues (the scroll or wand spent) go in the same write as the entry.
+function castItemSpellWith(record, item, spell, rank, casting, note = "", useValues = {}) {
   const castRank = rank || parseInt(spell?.data?.level, 10) || 1;
   const { entries, path } = getItemSpellEntries(record, spell, castRank, casting);
   const ordinal = getOrdinal(castRank);
   api.sendMessage(
     `**${getTokenDisplayName(record)}** casts ${spell.name} (${ordinal} rank) from ${item.name}, with ${casting.tradition} spell DC ${casting.dc} and attack +${casting.mod}.${note ? `\n${note}` : ""}`,
   );
-  api.setValuesOnRecord(record, { "data.spells": entries }, (updated) => {
+  api.setValuesOnRecord(record, { ...useValues, "data.spells": entries }, (updated) => {
     const target = updated || { ...record, data: { ...record.data, spells: entries } };
     castSpell(target, api.getValueOnRecord(target, path), path);
   });
@@ -275,7 +276,6 @@ function useItemSpell(record, item, itemPath) {
       return;
     }
     const use = getItemSpellUseValues(item, itemPath, kind);
-    if (Object.keys(use.values).length > 0) api.setValues(use.values);
     castItemSpellWith(
       record,
       item,
@@ -288,6 +288,7 @@ function useItemSpell(record, item, itemPath) {
         tradition: best.data?.tradition || capitalize(traditions[0] || "arcane"),
       },
       use.line,
+      use.values,
     );
   });
   return true;
@@ -315,8 +316,15 @@ function castItemSpellByTrick(recordId, itemId, traditions) {
       )[0] || "arcane";
       const casting = getTrickMagicItemCasting(record, TRADITION_SKILLS[tradition], tradition);
       const use = getItemSpellUseValues(item, `data.inventory.${itemIndex}`, kind);
-      if (Object.keys(use.values).length > 0) api.setValuesOnRecord(record, use.values);
-      castItemSpellWith(record, item, spell, getItemSpellRank(item), casting, ["*Trick Magic Item*", use.line].filter(Boolean).join("\n"));
+      castItemSpellWith(
+        record,
+        item,
+        spell,
+        getItemSpellRank(item),
+        casting,
+        ["*Trick Magic Item*", use.line].filter(Boolean).join("\n"),
+        use.values,
+      );
     });
   });
 }
