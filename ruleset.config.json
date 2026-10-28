@@ -5388,6 +5388,9 @@
         },
         "ItemSpells": {
           "file": "rollhandlers/item-spells.js"
+        },
+        "Concealment": {
+          "file": "rollhandlers/concealment.js"
         }
       },
       "defaultDice": "default",

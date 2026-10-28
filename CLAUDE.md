@@ -120,6 +120,10 @@ When adding a new kind of attack roll, pass `turnAttack` (from `getTurnAttackMet
 - `save.js` keeps the result on that token at `data.lastSave` (`{ degree, saveType, dc }`), and a basic save's card says what damage it takes.
 - A damage card with `metadata.basicSave` (`{ saveType }`) has an Apply by Saves button. A spell's damage button sets it from the Basic box. An ability's damage buttons (`executeDamageMacro`) get it from `updateDamageMacros` when the description's save button is basic: the module converter writes `rollSavingThrow('reflex', 28, { basic: true })` for Foundry's `@Check[reflex|dc:28|basic]`, with `undefined` for the DC of one without a DC. Older imports without the flag get no button. `applyDamageBySaves` applies it to each selected creature by its most recent save (no time limit and no save-type check; the card names the save it used): none, half, full or double. Each damaged creature's damage card is headed by one bold line ("Fireball: applied by Reflex failure, full damage"); the rest share one card. A save is never marked used, so it can be applied again (another damage part, or redoing it).
 
+### Concealment and detection
+
+`rollhandlers/concealment.js` (Player Core pg. 442-447): a Strike or spell attack against a concealed target (DC 5), or a hidden, invisible or undetected one (DC 11), or from a dazzled (DC 5) or blinded (DC 11) attacker, carries the worst flat check as `metadata.concealment`. `attack.js` shows it as a line and a Flat Check button; nothing is rolled or refused automatically. A hidden, invisible or undetected attacker makes its target off-guard, applied to the AC as flanking is. Effects aren't per observer, so a condition on a token counts against everyone; the GM removes it when it no longer applies.
+
 ### Scrolls and Wands (casting from items)
 
 `rollhandlers/item-spells.js` lets Use on a scroll or wand cast its spell with the character's own spellcasting.
