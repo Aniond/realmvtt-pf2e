@@ -120,6 +120,16 @@ When adding a new kind of attack roll, pass `turnAttack` (from `getTurnAttackMet
 - `save.js` keeps the result on that token at `data.lastSave` (`{ degree, saveType, dc }`), and a basic save's card says what damage it takes.
 - A damage card with `metadata.basicSave` (`{ saveType }`) has an Apply by Saves button. A spell's damage button sets it from the Basic box. An ability's damage buttons (`executeDamageMacro`) get it from `updateDamageMacros` when the description's save button is basic: the module converter writes `rollSavingThrow('reflex', 28, { basic: true })` for Foundry's `@Check[reflex|dc:28|basic]`, with `undefined` for the DC of one without a DC. Older imports without the flag get no button. `applyDamageBySaves` applies it to each selected creature by its most recent save (no time limit and no save-type check; the card names the save it used): none, half, full or double. Each damaged creature's damage card is headed by one bold line ("Fireball: applied by Reflex failure, full damage"); the rest share one card. A save is never marked used, so it can be applied again (another damage part, or redoing it).
 
+### Scrolls and Wands (casting from items)
+
+`rollhandlers/item-spells.js` lets Use on a scroll or wand cast its spell with the character's own spellcasting.
+
+- A scroll or wand is found by its `scroll`/`wand` trait or item category (`getItemSpellKind`), never by its uses. Its spell is the Spell field or the first spell its description links (looked up by id, then by name); its rank is the Level field, "(3rd-Rank Spell)" in its name, or "at 3rd-rank" in its text.
+- A character with a prepared or spontaneous entry of the spell's tradition casts it through an automatic "Scrolls and Wands" entry (type `item`, `data.itemSpells: true`). Every cast copies the DC, attack, attribute and tradition from their best matching entry, and puts the spell at `spells<rank>` (the same spell reuses its row), then calls `castSpell`. Only that entry is written (`data.spells.<index>`, with the item's use; `api.addValue` the first time), never the whole list. A character's entry that already lists the spell also counts (Foundry's `canCast`).
+- Anything that walks `data.spells` must leave that entry out of slots, uses and refills (`isItemSpellsEntry`); `rest` skips it, and the class sync and recalculation already leave unmanaged `item` entries alone.
+- Without the tradition, it casts with Trick Magic Item's DC and attack (Player Core pg. 264: level as proficiency, the highest of Int, Wis and Cha), for casters of another tradition too, and the card says so; the GM asks for the check if the table wants it.
+- A scroll is used up (removed at 0 when it auto-destroys, then bulk is worked out again); a wand spends `uses.value`, which `getWandRecharges` refills at daily preparations. A spent wand still casts, with an overcharge warning.
+
 ### Data Structure
 
 - Character data is nested under `record.data`

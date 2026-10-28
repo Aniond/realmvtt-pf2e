@@ -1077,9 +1077,17 @@ ${getLevelUpSummary(gains)}`,
     Object.assign(valuesToSet, recharges);
     message += describeLimitedUseRecharges(record, recharges);
 
+    // Wands' uses for the day come back (item-spells.js)
+    Object.assign(valuesToSet, getWandRecharges(record));
+
     // Detemine if any spells need to be reset
     const spellcastingEntries = record.data?.spells || [];
     spellcastingEntries.forEach((spellcastingEntry, spellListIndex) => {
+      // The Scrolls and Wands entry holds no slots or uses of its own
+      // (item-spells.js)
+      if (isItemSpellsEntry(spellcastingEntry)) {
+        return;
+      }
       const isInnate =
         spellcastingEntry.data?.type === "innate" ||
         spellcastingEntry.data?.type === "item";
