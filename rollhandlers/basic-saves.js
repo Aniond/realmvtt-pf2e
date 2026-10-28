@@ -6,14 +6,12 @@
 //   - the damage card of a spell with a basic save, or of the damage button
 //     of an ability whose save button is basic, has an Apply by Saves
 //     button: for each selected creature it applies the damage by that
-//     creature's last save and says what each took. A save can be applied
-//     again (another damage part, or the GM redoing it): it's never marked
-//     used, only too old after 10 minutes.
+//     creature's last save and says what each took. Nothing stops the GM
+//     applying it again (another damage part, or redoing it): a save is
+//     never marked used, and there is no time limit, only the creature's
+//     most recent save.
 // Loaded as one of the ruleset's scripts (ruleset.config.json,
 // otherSettings.scripts), so it shares common.js's scope at runtime.
-
-// How long a save stays good for Apply by Saves
-const LAST_SAVE_MINUTES = 10;
 
 const BASIC_SAVE_RESULTS = {
   2: { name: "critical success", label: "no damage", multiplier: 0 },
@@ -43,7 +41,6 @@ function getLastSaveValues(metadata, degree) {
       degree,
       saveType: metadata.saveType || "",
       dc: parseInt(metadata.dc, 10) || 0,
-      time: Date.now(),
     },
   };
 }
@@ -72,12 +69,11 @@ function getBasicSaveLine(metadata, degree) {
   return result ? `**Basic save:** ${result.label}.` : "";
 }
 
-// A creature's last save, if it is recent enough (and of the save type,
-// when the damage names one), or null
-function getRecentSave(creature, saveType = "", now = Date.now()) {
+// A creature's most recent save (of the save type, when the damage names
+// one), or null. No time limit: the GM decides when a save still applies.
+function getLastSave(creature, saveType = "") {
   const save = creature?.data?.lastSave || creature?.record?.data?.lastSave;
-  if (!save || !Number.isFinite(save.degree) || !Number.isFinite(save.time)) return null;
-  if (now - save.time > LAST_SAVE_MINUTES * 60 * 1000) return null;
+  if (!save || !Number.isFinite(save.degree)) return null;
   if (saveType && save.saveType && save.saveType !== saveType) return null;
   return save;
 }
@@ -104,7 +100,7 @@ function applyDamageBySaves(roll) {
   const lines = [];
   creatures.forEach((creature) => {
     const name = getTokenDisplayName(creature);
-    const save = getRecentSave(creature, saveType);
+    const save = getLastSave(creature, saveType);
     if (!save) {
       lines.push(`**${source}: not applied, no ${saveType ? `${capitalize(saveType)} ` : ""}save rolled** (${name})`);
       return;

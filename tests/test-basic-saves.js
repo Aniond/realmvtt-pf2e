@@ -37,7 +37,7 @@ const saveRoll = (natural, total, metadata) => ({
 });
 
 const token = (id, name, data = {}) => ({ _id: id, name, recordType: "characters", recordId: `rec-${id}`, record: { name }, data });
-const recent = (degree, saveType = "reflex", ago = 0) => ({ degree, saveType, dc: 20, time: Date.now() - ago });
+const recent = (degree, saveType = "reflex", extra = {}) => ({ degree, saveType, dc: 20, ...extra });
 
 // --- tests ------------------------------------------------------------------
 
@@ -82,6 +82,7 @@ section("save.js keeps the result and says what a basic save takes");
   sets = [];
   let card = runHandler("save.js", saveRoll(12, 25, { saverTokenId: "tok-kyra", saverRecordType: "characters", basicSave: true }));
   assert("the result goes on the saver's token", sets.map(([id, type, v]) => [id, type, v["data.lastSave"].degree, v["data.lastSave"].saveType, v["data.lastSave"].dc]), [["tok-kyra", "characters", 1, "reflex", 20]]);
+  assert("no timestamp is kept", Object.keys(sets[0][2]["data.lastSave"]).sort(), ["dc", "degree", "saveType"]);
   assertIncludes("a success: half", card, "**Basic save:** half damage.");
   card = runHandler("save.js", saveRoll(15, 31, { saverTokenId: "tok-kyra", saverRecordType: "characters", basicSave: true }));
   assertIncludes("a critical success: none", card, "**Basic save:** no damage.");
@@ -162,14 +163,14 @@ section("Applying by each creature's save");
     token("c", "Seelah", { lastSave: recent(0) }),
     token("d", "Ezren", { lastSave: recent(-1) }),
     token("e", "Valeros", {}),
-    token("f", "Merisiel", { lastSave: recent(1, "reflex", 11 * 60 * 1000) }),
+    token("f", "Merisiel", { lastSave: recent(1, "reflex", { time: Date.now() - 24 * 60 * 60 * 1000 }) }),
     token("g", "Harsk", { lastSave: recent(1, "fortitude") }),
   ];
   ctx.api.getSelectedOrDroppedToken = () => creatures;
   sets = [];
   ctx.__state.messages = [];
   ctx.applyDamageBySaves(roll);
-  assert("success: half; failure: full; critical failure: double; critical success: nothing", applied, [["b", true, false], ["c", false, false], ["d", false, true]]);
+  assert("success: half; failure: full; critical failure: double; critical success: nothing; no time limit", applied, [["b", true, false], ["c", false, false], ["d", false, true], ["f", true, false]]);
   assert("the saves are left as they are (Sean: let them apply again)", sets, []);
   const summaryText = ctx.__state.messages.join("\n");
   // One card each (Sean: two cards per creature was messy): the damage card
@@ -178,17 +179,18 @@ section("Applying by each creature's save");
     ["b", "**Fireball: applied by Reflex success, half damage**", undefined],
     ["c", "**Fireball: applied by Reflex failure, full damage**", undefined],
     ["d", "**Fireball: applied by Reflex critical failure, double damage**", "critical failure on a save"],
+    ["f", "**Fireball: applied by Reflex success, half damage**", undefined],
   ]);
   assertIncludes("the rest share one card, one bold line each (Sean)", summaryText, "**Fireball: applied by Reflex critical success, no damage** (Amiri)\n**Fireball: not applied, no Reflex save rolled** (Valeros)");
   assertNotIncludes("those with a damage card aren't listed again", summaryText, "Kyra");
   assertIncludes("no save: nothing applied", summaryText, "**Fireball: not applied, no Reflex save rolled** (Valeros)");
-  assertIncludes("a save over 10 minutes old doesn't count", summaryText, "**Fireball: not applied, no Reflex save rolled** (Merisiel)");
+  assertNotIncludes("a save from a day ago (an older save with a time) still counts", summaryText, "Merisiel");
   assertIncludes("nor another save than the spell's", summaryText, "**Fireball: not applied, no Reflex save rolled** (Harsk)");
 
   // Applied again (another damage part, or redoing it), even if an older
   // card marked the save as used: the save still counts
   applied.length = 0;
-  ctx.api.getSelectedOrDroppedToken = () => [token("b", "Kyra", { lastSave: { ...recent(1), usedBy: "old-use" } })];
+  ctx.api.getSelectedOrDroppedToken = () => [token("b", "Kyra", { lastSave: recent(1, "reflex", { usedBy: "old-use" }) })];
   ctx.__state.messages = [];
   ctx.applyDamageBySaves(roll);
   ctx.applyDamageBySaves(roll);
