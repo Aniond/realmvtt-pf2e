@@ -643,4 +643,39 @@ section("Hazards have object immunities (Sean's review of #30)");
   assert("a creature isn't covered", ctx.getConditionImmunity(makeTarget({ type: "creature" }), "Paralyzed"), null);
 }
 
+section("Area damage from an NPC ability's text (Sean's second review of #30)");
+{
+  assert("'in a 30 ft. Cone' is an area", ctx.hasAreaText("deals 8d8 bludgeoning damage in a 30 ft. Cone"), true);
+  assert("'a 15-foot emanation' too", ctx.hasAreaText("<p>Each creature in a 15-foot emanation takes 2d6 fire</p>"), true);
+  assert("'60-foot line'", ctx.hasAreaText("breathes a 60-foot line of acid"), true);
+  assert("a single-target ability isn't", ctx.hasAreaText("The dragon makes a jaws Strike against a creature within 30 feet."), false);
+
+  const npc = { _id: "npc", recordType: "npcs", data: { traits: ["Dragon"] } };
+  const breath = { _id: "act-breath", name: "Avalanche Breath", recordType: "actions", data: { traits: ["Arcane", "Earth"] } };
+  const cone = "deals ```8d8_Damage\nexecuteDamageMacro('8d8 bludgeoning', 'standard', '8d8 bludgeoning Damage')\n``` in a 30 ft. Cone";
+  const updated = ctx.updateDamageMacros(cone, { item: breath, creature: npc });
+  const match = updated.match(/executeDamageMacro\('8d8 bludgeoning', 'standard', '8d8 bludgeoning Damage', (\{.*\})\)/);
+  assert("a bare NPC damage button with an area gets a context", !!match, true);
+  const context = match ? JSON.parse(match[1]) : {};
+  assert("... whose damageSource has the area", context.damageSource?.area, true);
+  assert("... and no basic save it doesn't have", "basicSave" in context, false);
+  const swarm = makeTarget({ weaknesses: [weak("area-damage", 5)] });
+  assert("applied to a swarm weak to area damage 5: 20 -> 25", damageDealt(swarm, sourced("bludgeoning", 20, context.damageSource || {})), 25);
+
+  const bite = "deals ```2d8_Damage\nexecuteDamageMacro('2d8 piercing', 'standard', '2d8 piercing Damage')\n``` to the target";
+  assert("no area text: the button is left as it is", ctx.updateDamageMacros(bite, { item: { ...breath, name: "Jaws" }, creature: npc }), bite);
+  assert("... and a swarm takes no area weakness from it", damageDealt(swarm, sourced("piercing", 9, ctx.getDamageSource(npc, breath))), 9);
+}
+
+section("A precision weakness counts in the highest-weakness choice (Sean's third review of #30)");
+{
+  const both = makeTarget({ weaknesses: [weak("precision", 5), weak("piercing", 3)] });
+  const r = multiRoll([["piercing", 3], ["precision", 2]], { damageType: "piercing" });
+  assert("piercing 3 + precision 2 vs precision 5 and piercing 3: only the 5 -> 10", damageDealt(both, r), 10);
+  const typeHigher = makeTarget({ weaknesses: [weak("precision", 2), weak("piercing", 6)] });
+  assert("... and the type's 6 when it's higher -> 11", damageDealt(typeHigher, r), 11);
+  const noPrecision = makeTarget({ weaknesses: [weak("precision", 5)] });
+  assert("no precision in the hit: no precision weakness", damageDealt(noPrecision, roll("piercing", 5)), 5);
+}
+
 process.exit(summary());

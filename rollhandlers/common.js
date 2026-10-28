@@ -15069,6 +15069,11 @@ function applyDamage(
       // case: force is excepted, the precision is removed by immunity, and the
       // base type resistance no longer double-dips the already-removed
       // precision.
+      // A precision weakness counts in the main loop's highest-weakness
+      // choice for the type the precision damage is part of (Foundry's
+      // highestWeakness), not on top of it
+      let precisionWeaknessValue = 0;
+      let precisionWeaknessType = null;
       if (precisionIndices.length > 0 && !isApplyingSplash) {
         // Reconstruct the precision amount at the same (post-critical) scale as
         // it currently sits inside the base damage type bucket.
@@ -15095,7 +15100,8 @@ function applyDamage(
           // Immunity to precision negates the precision portion entirely.
           survivingPrecision = 0;
         } else {
-          // Precision weakness adds extra damage to the precision portion.
+          // Precision weakness: its value goes into the main loop's choice of
+          // the highest weakness for the base damage type
           const precisionWeakness = IWR.weaknesses["precision"];
           if (
             precisionWeakness &&
@@ -15116,7 +15122,10 @@ function applyDamage(
             ) {
               weaknessValue *= 2;
             }
-            survivingPrecision += weaknessValue;
+            if (precisionInBucket > 0) {
+              precisionWeaknessValue = weaknessValue;
+              precisionWeaknessType = String(baseDamageType || "").toLowerCase();
+            }
           }
 
           // Precision resistance reduces the precision portion.
@@ -15395,7 +15404,9 @@ function applyDamage(
             );
             if (key) applicable.push(IWR.weaknesses[key]);
           });
-          damageOfThisType += Math.max(0, ...applicable.map(weaknessValueFor));
+          const values = applicable.map(weaknessValueFor);
+          if (precisionWeaknessType === lowerType) values.push(precisionWeaknessValue);
+          damageOfThisType += Math.max(0, ...values);
         }
 
         // Apply Resistances (reduce damage)
@@ -16126,6 +16137,15 @@ function maximizeDice(formula) {
  *   - level: optional override level (e.g., casting rank for heightened spells)
  * @returns {string} - Updated description with function calls replaced
  */
+// Whether an ability's text gives it an area ("deals 8d8 bludgeoning damage
+// in a 30 ft. Cone"): about as reliable as Foundry's area-damage flag, which
+// the converted data drops
+function hasAreaText(text) {
+  return /\b\d+[- ](?:ft\.?|foot|feet) (?:cone|burst|line|emanation)\b/i.test(
+    String(text || "").replace(/<[^>]+>/g, " "),
+  );
+}
+
 function updateDamageMacros(description, context = {}) {
   if (!description || typeof description !== "string") {
     return description;
@@ -16165,25 +16185,33 @@ function updateDamageMacros(description, context = {}) {
     basicSave.source = item.name;
   }
 
+  // Where the damage or healing comes from (item, its traits, the creature).
+  // An ability whose text gives an area ("in a 30 ft. Cone") deals area
+  // damage: the converted NPC data keeps the area only in the text
+  const damageSource = getDamageSource(creature, item, context.tradition || "");
+  if (!damageSource.area && hasAreaText(description)) damageSource.area = true;
+
   const minimalContext = JSON.stringify({
     _id: item._id,
     recordType: item.recordType,
     level: level,
     originTokenId: tokenId,
     originTokenName: tokenName,
-    // Where the damage or healing comes from (item, its traits, the creature)
-    damageSource: getDamageSource(creature, item, context.tradition || ""),
+    damageSource,
     ...(maximize ? { maximizeHealing: true } : {}),
     ...(basicSave ? { basicSave } : {}),
   });
 
   // An NPC's damage buttons come as executeDamageMacro('formula', 'category',
-  // 'name') with no context: against a basic save, they get its save type
-  if (basicSave) {
+  // 'name') with no context: against a basic save or with an area, they get
+  // the save type and where the damage comes from (area damage, the
+  // ability's holy or unholy trait)
+  if (basicSave || damageSource.area) {
+    const bareContext = JSON.stringify({ ...(basicSave ? { basicSave } : {}), damageSource });
     description = description.replace(
       /executeDamageMacro\(\s*(['"])([^'"]*)\1\s*,\s*(['"])([^'"]*)\3\s*,\s*(['"])([^'"]*)\5\s*\)/g,
       (match, q1, formula, q2, category, q3, name) =>
-        `executeDamageMacro(${q1}${formula}${q1}, ${q2}${category}${q2}, ${q3}${name}${q3}, ${JSON.stringify({ basicSave })})`,
+        `executeDamageMacro(${q1}${formula}${q1}, ${q2}${category}${q2}, ${q3}${name}${q3}, ${bareContext})`,
     );
   }
 

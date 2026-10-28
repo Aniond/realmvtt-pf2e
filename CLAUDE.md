@@ -132,9 +132,9 @@ When adding a new kind of attack roll, pass `turnAttack` (from `getTurnAttackMet
 - `withDamageCategories` adds the categories a roll's types don't carry:
   - "spells" for damage from a spell
   - "holy" or "unholy" when the attack or spell has that trait
-  - "area-damage" when its source has an area (`getDamageSource` sets `damageSource.area` from `data.area`)
+  - "area-damage" when its source has an area: `getDamageSource` sets `damageSource.area` from `data.area`, and `updateDamageMacros` also from the ability's text ("in a 30 ft. Cone", `hasAreaText`), since the converted NPC data keeps the area only there. A bare NPC `executeDamageMacro('formula', 'category', 'name')` gets a context (`damageSource`, plus `basicSave` when there is one) when it has a basic save or an area.
   - "splash-damage" on a hit whose damage includes splash (`metadata.splashDamage`) and when splash damage is applied on its own
-- Weaknesses are checked for each damage type in the hit. Of those that apply to a type (its own, all damage, then each category), only the highest is added, with exceptions and doubleVs counted first: a demon weak to cold iron 5 and holy 5 takes +5 from a holy cold-iron weapon.
+- Weaknesses are checked for each damage type in the hit. Of those that apply to a type (its own, all damage, then each category), only the highest is added, with exceptions and doubleVs counted first: a demon weak to cold iron 5 and holy 5 takes +5 from a holy cold-iron weapon. A precision weakness is part of that choice for the type the precision damage rides on.
 - Legacy data reads as remaster:
   - Damage types: positive becomes vitality and negative becomes void. Good and evil damage becomes spirit damage with the holy or unholy category.
   - Weaknesses, resistances and immunities: positive and negative become vitality and void, and good and evil become holy and unholy, keeping the stronger of a legacy entry and a remaster one.
