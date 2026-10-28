@@ -5386,6 +5386,9 @@
         "BasicSaves": {
           "file": "rollhandlers/basic-saves.js"
         },
+        "ItemSpells": {
+          "file": "rollhandlers/item-spells.js"
+        },
         "Concealment": {
           "file": "rollhandlers/concealment.js"
         }
