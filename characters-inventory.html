@@ -3,6 +3,17 @@
     updateTotalBulk(record);
   }
 
+  // After an add: a scroll or wand gets its row in the Scrolls and Wands
+  // entry, then bulk is worked out (one write after the other, on the record
+  // read again: item-spells.js)
+  function afterItemsAdded(updated, items) {
+    if (!items.some((item) => getItemSpellKind(item))) {
+      updateTotalBulk(updated);
+      return;
+    }
+    syncItemSpells(updated, (fresh) => updateTotalBulk(fresh));
+  }
+
   function onDropItem(recordLink) {
     const item = recordLink?.value;
 
@@ -74,11 +85,11 @@
         if (Object.keys(valuesToSet).length > 0) {
           api.setValues(valuesToSet, (updatedRecord) => {
             // Update total weight after setting count values
-            updateTotalBulk(updatedRecord);
+            afterItemsAdded(updatedRecord, itemsInPack);
           });
         } else {
           // Else just update the total weight
-          updateTotalBulk(record);
+          afterItemsAdded(record, itemsInPack);
         }
       });
     } else {
@@ -93,14 +104,14 @@
           count + countToAdd,
           (record) => {
             // Update total weight
-            updateTotalBulk(record);
+            afterItemsAdded(record, [item]);
           },
         );
       } else {
         // Add the item to the list
         api.addValue(`data.inventory`, itemToAdd, (record) => {
           // Update total weight
-          updateTotalBulk(record);
+          afterItemsAdded(record, [item]);
         });
       }
     }
@@ -138,8 +149,15 @@
     valuesToSet["data.totalBulk"] = totalBulk;
 
     api.setValues(valuesToSet, (recordUpdated) => {
-      // Update attributes as needed
-      onAddEditFeature(recordUpdated, undefined, true);
+      // A deleted scroll or wand takes its row out of the Scrolls and Wands
+      // entry (item-spells.js), then attributes are updated as needed
+      if (hasItemSpells(recordUpdated || record)) {
+        syncItemSpells(recordUpdated || record, (fresh) =>
+          onAddEditFeature(fresh, undefined, true),
+        );
+      } else {
+        onAddEditFeature(recordUpdated, undefined, true);
+      }
     });
   }
 
