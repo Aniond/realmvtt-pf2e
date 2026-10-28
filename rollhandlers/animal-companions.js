@@ -36,14 +36,17 @@ function isAnimalCompanionAncestry(ancestry) {
 const isDefaultImage = (path) => !path || /default-icons|\/icons\/fantasy\/default/.test(String(path));
 
 // The portrait and token image an animal companion takes from its type's
-// ancestry when dropped: the ancestry's picture, for whichever of the two
-// is still empty or a placeholder (a picture of the player's own stays)
+// ancestry when dropped: the ancestry's picture, and its data.tokenImage for
+// the token if it has one (creature art comes with its own token), for
+// whichever of the two is still empty or a placeholder (a picture of the
+// player's own stays)
 function getCompanionImageValues(character, ancestry) {
-  const image = ancestry?.portrait;
-  if (!isAnimalCompanionAncestry(ancestry) || isDefaultImage(image)) return {};
+  if (!isAnimalCompanionAncestry(ancestry)) return {};
+  const portrait = ancestry?.portrait;
+  const token = isDefaultImage(ancestry?.data?.tokenImage) ? portrait : ancestry.data.tokenImage;
   const values = {};
-  if (isDefaultImage(character?.portrait)) values.portrait = image;
-  if (isDefaultImage(character?.token?.imageUrl)) values["token.imageUrl"] = image;
+  if (!isDefaultImage(portrait) && isDefaultImage(character?.portrait)) values.portrait = portrait;
+  if (!isDefaultImage(token) && isDefaultImage(character?.token?.imageUrl)) values["token.imageUrl"] = token;
   return values;
 }
 

@@ -16,6 +16,12 @@ const TYPES = JSON.parse(fs.readFileSync(path.join(here, "source", "player-core-
 const ICONS = fs.existsSync(path.join(here, "icons.json"))
   ? JSON.parse(fs.readFileSync(path.join(here, "icons.json"), "utf8"))
   : {};
+// Optional creature art, for whoever holds a license for it: art.json maps a
+// companion type to { "portrait": "/images/...", "token": "/images/..." }
+// (see the README). It isn't part of the module as shared.
+const ART = fs.existsSync(path.join(here, "art.json"))
+  ? JSON.parse(fs.readFileSync(path.join(here, "art.json"), "utf8"))
+  : {};
 
 const PUBLICATION = { license: "ORC", remaster: true, title: "Pathfinder Player Core" };
 const UNARMED = '["item:category:unarmed"]';
@@ -356,11 +362,13 @@ function buildAncestry(type) {
     recordType: "ancestry",
     identified: true,
     unidentifiedName: "Unidentified Ancestries",
-    portrait: icon(`ancestry|${name}`, "/icons/fantasy/default-icons/npc.svg"),
+    portrait: ART[name]?.portrait || icon(`ancestry|${name}`, "/icons/fantasy/default-icons/npc.svg"),
     data: {
       // A companion type: dropping it asks for no heritage
       // (isAnimalCompanionAncestry)
       animalCompanion: true,
+      // Its token picture, when the art has one (getCompanionImageValues)
+      ...(ART[name]?.token ? { tokenImage: ART[name].token } : {}),
       hp: type.hp,
       size: type.sizes[0],
       speed: `${type.speed?.land || 0} feet`,

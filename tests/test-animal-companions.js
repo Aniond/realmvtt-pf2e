@@ -116,6 +116,11 @@ section("Which characters are animal companions");
     { portrait: bearType.portrait },
   );
   assert("its own portrait and token are kept", ctx.getCompanionImageValues({ portrait: "/images/bruno.webp", token: { imageUrl: "/images/bruno-token.webp" } }, bearType), {});
+  assert(
+    "a type with its own token image uses it for the token",
+    ctx.getCompanionImageValues({ portrait: "" }, { ...bearType, portrait: "/images/bear-grizzly.webp", data: { ...bearType.data, tokenImage: "/images/bear-grizzly-token.webp" } }),
+    { portrait: "/images/bear-grizzly.webp", "token.imageUrl": "/images/bear-grizzly-token.webp" },
+  );
   assert("a playable ancestry changes no picture", ctx.getCompanionImageValues({ portrait: "" }, { portrait: "/icons/x.webp", data: { traits: ["Humanoid"] } }), {});
   assert("a companion type without a real picture changes nothing", ctx.getCompanionImageValues({ portrait: "" }, { portrait: "/icons/fantasy/default-icons/npc.svg", data: { animalCompanion: true } }), {});
 }
