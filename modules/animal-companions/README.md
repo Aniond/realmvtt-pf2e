@@ -15,7 +15,7 @@ Animal companions for the PF2e ruleset as **characters**, the way Foundry's [PF2
 ## Making a companion
 
 1. Create a character, drop a companion ancestry (e.g. Bear) and the Animal Companion class on it. Don't use the creation wizard.
-2. On the Notes tab, set **Animal Companion of** to its master. Its level becomes the master's. Use **Match Master's Level** after the master levels up.
+2. On the Notes tab, set **Animal Companion of** to its master. Its level becomes the master's. Use **Match Master's Level** after the master levels up. To give it a creature's art, pick one under **Use art from creature**.
 3. When the master takes Mature Animal Companion (or Incredible Companion, Specialized Animal Companion), add the matching feat here: Mature, then Nimble or Savage, then Specialized and one specialization.
 
 ## Building
@@ -24,7 +24,11 @@ Animal companions for the PF2e ruleset as **characters**, the way Foundry's [PF2
 - `icons.json` maps each record (`<recordType>|<name>`) to an icon from Realm's catalog.
 - `node modules/animal-companions/build.js` writes `records.json` (ancestries, class, feats). `tests/test-animal-companion-module.js` builds companions from it and checks them against stat blocks worked by hand from Player Core pg. 206-211. The test fails if `records.json` is out of date.
 
-## Adding creature art (once you hold a license for it)
+## Creature art
+
+**On a table's own sheet:** a companion's Notes tab has a **Use art from creature** picker. Choose any NPC in your campaign (e.g. Monster Core's Grizzly Bear), and the companion takes that creature's portrait and token. Tables that own books with creature art can use it this way, while the module itself ships none.
+
+### Adding creature art to the module (once you hold a license for it)
 
 The module ships with catalog icons only. Realm's Monster Core NPCs have real art for most of these animals (the Grizzly Bear's portrait and token, for example), but that art is Paizo's and isn't covered by the ORC License. To use it you need your own license for it; it can't go in a shared module otherwise.
 

@@ -133,6 +133,9 @@ Animal companions are characters, as Foundry's PF2e Companion Compendia builds t
   - `weaponDiceCount`: the number of base damage dice for matching weapons (`getAlteredWeapon`), the highest wins. Striking runes still add to it. Mature uses 2 and Specialized 3, with predicate `["item:category:unarmed"]`.
   - `creatureSize` value `"+1"`: one size larger, up to Large, adding up and counting from the ancestry's size (`getFeatureCreatureSize`). The rules say "grows by one size if it's Medium or smaller".
 - The Notes tab shows an Animal Companion box only for a companion (`fields.companionProperties`, set in `onAddEditFeature`). It has the master (`data.companionMaster`) and a Match Master's Level button. Choosing the master, or the button, sets the companion's level to the master's (`syncCompanionLevel`) and works the sheet out again. There's no level-up hook, so a master's Level Up doesn't reach it on its own.
+- Pictures:
+  - Dropping a companion ancestry gives the character the ancestry's portrait, and its `data.tokenImage` (or portrait) as the token image. This only fills a picture that's still empty or a placeholder (`getCompanionImageValues`).
+  - The Notes tab's **Use art from creature** picker copies any NPC's portrait and token (`onCompanionArtChange`), so a table's own licensed creature art can be used; the module ships none.
 - Companions skip the creation wizard, which requires a key attribute and boosts. You make one by dropping the ancestry and the class on a new character.
 
 ### Concealment and detection

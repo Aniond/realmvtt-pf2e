@@ -106,25 +106,60 @@ function syncCompanionLevel(record, masterId = getCompanionMasterId(record), cal
   });
 }
 
+// The record id in a record-picker field's value (a record link, stored as
+// JSON or as an object), or null
+function getRecordIdFromValue(value) {
+  if (!value) return null;
+  if (typeof value === "object") return value._id || value.value?._id || null;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed?._id || parsed?.value?._id || null;
+  } catch (error) {
+    return null;
+  }
+}
+
 // The Notes tab's Master field changed: the companion takes its master's
 // level (value is the field's new record link)
 function onCompanionMasterChange(value) {
-  let masterId = null;
-  if (value && typeof value === "object") masterId = value._id || value.value?._id || null;
-  else if (value) {
-    try {
-      const parsed = JSON.parse(value);
-      masterId = parsed?._id || parsed?.value?._id || null;
-    } catch (error) {
-      masterId = null;
-    }
-  }
+  const masterId = getRecordIdFromValue(value);
   if (!masterId) return;
   syncCompanionLevel(record, masterId, (updated) => {
     const level = updated?.data?.level;
     if (level !== undefined) {
       api.showNotification(`${record?.name || "The companion"} is now level ${level}, as its master is.`, "green", "Animal Companion");
     }
+  });
+}
+
+// The values that give a companion a creature's art: its portrait, and its
+// token image (or its portrait when it has no separate token). {} when the
+// creature has no real picture.
+function getCreatureArtValues(creature) {
+  const portrait = creature?.portrait;
+  const token = isDefaultImage(creature?.token?.imageUrl) ? portrait : creature.token.imageUrl;
+  const values = {};
+  if (!isDefaultImage(portrait)) values.portrait = portrait;
+  if (!isDefaultImage(token)) values["token.imageUrl"] = token;
+  return values;
+}
+
+// The Notes tab's "Use art from creature" field changed: the companion takes
+// that NPC's portrait and token, so a table whose books include creature
+// art (Monster Core's Grizzly Bear...) can use it; the module ships none.
+// Picking one replaces the companion's pictures; the choice is the player's.
+function onCompanionArtChange(value) {
+  const creatureId = getRecordIdFromValue(value);
+  if (!creatureId) return;
+  api.getRecord("npcs", creatureId, (creature) => {
+    const values = getCreatureArtValues(creature);
+    if (Object.keys(values).length === 0) {
+      api.showNotification(`${creature?.name || "That creature"} has no art to use.`, "yellow", "Animal Companion");
+      return;
+    }
+    api.setValues(values, () => {
+      api.showNotification(`${record?.name || "The companion"} now uses ${creature.name}'s art.`, "green", "Animal Companion");
+    });
   });
 }
 

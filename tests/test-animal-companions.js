@@ -237,4 +237,30 @@ section("The companion's level is its master's");
   ctx.record = { data: {}, fields: {}, type: "characters", _id: "test" };
 }
 
+section("Art from a creature (the Notes tab's picker)");
+{
+  const grizzly = { _id: "npc-grizzly", name: "Grizzly Bear", recordType: "npcs", portrait: "/images/bear-grizzly.webp", token: { imageUrl: "/images/bear-grizzly-token.webp" } };
+  assert("its portrait and its token", ctx.getCreatureArtValues(grizzly), { portrait: "/images/bear-grizzly.webp", "token.imageUrl": "/images/bear-grizzly-token.webp" });
+  assert("no separate token: the portrait for both", ctx.getCreatureArtValues({ portrait: "/images/wolf.webp", token: {} }), { portrait: "/images/wolf.webp", "token.imageUrl": "/images/wolf.webp" });
+  assert("a placeholder picture gives nothing", ctx.getCreatureArtValues({ portrait: "/icons/fantasy/default-icons/npc.svg" }), {});
+
+  const writes = [];
+  const notices = [];
+  ctx.api.getRecord = (type, rid, cb) => cb(type === "npcs" && rid === "npc-grizzly" ? grizzly : { _id: rid, name: "Shade", portrait: "" });
+  ctx.api.setValues = (values, cb) => {
+    writes.push(values);
+    if (cb) cb();
+  };
+  ctx.api.showNotification = (message) => notices.push(message);
+  ctx.record = { _id: "bruno", name: "Bruno", recordType: "characters", portrait: "/images/old.webp", data: {} };
+  ctx.onCompanionArtChange(JSON.stringify({ _id: "npc-grizzly", name: "Grizzly Bear" }));
+  assert("picking the Grizzly Bear: one write, replacing the old picture", writes, [{ portrait: "/images/bear-grizzly.webp", "token.imageUrl": "/images/bear-grizzly-token.webp" }]);
+  assert("and says so", notices[0], "Bruno now uses Grizzly Bear's art.");
+  ctx.onCompanionArtChange(JSON.stringify({ _id: "npc-shade" }));
+  assert("a creature without art: nothing written, a notice", [writes.length, notices[1]], [1, "Shade has no art to use."]);
+  ctx.onCompanionArtChange("");
+  assert("cleared: nothing", writes.length, 1);
+  ctx.record = { data: {}, fields: {}, type: "characters", _id: "test" };
+}
+
 process.exitCode = summary() > 0 ? 1 : 0;
