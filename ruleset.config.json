@@ -5391,6 +5391,9 @@
         },
         "Concealment": {
           "file": "rollhandlers/concealment.js"
+        },
+        "AnimalCompanions": {
+          "file": "rollhandlers/animal-companions.js"
         }
       },
       "defaultDice": "default",

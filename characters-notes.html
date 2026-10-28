@@ -136,6 +136,56 @@
       ></stringfield>
     </div>
 
+    <!-- An animal companion's master and level (animal-companions.js) -->
+    <box field="companionProperties" hidden="true">
+      <div
+        style="
+          margin-top: 8px;
+          display: flex;
+          flex-direction: row;
+          gap: 4px;
+          align-items: flex-end;
+        "
+      >
+        <dropdown
+          field="companionMaster"
+          label="Animal Companion of"
+          placeholder="Select Master..."
+          optionsquery='{"type": "characters", "query": {}}'
+          size="xs"
+          width="100%"
+          onchange="onCompanionMasterChange(value);"
+        ></dropdown>
+        <dropdown
+          field="companionArtFrom"
+          label="Use art from creature"
+          placeholder="Pick a creature..."
+          optionsquery='{"type": "npcs", "query": {}}'
+          size="xs"
+          width="100%"
+          onchange="onCompanionArtChange(value);"
+        ></dropdown>
+        <div
+          style="
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            align-items: center;
+            min-width: 110px;
+          "
+        >
+          <label label="Match Master's Level" variant="bold" size="xs"></label>
+          <iconbutton
+            size="md"
+            variant="default"
+            icon="IconRefresh"
+            options='[{"icon": "IconRefresh", "label": "Match the master level", "value": "refresh"}]'
+            onclick="onCompanionMatchLevel();"
+          ></iconbutton>
+        </div>
+      </div>
+    </box>
+
     <div style="margin-top: 8px; display: flex; flex-direction: row; gap: 4px">
       <stringfield
         width="25%"

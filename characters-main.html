@@ -56,6 +56,9 @@
         "data.reach": ancestryObj.data?.reach,
         // Default to false on add of ancestry
         "data.alternateAncestryBoosts": false,
+        // An animal companion takes its type's picture as its portrait and
+        // token, unless it already has its own (animal-companions.js)
+        ...getCompanionImageValues(record, recordLink.value),
       },
       (updatedRecord) => {
         // Show ancestry UI, then prompt for heritage
@@ -63,6 +66,11 @@
         api.setHidden("ancestries", false, () => {
           api.setHidden("ancestryDetailsLabel", true);
         });
+        // An animal companion's type has no heritages (animal-companions.js)
+        if (isAnimalCompanionAncestry(ancestryObj)) {
+          onAddEditFeature(updatedRecord);
+          return;
+        }
         promptForHeritage(updatedRecord, ancestryName);
       },
     );
