@@ -238,10 +238,6 @@ message += getRollNotesText(data?.roll?.metadata?.notes, noteDegree);
 
 // The attack goes in the creature's log for this turn (attack-log.js)
 logTurnAttack(data?.roll?.metadata?.turnAttack, noteDegree);
-// After a finisher this turn, no attack is allowed (action-limits.js)
-if (data?.roll?.metadata?.attackNumberHint) {
-  message += `\n\n${data.roll.metadata.attackNumberHint}`;
-}
 
 // Only add "Attack" tag if there is no "Attack" trait
 const hasAttackTrait = traits.some(
