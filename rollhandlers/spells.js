@@ -1510,10 +1510,27 @@ function castSpell(record, spell, dataPathToSpell, isOverlay = false) {
     );
   }
 
-  const spellCastingEntry = api.getValueOnRecord(
+  let spellCastingEntry = api.getValueOnRecord(
     record,
     dataPathToSpellCastingEntry
   );
+
+  // A row of the Scrolls and Wands entry spends its scroll or wand, with the
+  // caster's numbers for this spell, in this cast's one write; it never runs
+  // out (item-spells.js)
+  const itemSpellCast = isItemSpellsEntry(spellCastingEntry)
+    ? getItemSpellCast(
+        record,
+        spell,
+        dataPathToSpell,
+        dataPathToSpellCastingEntry,
+        isOverlay
+      )
+    : null;
+  if (itemSpellCast) {
+    spellCastingEntry = itemSpellCast.entry;
+    Object.assign(valuesToSet, itemSpellCast.values);
+  }
   const type = spellCastingEntry.data?.type;
 
   const isSpontaneous = type === "spontaneous";
@@ -1572,7 +1589,7 @@ function castSpell(record, spell, dataPathToSpell, isOverlay = false) {
     ] = newUsedSpells;
   }
 
-  if (isInnate && !isCantrip) {
+  if (isInnate && !isCantrip && !itemSpellCast) {
     const spellUses = spell?.data?.uses || 0;
 
     if (spellUses <= 0) {
@@ -1762,7 +1779,7 @@ api.getRecord('${record.recordType}', '${record._id}', (updatedRecord) => {
   #### ${portrait}${spellName}${actionIcon ? "&nbsp;" : ""}${actionIcon}
 
   ---
-  ${spellDescription}
+  ${itemSpellCast?.lines.length ? `${itemSpellCast.lines.join("\n")}\n\n` : ""}${spellDescription}
   ${macros && macros.length > 0 ? `${macros.join("\n")}\n` : ""}
   ${overlayMacros.length > 0 ? `\n---\n${overlayMacros.join("\n")}\n` : ""}
   `;
@@ -1770,8 +1787,14 @@ api.getRecord('${record.recordType}', '${record._id}', (updatedRecord) => {
   // Send the message
   api.sendMessage(message, undefined, [], tags);
 
-  // Update values
-  api.setValuesOnRecord(record, valuesToSet);
+  // Update values (then a used-up scroll goes; item-spells.js)
+  api.setValuesOnRecord(
+    record,
+    valuesToSet,
+    itemSpellCast?.use?.bulk
+      ? () => finishItemSpellCast(record, itemSpellCast.use)
+      : undefined
+  );
 
   // Play animation only if not using attack macro (macro handles animation)
   if (animation && tokenId && !hasAttackMacro) {

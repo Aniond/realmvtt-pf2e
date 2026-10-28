@@ -4905,13 +4905,22 @@ function onItemEquippedFor(itemDataPath, newValue) {
   // based on type incase it changed
   setItemFields(item, itemDataPath, valuesToSet);
 
+  // A scroll or wand (its spell maybe just set) gets its row in the Scrolls
+  // and Wands entry first (item-spells.js)
+  const afterWrite = (updated) => {
+    if (getItemSpellKind(item)) {
+      syncItemSpells(updated, (fresh) => onAddEditFeature(fresh, undefined, true));
+    } else {
+      onAddEditFeature(updated, undefined, true);
+    }
+  };
   if (Object.keys(valuesToSet).length > 0) {
     api.setValues(valuesToSet, (recordUpdated) => {
       // Update attributes as needed
-      onAddEditFeature(recordUpdated, undefined, true);
+      afterWrite(recordUpdated);
     });
   } else {
-    onAddEditFeature(record, undefined, true);
+    afterWrite(record);
   }
 }
 

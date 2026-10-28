@@ -25,7 +25,13 @@
       valuesToSet[`${itemDataPath}.data.ammo`] = value;
     }
 
-    api.setValues(valuesToSet);
+    // A scroll's row in the Scrolls and Wands entry shows how many are left
+    // (item-spells.js)
+    if (getItemSpellKind(item)) {
+      api.setValues(valuesToSet, (updated) => syncItemSpells(updated || record));
+    } else {
+      api.setValues(valuesToSet);
+    }
   }
 </script>
 
