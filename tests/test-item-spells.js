@@ -160,7 +160,7 @@ section("Using a wand or scroll from the sheet");
   reset();
   ctx.useItemSpell(pc, wand(0), "data.inventory.0");
   assert("spent today: nothing spent", sets, []);
-  assertIncludes("an overcharge warning, and it still casts", ctx.__state.messages[0], "**Overcharge:** Wand of Crackling Lightning (3rd-Rank Spell) was already used today. Roll a DC 10 flat check");
+  assertIncludes("a short overcharge line, and it still casts", ctx.__state.messages[0], "\n**Overcharge:** already used today (DC 10 flat check, GM Core pg. 282).");
   assert("cast", casts.length, 1);
 
   reset();
@@ -183,35 +183,24 @@ section("Using a wand or scroll from the sheet");
   assert("Use on the wand casts it", [casts.length, ctx.__state.messages.length], [1, 2 - 1]);
 }
 
-section("Trick Magic Item without the tradition");
+section("Trick Magic Item without the tradition: it just casts");
 {
-  reset();
-  const fighter = character([], { int: 1, wis: 2, cha: 0, arcana: 1, nature: 3 }, [wand()]);
-  ctx.useItemSpell(fighter, wand(), "data.inventory.0");
-  const card = ctx.__state.messages.join("\n");
-  assertIncludes("the card", card, "#### Trick Magic Item: Wand of Crackling Lightning (3rd-Rank Spell)");
-  assertIncludes("a check per tradition's skill, DC by the item's level (8: 24)", card, "```Trick_Magic_Item_Arcana_DC24\nrollSkillCheck(\"arcana\", 24, { action: \"Trick Magic Item\" });");
-  assertIncludes("Nature for primal", card, "Trick_Magic_Item_Nature_DC24");
-  assertIncludes("and a button to cast after a success", card, 'castItemSpellByTrick("pc", "item-wand", ["arcane","primal"]);');
-  assert("nothing spent or cast yet", [sets, casts], [[], []]);
-
   // Player Core pg. 264: level as proficiency, the highest of Int/Wis/Cha
+  const fighter = character([], { int: 1, wis: 2, cha: 0, arcana: 1, nature: 3 }, [wand()]);
   assert("trained: level 5 + Wis 2", ctx.getTrickMagicItemCasting(fighter, "arcana", "arcane"), { dc: 17, mod: 7, attribute: "wis", tradition: "Arcane" });
   assert("master in the skill: the trained bonus (level + 2)", ctx.getTrickMagicItemCasting(fighter, "nature", "primal").mod, 9);
   assert("legendary: the expert bonus (level + 4)", ctx.getTrickMagicItemCasting({ ...fighter, data: { ...fighter.data, nature: 4 } }, "nature", "primal").mod, 11);
   const wizard = character([entry("Arcane Prepared Spells", { dc: 22, mod: 12 })]);
   assert("a caster of another tradition: their own spell DC", ctx.getTrickMagicItemCasting(wizard, "religion", "divine"), { dc: 22, mod: 12, attribute: "int", tradition: "Divine" });
 
-  // The cast button: Nature, the fighter's best of the two
+  // No check card and no second button: Use casts straight away, with the
+  // tradition skill the fighter is best at (Nature for primal)
   reset();
-  records = { pc: fighter };
-  ctx.castItemSpellByTrick("pc", "item-wand", ["arcane", "primal"]);
+  ctx.useItemSpell(fighter, wand(), "data.inventory.0");
+  assertIncludes("cast with Trick Magic Item's numbers, and the card says so", ctx.__state.messages[0], "with Primal spell DC 19 and attack +9.\n*Trick Magic Item* (Player Core pg. 264)");
+  assert("one card", ctx.__state.messages.length, 1);
   assert("the wand's use is spent, in the same write as the entry", [recordWrites.length, recordWrites[0]["data.inventory.0.data.uses.value"]], [1, 0]);
-  assertIncludes("cast with Trick Magic Item's numbers", ctx.__state.messages[0], "with Primal spell DC 19 and attack +9.\n*Trick Magic Item*");
   assert("into the Scrolls and Wands entry", [casts[0].path, recordWrites[0]["data.spells"][0].data.dc], ["data.spells.0.data.spells3.0", 19]);
-  reset();
-  ctx.castItemSpellByTrick("pc", "item-gone", ["arcane"]);
-  assert("an item no longer carried: a notice", notices, ["That item is no longer in the inventory."]);
 }
 
 section("The entry stays out of slots, rest and the class's entries");

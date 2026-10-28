@@ -10,10 +10,11 @@
 //     attack, attribute and tradition copied from their best matching entry
 //     on every cast, and castSpell does the rest. The entry is left out of
 //     slots, daily preparations, level up and the class's entries;
-//   - otherwise the card offers the Trick Magic Item check and a button to
-//     cast once it succeeds;
+//   - otherwise it casts with Trick Magic Item's DC and attack, and the card
+//     says so; the GM asks for the check if the table wants it;
 //   - a scroll is used up; a wand spends its once-a-day use, which comes back
-//     at daily preparations. Casting a spent wand only warns (overcharge).
+//     at daily preparations. A spent wand still casts, with a short
+//     overcharge line. Nothing here refuses a cast: the GM decides.
 // Loaded as one of the ruleset's scripts (ruleset.config.json,
 // otherSettings.scripts), so it shares common.js's scope at runtime.
 
@@ -221,24 +222,6 @@ function castItemSpellWith(record, item, spell, rank, casting, note = "", useVal
   });
 }
 
-// The Trick Magic Item card: the check for each tradition's skill against
-// the item's level-based DC, and a button to cast once it succeeds
-function getTrickMagicItemCard(record, item, spell, traditions) {
-  const dc = getDCForLevel(parseInt(item?.data?.level, 10) || 1);
-  const fence = "```";
-  const checks = traditions
-    .map((tradition) => {
-      const skill = TRADITION_SKILLS[tradition];
-      return `${fence}Trick_Magic_Item_${capitalize(skill)}_DC${dc}\nrollSkillCheck(${JSON.stringify(skill)}, ${dc}, { action: "Trick Magic Item" });\n${fence}`;
-    })
-    .join("\n");
-  const cast = `${fence}Cast_After_Trick_Magic_Item\ncastItemSpellByTrick(${JSON.stringify(record._id)}, ${JSON.stringify(item._id)}, ${JSON.stringify(traditions)});\n${fence}`;
-  return `#### Trick Magic Item: ${item.name}
-${getTokenDisplayName(record)} has no ${traditions.map(capitalize).join(" or ")} spellcasting for ${spell.name}. On a success, cast it this turn; on a failure, try again next turn; on a critical failure, not until your next daily preparations (Player Core pg. 264).
-${checks}
-${cast}`;
-}
-
 // The values that spend a scroll (one fewer) or a wand's use for the day,
 // and the card's line for an overcharge, or "": { values, line }
 function getItemSpellUseValues(item, itemPath, kind) {
@@ -249,16 +232,16 @@ function getItemSpellUseValues(item, itemPath, kind) {
     }
     return {
       values: {},
-      line: `**Overcharge:** ${item.name} was already used today. Roll a DC 10 flat check: on a success the wand is broken, on a failure it's destroyed. A wand already overcharged today is destroyed and casts nothing (GM Core pg. 282).`,
+      line: "**Overcharge:** already used today (DC 10 flat check, GM Core pg. 282).",
     };
   }
   const count = parseInt(item?.data?.count, 10) || 0;
   return { values: { [`${itemPath}.data.count`]: Math.max(0, count - 1) }, line: "" };
 }
 
-// Use on a scroll or wand from the sheet: casts its spell, or offers Trick
-// Magic Item. Returns false for anything else (or a creature that isn't a
-// character), which Use handles as before.
+// Use on a scroll or wand from the sheet: casts its spell, with the
+// character's spellcasting or Trick Magic Item's. Returns false for anything
+// else (or a creature that isn't a character), which Use handles as before.
 function useItemSpell(record, item, itemPath) {
   const kind = getItemSpellKind(item);
   const ref = kind ? getItemSpellRef(item) : null;
@@ -271,11 +254,27 @@ function useItemSpell(record, item, itemPath) {
     }
     const traditions = getSpellTraditions(spell);
     const best = getBestCastingEntry(record, traditions);
+    const use = getItemSpellUseValues(item, itemPath, kind);
     if (!best) {
-      api.sendMessage(getTrickMagicItemCard(record, item, spell, traditions.length ? traditions : Object.keys(TRADITION_SKILLS)));
+      // No matching tradition: Trick Magic Item's DC and attack, with the
+      // tradition skill the character is best at
+      const options = traditions.length ? traditions : Object.keys(TRADITION_SKILLS);
+      const tradition = options.slice().sort(
+        (a, b) =>
+          (parseInt(record.data?.[TRADITION_SKILLS[b]] || "0", 10) || 0) -
+          (parseInt(record.data?.[TRADITION_SKILLS[a]] || "0", 10) || 0),
+      )[0];
+      castItemSpellWith(
+        record,
+        item,
+        spell,
+        rank,
+        getTrickMagicItemCasting(record, TRADITION_SKILLS[tradition], tradition),
+        ["*Trick Magic Item* (Player Core pg. 264)", use.line].filter(Boolean).join("\n"),
+        use.values,
+      );
       return;
     }
-    const use = getItemSpellUseValues(item, itemPath, kind);
     castItemSpellWith(
       record,
       item,
@@ -292,41 +291,6 @@ function useItemSpell(record, item, itemPath) {
     );
   });
   return true;
-}
-
-// The Trick Magic Item card's cast button: after a successful check, casts
-// with Trick Magic Item's DC and attack and spends the item
-function castItemSpellByTrick(recordId, itemId, traditions) {
-  api.getRecord("characters", recordId, (record) => {
-    const inventory = record?.data?.inventory || [];
-    const itemIndex = inventory.findIndex((entry) => entry?._id === itemId);
-    const item = inventory[itemIndex];
-    if (!item) {
-      api.showNotification("That item is no longer in the inventory.", "yellow", "Trick Magic Item");
-      return;
-    }
-    const kind = getItemSpellKind(item);
-    findItemSpell(getItemSpellRef(item), (spell) => {
-      if (!spell) return;
-      // The tradition skill the character is best at
-      const tradition = (traditions || []).slice().sort(
-        (a, b) =>
-          (parseInt(record.data?.[TRADITION_SKILLS[b]] || "0", 10) || 0) -
-          (parseInt(record.data?.[TRADITION_SKILLS[a]] || "0", 10) || 0),
-      )[0] || "arcane";
-      const casting = getTrickMagicItemCasting(record, TRADITION_SKILLS[tradition], tradition);
-      const use = getItemSpellUseValues(item, `data.inventory.${itemIndex}`, kind);
-      castItemSpellWith(
-        record,
-        item,
-        spell,
-        getItemSpellRank(item),
-        casting,
-        ["*Trick Magic Item*", use.line].filter(Boolean).join("\n"),
-        use.values,
-      );
-    });
-  });
 }
 
 // The values that bring wands' daily uses back (daily preparations)
