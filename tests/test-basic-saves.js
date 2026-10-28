@@ -124,15 +124,15 @@ section("The damage card's Apply by Saves");
   const breath = { _id: "act-breath", recordType: "actions", name: "Avalanche Breath", data: {} };
   const withBasic = "deals ```8d8_Damage\nexecuteDamageMacro('8d8 bludgeoning', 'standard', '8d8 bludgeoning Damage')\n``` in a cone (```Reflex_Save\nrollSavingThrow('reflex', 28, { basic: true });\n``` save)";
   const updated = ctx.updateDamageMacros(withBasic, { item: breath, creature: { _id: "npc", recordType: "npcs", data: {} } });
-  assertIncludes("the damage button gets the save type", updated, `executeDamageMacro('8d8 bludgeoning', 'standard', '8d8 bludgeoning Damage', {"basicSave":{"saveType":"reflex"}})`);
+  assertIncludes("the damage button gets the save type", updated, `executeDamageMacro('8d8 bludgeoning', 'standard', '8d8 bludgeoning Damage', {"basicSave":{"saveType":"reflex","source":"Avalanche Breath"}})`);
   const jsonFlag = withBasic.replace("{ basic: true }", '{"basic":true}');
-  assertIncludes("JSON-style flag too", ctx.updateDamageMacros(jsonFlag, { item: breath, creature: { _id: "npc", recordType: "npcs", data: {} } }), '"basicSave":{"saveType":"reflex"}');
+  assertIncludes("JSON-style flag too", ctx.updateDamageMacros(jsonFlag, { item: breath, creature: { _id: "npc", recordType: "npcs", data: {} } }), '"basicSave":{"saveType":"reflex","source":"Avalanche Breath"}');
   // A basic save without a DC (Sean's review: @Check[fortitude|against:spell|basic])
   const noDC = "```Damage\nexecuteDamageMacro('6d6 fire', 'standard', '6d6 fire Damage')\n``` (```Fortitude_Save\nrollSavingThrow('fortitude', undefined, { basic: true });\n```)";
-  assertIncludes("no DC: still basic", ctx.updateDamageMacros(noDC, { item: breath, creature: { _id: "npc", recordType: "npcs", data: {} } }), '"basicSave":{"saveType":"fortitude"}');
+  assertIncludes("no DC: still basic", ctx.updateDamageMacros(noDC, { item: breath, creature: { _id: "npc", recordType: "npcs", data: {} } }), '"basicSave":{"saveType":"fortitude","source":"Avalanche Breath"}');
   // Two damage parts under one save (Kuribu's Blessed Aspect): both buttons
   const twoParts = "```A\nexecuteDamageMacro('2d10 sonic', 'standard', '2d10 sonic Damage')\n``` and ```B\nexecuteDamageMacro('4d6 bludgeoning', 'standard', '4d6 bludgeoning Damage')\n``` (```Reflex_Save\nrollSavingThrow('reflex', 30, { basic: true });\n```)";
-  assert("both damage buttons get the save", [...ctx.updateDamageMacros(twoParts, { item: breath, creature: { _id: "npc", recordType: "npcs", data: {} } }).matchAll(/"basicSave":\{"saveType":"reflex"\}/g)].length, 2);
+  assert("both damage buttons get the save", [...ctx.updateDamageMacros(twoParts, { item: breath, creature: { _id: "npc", recordType: "npcs", data: {} } }).matchAll(/"basicSave":\{"saveType":"reflex","source":"Avalanche Breath"\}/g)].length, 2);
   const older = withBasic.replace(", { basic: true }", "");
   assertIncludes("an older import: unchanged", ctx.updateDamageMacros(older, { item: breath, creature: { _id: "npc", recordType: "npcs", data: {} } }), "executeDamageMacro('8d8 bludgeoning', 'standard', '8d8 bludgeoning Damage')\n");
   assert("no basic save in the description: none", ctx.getDescriptionBasicSave("rollSavingThrow('will', 26);", breath), null);
@@ -205,6 +205,10 @@ section("Applying by each creature's save");
   ctx.applyDamageBySaves({ total: 10, metadata: { rollName: "Avalanche Breath Damage", basicSave: { saveType: "fortitude" } } });
   assert("a selected token wrapped as { token }", applied, [["g", false, false]]);
   assert("named from the roll, on its damage card", headers[headers.length - 1][1], "**Avalanche Breath Damage: applied by Fortitude failure, full damage**");
+  // The ability's name, not its damage roll's "8d8 bludgeoning Damage
+  // Damage" (seen live)
+  ctx.applyDamageBySaves({ total: 10, metadata: { rollName: "8d8 bludgeoning Damage Damage", basicSave: { saveType: "reflex", source: "Avalanche Breath" } } });
+  assert("named after the ability", headers[headers.length - 1][1], "**Avalanche Breath: applied by Fortitude failure, full damage**");
   assert("and no second card", ctx.__state.messages, []);
 
   ctx.api.getSelectedOrDroppedToken = () => [];

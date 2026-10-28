@@ -95,7 +95,10 @@ function applyDamageBySaves(roll) {
     api.showNotification("Select the creatures that saved, then click again.", "yellow", "Notice");
     return;
   }
-  const source = roll?.metadata?.attack || roll?.metadata?.rollName || "Damage";
+  // The spell or ability by name (an ability's damage roll is only named
+  // by its formula, "8d8 bludgeoning Damage")
+  const source =
+    roll?.metadata?.basicSave?.source || roll?.metadata?.attack || roll?.metadata?.rollName || "Damage";
   const lines = [];
   creatures.forEach((creature) => {
     const name = getTokenDisplayName(creature);
