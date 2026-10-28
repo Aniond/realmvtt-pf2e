@@ -15777,6 +15777,9 @@ function applyDamage(
           const { lines, buttons } = getZeroHitPointsChanges(target, {
             critical:
               typeof isCritical !== "undefined" && isCritical && !immuneToCritical,
+            // Double damage from a critically failed basic save is a
+            // critical failure, not a critical hit (basic-saves.js)
+            criticalLabel: options.criticalLabel,
             nonlethal: isNonlethalDamage(traits),
             valuesToSet,
             oldValues,
@@ -15857,8 +15860,11 @@ function applyDamage(
         });
       });
 
+      // A line above the damage, so a caller's own note shares this card
+      // (Apply by Saves: the save and what it took)
+      const header = options.header ? `${options.header}\n` : "";
       api.sendMessage(
-        `${message}${macro}${dyingButtons.map((button) => `\n${button}`).join("")}`,
+        `${header}${message}${macro}${dyingButtons.map((button) => `\n${button}`).join("")}`,
         undefined,
         undefined,
         tags.length > 0 ? tags : undefined,

@@ -153,7 +153,11 @@ section("Applying by each creature's save");
 {
   const applied = [];
   const savedApply = ctx.applyDamage;
-  ctx.applyDamage = (target, roll, half) => applied.push([target._id, half, roll.metadata.critical === true]);
+  const headers = [];
+  ctx.applyDamage = (target, roll, half, splash, shield, options = {}) => {
+    applied.push([target._id, half, roll.metadata.critical === true]);
+    headers.push([target._id, options.header, options.criticalLabel]);
+  };
   const roll = { total: 20, types: [{ type: "fire", value: 20 }], metadata: { attack: "Fireball", isSpell: true, basicSave: { saveType: "reflex", useId: "use-1" } } };
   const creatures = [
     token("a", "Amiri", { lastSave: recent(2) }),
@@ -171,10 +175,18 @@ section("Applying by each creature's save");
   assert("success: half; failure: full; critical failure: double; critical success: nothing", applied, [["b", true, false], ["c", false, false], ["d", false, true]]);
   assert("each save used is marked with the use", sets.map(([id, , v]) => [id, v["data.lastSave"].usedBy, v["data.lastSave"].degree]), [["a", "use-1", 2], ["b", "use-1", 1], ["c", "use-1", 0], ["d", "use-1", -1]]);
   const summaryText = ctx.__state.messages.join("\n");
-  assertIncludes("chat says what each took", summaryText, "**Fireball: applied by saves**\n- Amiri: Reflex critical success, no damage\n- Kyra: Reflex success, half damage\n- Seelah: Reflex failure, full damage\n- Ezren: Reflex critical failure, double damage");
-  assertIncludes("no save: nothing applied", summaryText, "- Valeros: no Reflex save rolled, nothing applied");
-  assertIncludes("a save over 10 minutes old doesn't count", summaryText, "- Merisiel: no Reflex save rolled");
-  assertIncludes("nor another save than the spell's", summaryText, "- Harsk: no Reflex save rolled");
+  // One card each (Sean: two cards per creature was messy): the damage card
+  // is headed by the save; those that took no damage share one card
+  assert("each damage card is headed by its save", headers, [
+    ["b", "**Fireball: applied by Reflex success, half damage**", undefined],
+    ["c", "**Fireball: applied by Reflex failure, full damage**", undefined],
+    ["d", "**Fireball: applied by Reflex critical failure, double damage**", "critical failure on a save"],
+  ]);
+  assertIncludes("the rest share one card, one bold line each (Sean)", summaryText, "**Fireball: applied by Reflex critical success, no damage** (Amiri)\n**Fireball: not applied, no Reflex save rolled** (Valeros)");
+  assertNotIncludes("those with a damage card aren't listed again", summaryText, "Kyra");
+  assertIncludes("no save: nothing applied", summaryText, "**Fireball: not applied, no Reflex save rolled** (Valeros)");
+  assertIncludes("a save over 10 minutes old doesn't count", summaryText, "**Fireball: not applied, no Reflex save rolled** (Merisiel)");
+  assertIncludes("nor another save than the spell's", summaryText, "**Fireball: not applied, no Reflex save rolled** (Harsk)");
 
   // The same use's other damage part: the save covers it; a later use: not
   applied.length = 0;
@@ -186,7 +198,7 @@ section("Applying by each creature's save");
   ctx.__state.messages = [];
   ctx.applyDamageBySaves({ ...roll, metadata: { ...roll.metadata, basicSave: { saveType: "reflex", useId: "use-2" } } });
   assert("a later use: not applied", applied, []);
-  assertIncludes("it says the save was used", ctx.__state.messages.join("\n"), "- Kyra: Reflex save already used for other damage, nothing applied");
+  assertIncludes("it says the save was used", ctx.__state.messages.join("\n"), "**Fireball: not applied, Reflex save already used for other damage** (Kyra)");
   // Without a use id (a card from before this change): used up
   sets = [];
   ctx.api.getSelectedOrDroppedToken = () => [token("c", "Seelah", { lastSave: recent(0) })];
@@ -199,13 +211,30 @@ section("Applying by each creature's save");
   ctx.__state.messages = [];
   ctx.applyDamageBySaves({ total: 10, metadata: { rollName: "Avalanche Breath Damage", basicSave: { saveType: "fortitude" } } });
   assert("a selected token wrapped as { token }", applied, [["g", false, false]]);
-  assertIncludes("named from the roll", ctx.__state.messages.join("\n"), "**Avalanche Breath Damage: applied by saves**\n- Harsk: Fortitude failure, full damage");
+  assert("named from the roll, on its damage card", headers[headers.length - 1][1], "**Avalanche Breath Damage: applied by Fortitude failure, full damage**");
+  assert("and no second card", ctx.__state.messages, []);
 
   ctx.api.getSelectedOrDroppedToken = () => [];
   notices = [];
   ctx.applyDamageBySaves(roll);
   assert("nothing selected: a notice", notices, ["Select the creatures that saved, then click again."]);
   ctx.applyDamage = savedApply;
+
+  // The real applyDamage puts the header on its own card
+  const target = { _id: "tok-k", recordType: "npcs", name: "Goblin", identified: true, record: { name: "Goblin" }, effects: [], data: { curhp: 30, hitpoints: 30 } };
+  ctx.__state.messages = [];
+  ctx.applyDamage(target, { total: 6, types: [{ type: "fire", value: 6 }], metadata: { damageType: "fire" } }, false, null, false, { header: "**Fireball: applied by Reflex failure, full damage**" });
+  assert("one card", ctx.__state.messages.length, 1);
+  assertIncludes("headed by the save's bold line, then the damage", ctx.__state.messages[0], "**Fireball: applied by Reflex failure, full damage**\n");
+  ctx.__state.messages = [];
+  ctx.applyDamage(target, { total: 6, types: [{ type: "fire", value: 6 }], metadata: { damageType: "fire" } }, false);
+  assertNotIncludes("without one: as before", ctx.__state.messages[0], "applied by saves");
+
+  // A critically failed save at 0 HP: dying 2, said as a critical failure
+  const zero = ctx.getZeroHitPointsChanges({ _id: "pc", name: "TestWiz2", recordType: "characters", effects: [], data: { dying: 0, wounded: 0 } }, { critical: true, criticalLabel: "critical failure on a save", valuesToSet: {}, oldValues: {} });
+  assertIncludes("the dying line names the save", zero.lines[0], "(critical failure on a save increases dying by 2)");
+  const hit = ctx.getZeroHitPointsChanges({ _id: "pc", name: "TestWiz2", recordType: "characters", effects: [], data: { dying: 0, wounded: 0 } }, { critical: true, valuesToSet: {}, oldValues: {} });
+  assertIncludes("a critical hit: as before", hit.lines[0], "(critical hit increases dying by 2)");
 }
 
 process.exitCode = summary() > 0 ? 1 : 0;

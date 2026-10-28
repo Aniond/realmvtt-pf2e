@@ -41,7 +41,9 @@
     );
   }
 
-  function onChangeValue() {
+  // value: the setting's new value, which the record doesn't hold yet when
+  // onchange runs, so the entry is updated from it in one write
+  function onChangeValue(value) {
     const spellcastingEntryDataPath = getNearestParentDataPath(dataPath);
     const spellcastingEntry = api.getValue(spellcastingEntryDataPath);
 
@@ -49,7 +51,9 @@
       record,
       spellcastingEntry,
       spellcastingEntryDataPath,
-      dataPath.endsWith(".data.type")
+      dataPath.endsWith(".data.type"),
+      false,
+      { path: dataPath, value }
     );
   }
 </script>
@@ -113,7 +117,7 @@
               placeholder="Select Spells to Show..."
               width="100%"
               multiselect="12"
-              onchange="onChangeValue();"
+              onchange="onChangeValue(value);"
               label="Spells to Show"
               options='[{"label": "Cantrips", "value": "cantrips"}, {"label": "1st Rank", "value": "spells1"}, {"label": "2nd Rank", "value": "spells2"}, {"label": "3rd Rank", "value": "spells3"}, {"label": "4th Rank", "value": "spells4"}, {"label": "5th Rank", "value": "spells5"}, {"label": "6th Rank", "value": "spells6"}, {"label": "7th Rank", "value": "spells7"}, {"label": "8th Rank", "value": "spells8"}, {"label": "9th Rank", "value": "spells9"}, {"label": "10th Rank", "value": "spells10"}]'
             ></dropdown>
@@ -124,7 +128,7 @@
               placeholder="Select Type..."
               defaultvalue="prepared"
               width="100%"
-              onchange="onChangeValue();"
+              onchange="onChangeValue(value);"
               label="Spellcasting Type"
               options='[{"label": "Prepared", "value": "prepared"},
               {"label": "Spontaneous", "value": "spontaneous"},
@@ -149,7 +153,7 @@
               field="tradition"
               placeholder="Select Magic Tradition..."
               width="100%"
-              onchange="onChangeValue();"
+              onchange="onChangeValue(value);"
               label="Magic Tradition"
               options='[{"label": "Arcane", "value": "Arcane"},
             {"label": "Divine", "value": "Divine"},
@@ -159,7 +163,7 @@
             <dropdown
               size="xs"
               field="attribute"
-              onchange="onChangeValue();"
+              onchange="onChangeValue(value);"
               placeholder="Select Attribute..."
               width="100%"
               label="Key Attribute"
@@ -282,7 +286,7 @@
         <numberfield
           field="numCantrips"
           updateonblur="true"
-          onchange="onChangeValue();"
+          onchange="onChangeValue(value);"
           width="100%"
           placeholder="0"
           minvalue="0"
@@ -391,7 +395,7 @@
         <numberfield
           field="numSpells1"
           updateonblur="true"
-          onchange="onChangeValue();"
+          onchange="onChangeValue(value);"
           width="100%"
           placeholder="0"
           minvalue="0"
@@ -493,7 +497,7 @@
         <numberfield
           field="numSpells2"
           updateonblur="true"
-          onchange="onChangeValue();"
+          onchange="onChangeValue(value);"
           width="100%"
           placeholder="0"
           minvalue="0"
@@ -595,7 +599,7 @@
         <numberfield
           field="numSpells3"
           updateonblur="true"
-          onchange="onChangeValue();"
+          onchange="onChangeValue(value);"
           width="100%"
           placeholder="0"
           minvalue="0"
@@ -697,7 +701,7 @@
         <numberfield
           field="numSpells4"
           updateonblur="true"
-          onchange="onChangeValue();"
+          onchange="onChangeValue(value);"
           width="100%"
           placeholder="0"
           minvalue="0"
@@ -799,7 +803,7 @@
         <numberfield
           field="numSpells5"
           updateonblur="true"
-          onchange="onChangeValue();"
+          onchange="onChangeValue(value);"
           width="100%"
           placeholder="0"
           minvalue="0"
@@ -901,7 +905,7 @@
         <numberfield
           field="numSpells6"
           updateonblur="true"
-          onchange="onChangeValue();"
+          onchange="onChangeValue(value);"
           width="100%"
           placeholder="0"
           minvalue="0"
@@ -1003,7 +1007,7 @@
         <numberfield
           field="numSpells7"
           updateonblur="true"
-          onchange="onChangeValue();"
+          onchange="onChangeValue(value);"
           width="100%"
           placeholder="0"
           minvalue="0"
@@ -1105,7 +1109,7 @@
         <numberfield
           field="numSpells8"
           updateonblur="true"
-          onchange="onChangeValue();"
+          onchange="onChangeValue(value);"
           width="100%"
           placeholder="0"
           minvalue="0"
@@ -1207,7 +1211,7 @@
         <numberfield
           field="numSpells9"
           updateonblur="true"
-          onchange="onChangeValue();"
+          onchange="onChangeValue(value);"
           width="100%"
           placeholder="0"
           minvalue="0"
@@ -1309,7 +1313,7 @@
         <numberfield
           field="numSpells10"
           updateonblur="true"
-          onchange="onChangeValue();"
+          onchange="onChangeValue(value);"
           width="100%"
           placeholder="0"
           minvalue="0"

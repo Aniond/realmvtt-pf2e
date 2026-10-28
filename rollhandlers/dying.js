@@ -169,7 +169,9 @@ function getOrcFerocityUses(creature) {
 // valuesToSet and oldValues. Returns { lines, buttons }: the lines for the
 // damage message, and buttons for Heroic Recovery when dying went up and for
 // Orc Ferocity when it can still be used.
-function getZeroHitPointsChanges(target, { critical = false, nonlethal = false, valuesToSet, oldValues }) {
+// criticalLabel: what made it critical, for the chat line ("critical hit",
+// or "critical failure on a save" for Apply by Saves)
+function getZeroHitPointsChanges(target, { critical = false, criticalLabel = "critical hit", nonlethal = false, valuesToSet, oldValues }) {
   const name = getCreatureName(target);
   const dying = getDyingValue(target);
   const wasUnconscious = !!getTokenCondition(target, "unconscious");
@@ -188,8 +190,8 @@ function getZeroHitPointsChanges(target, { critical = false, nonlethal = false, 
     valuesToSet["data.dying"] = next;
     lines.push(
       dying > 0
-        ? `${name}'s dying value goes up to ${next}${critical ? " (critical hit)" : ""}.`
-        : `${name} gains Dying ${next}${critical ? " (critical hit increases dying by 2)" : ""}.`,
+        ? `${name}'s dying value goes up to ${next}${critical ? ` (${criticalLabel || "critical hit"})` : ""}.`
+        : `${name} gains Dying ${next}${critical ? ` (${criticalLabel || "critical hit"} increases dying by 2)` : ""}.`,
     );
     dead = threshold <= 0 || next >= threshold;
     if (dead) {

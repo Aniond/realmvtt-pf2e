@@ -1,12 +1,21 @@
 // typeChanged: the Spellcasting Type setting is the one that changed;
-// trainingChanged: the entry's training dropdown is
+// trainingChanged: the entry's training dropdown is. changed: { path, value }
+// of the setting that changed, from its onchange, since the record doesn't
+// hold the new value yet: it is applied to the entry first and written in
+// the same setValues, so the change shows at once (not on the next edit).
 function updateSpellcastingEntry(
   record,
   spellcastingEntry,
   spellcastingEntryDataPath,
   typeChanged = false,
-  trainingChanged = false
+  trainingChanged = false,
+  changed = null
 ) {
+  spellcastingEntry = getEntryWithChangedValue(
+    spellcastingEntry,
+    spellcastingEntryDataPath,
+    changed
+  );
   // Reclaculate the DC and Modifier based on the new values
   const tradition = spellcastingEntry.data?.tradition || "Arcane";
   const type = spellcastingEntry.data?.type || "prepared";
@@ -266,7 +275,27 @@ function updateSpellcastingEntry(
     ] = false;
   }
 
+  if (changed?.path && !(changed.path in valuesToSet)) {
+    valuesToSet[changed.path] = changed.value;
+  }
   api.setValues(valuesToSet);
+}
+
+// A copy of an entry with the value its onchange passed set at its path
+// (data.shownSpells, data.numSpells3...), or the entry as it is
+function getEntryWithChangedValue(entry, entryPath, changed) {
+  if (!changed?.path || !entry || !`${changed.path}`.startsWith(`${entryPath}.`)) {
+    return entry;
+  }
+  const copy = JSON.parse(JSON.stringify(entry));
+  const keys = `${changed.path}`.slice(entryPath.length + 1).split(".");
+  let target = copy;
+  for (const key of keys.slice(0, -1)) {
+    if (target[key] === undefined || target[key] === null) target[key] = {};
+    target = target[key];
+  }
+  target[keys[keys.length - 1]] = changed.value;
+  return copy;
 }
 
 function moveUpSpellcastingEntry(dataPath) {

@@ -907,6 +907,30 @@ section("Entry builders and spells.js fixes");
   ctx.updateSpellcastingEntry(pc, { ...JSON.parse(JSON.stringify(prepared)), name: "Arcane Prepared Spells" }, "data.spells.0");
   assert("a default name follows the settings", written["data.spells.0.name"], "Divine Prepared Spells");
   assert("default names", [ctx.isDefaultSpellcastingEntryName("Occult Focus Spells"), ctx.isDefaultSpellcastingEntryName("Wizard Spells")], [true, false]);
+
+  // A setting's onchange runs before the record holds its new value: the
+  // value it passes is used, in the same write (Sean: shown ranks and slot
+  // counts took two edits)
+  let writes = 0;
+  ctx.api.setValues = (values) => {
+    written = values;
+    writes += 1;
+  };
+  ctx.updateSpellcastingEntry(pc, JSON.parse(JSON.stringify(prepared)), "data.spells.0", false, false, {
+    path: "data.spells.0.data.shownSpells",
+    value: ["cantrips", "spells1", "spells3"],
+  });
+  assert("a rank picked to show shows at once", written["data.spells.0.fields.spells3Box.hidden"], false);
+  assert("and the setting is in the same write", written["data.spells.0.data.shownSpells"], ["cantrips", "spells1", "spells3"]);
+  ctx.updateSpellcastingEntry(pc, JSON.parse(JSON.stringify(prepared)), "data.spells.0", false, false, {
+    path: "data.spells.0.data.numSpells1",
+    value: 3,
+  });
+  assert("a new slot count makes its slots at once", written["data.spells.0.data.spells1"].map((s) => s.name), ["Bless", "Rank 1 Spell Slot", "Rank 1 Spell Slot"]);
+  assert("in one write", [writes, written["data.spells.0.data.numSpells1"]], [2, 3]);
+  const unchanged = JSON.parse(JSON.stringify(prepared));
+  ctx.updateSpellcastingEntry(pc, unchanged, "data.spells.0");
+  assert("without a change: as before", [written["data.spells.0.data.spells1"].length, unchanged.data.numSpells1], [2, 2]);
   ctx.api.setValues = () => {};
 }
 
