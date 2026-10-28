@@ -97,8 +97,9 @@ function getApplyBySavesButton(roll) {
 }
 
 // Applies damage to each selected creature by its last save. A creature
-// that takes damage gets one card: its damage card, headed by its save. Those
-// that take none (a critical success, or no save to use) share one card.
+// that takes damage gets one card: its damage card, headed by one bold line
+// ("Fireball: applied by Reflex failure, full damage"). Those that take none
+// (a critical success, or no save to use) share one card, a line each.
 function applyDamageBySaves(roll) {
   const saveType = roll?.metadata?.basicSave?.saveType || "";
   const useId = roll?.metadata?.basicSave?.useId || "";
@@ -108,26 +109,27 @@ function applyDamageBySaves(roll) {
     return;
   }
   const source = roll?.metadata?.attack || roll?.metadata?.rollName || "Damage";
-  const title = `**${source}: applied by saves**`;
   const lines = [];
   creatures.forEach((creature) => {
     const name = getTokenDisplayName(creature);
     const save = getRecentSave(creature, saveType);
     if (!save) {
-      lines.push(`- ${name}: no ${saveType ? `${capitalize(saveType)} ` : ""}save rolled, nothing applied`);
+      lines.push(`**${source}: not applied, no ${saveType ? `${capitalize(saveType)} ` : ""}save rolled** (${name})`);
       return;
     }
     // A save already applied to another use's damage needs a new save; the
     // same use's other damage parts can use it again
     if (save.usedBy && save.usedBy !== useId) {
-      lines.push(`- ${name}: ${capitalize(save.saveType || "save")} save already used for other damage, nothing applied`);
+      lines.push(`**${source}: not applied, ${capitalize(save.saveType || "save")} save already used for other damage** (${name})`);
       return;
     }
     const result = BASIC_SAVE_RESULTS[save.degree];
-    const saveLine = `${capitalize(save.saveType || "save")} ${result.name}, ${result.label}`;
-    const header = { header: `${title}\n${saveLine}` };
+    // One bold line (Sean): "Fireball: applied by Reflex critical success,
+    // no damage"
+    const saveLine = `**${source}: applied by ${capitalize(save.saveType || "save")} ${result.name}, ${result.label}**`;
+    const header = { header: saveLine };
     if (result.multiplier === 0) {
-      lines.push(`- ${name}: ${saveLine}`);
+      lines.push(`${saveLine} (${name})`);
     } else if (result.multiplier === 0.5) {
       applyDamage(creature, roll, true, null, false, header);
     } else if (result.multiplier === 1) {
@@ -149,6 +151,6 @@ function applyDamageBySaves(roll) {
     });
   });
   if (lines.length > 0) {
-    api.sendMessage(`${title}\n${lines.join("\n")}`);
+    api.sendMessage(lines.join("\n"));
   }
 }

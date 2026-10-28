@@ -178,15 +178,15 @@ section("Applying by each creature's save");
   // One card each (Sean: two cards per creature was messy): the damage card
   // is headed by the save; those that took no damage share one card
   assert("each damage card is headed by its save", headers, [
-    ["b", "**Fireball: applied by saves**\nReflex success, half damage", undefined],
-    ["c", "**Fireball: applied by saves**\nReflex failure, full damage", undefined],
-    ["d", "**Fireball: applied by saves**\nReflex critical failure, double damage", "critical failure on a save"],
+    ["b", "**Fireball: applied by Reflex success, half damage**", undefined],
+    ["c", "**Fireball: applied by Reflex failure, full damage**", undefined],
+    ["d", "**Fireball: applied by Reflex critical failure, double damage**", "critical failure on a save"],
   ]);
-  assertIncludes("the rest share one card", summaryText, "**Fireball: applied by saves**\n- Amiri: Reflex critical success, no damage\n- Valeros: no Reflex save rolled");
+  assertIncludes("the rest share one card, one bold line each (Sean)", summaryText, "**Fireball: applied by Reflex critical success, no damage** (Amiri)\n**Fireball: not applied, no Reflex save rolled** (Valeros)");
   assertNotIncludes("those with a damage card aren't listed again", summaryText, "Kyra");
-  assertIncludes("no save: nothing applied", summaryText, "- Valeros: no Reflex save rolled, nothing applied");
-  assertIncludes("a save over 10 minutes old doesn't count", summaryText, "- Merisiel: no Reflex save rolled");
-  assertIncludes("nor another save than the spell's", summaryText, "- Harsk: no Reflex save rolled");
+  assertIncludes("no save: nothing applied", summaryText, "**Fireball: not applied, no Reflex save rolled** (Valeros)");
+  assertIncludes("a save over 10 minutes old doesn't count", summaryText, "**Fireball: not applied, no Reflex save rolled** (Merisiel)");
+  assertIncludes("nor another save than the spell's", summaryText, "**Fireball: not applied, no Reflex save rolled** (Harsk)");
 
   // The same use's other damage part: the save covers it; a later use: not
   applied.length = 0;
@@ -198,7 +198,7 @@ section("Applying by each creature's save");
   ctx.__state.messages = [];
   ctx.applyDamageBySaves({ ...roll, metadata: { ...roll.metadata, basicSave: { saveType: "reflex", useId: "use-2" } } });
   assert("a later use: not applied", applied, []);
-  assertIncludes("it says the save was used", ctx.__state.messages.join("\n"), "- Kyra: Reflex save already used for other damage, nothing applied");
+  assertIncludes("it says the save was used", ctx.__state.messages.join("\n"), "**Fireball: not applied, Reflex save already used for other damage** (Kyra)");
   // Without a use id (a card from before this change): used up
   sets = [];
   ctx.api.getSelectedOrDroppedToken = () => [token("c", "Seelah", { lastSave: recent(0) })];
@@ -211,7 +211,7 @@ section("Applying by each creature's save");
   ctx.__state.messages = [];
   ctx.applyDamageBySaves({ total: 10, metadata: { rollName: "Avalanche Breath Damage", basicSave: { saveType: "fortitude" } } });
   assert("a selected token wrapped as { token }", applied, [["g", false, false]]);
-  assert("named from the roll, on its damage card", headers[headers.length - 1][1], "**Avalanche Breath Damage: applied by saves**\nFortitude failure, full damage");
+  assert("named from the roll, on its damage card", headers[headers.length - 1][1], "**Avalanche Breath Damage: applied by Fortitude failure, full damage**");
   assert("and no second card", ctx.__state.messages, []);
 
   ctx.api.getSelectedOrDroppedToken = () => [];
@@ -223,9 +223,9 @@ section("Applying by each creature's save");
   // The real applyDamage puts the header on its own card
   const target = { _id: "tok-k", recordType: "npcs", name: "Goblin", identified: true, record: { name: "Goblin" }, effects: [], data: { curhp: 30, hitpoints: 30 } };
   ctx.__state.messages = [];
-  ctx.applyDamage(target, { total: 6, types: [{ type: "fire", value: 6 }], metadata: { damageType: "fire" } }, false, null, false, { header: "**Fireball: applied by saves**\nReflex failure, full damage" });
+  ctx.applyDamage(target, { total: 6, types: [{ type: "fire", value: 6 }], metadata: { damageType: "fire" } }, false, null, false, { header: "**Fireball: applied by Reflex failure, full damage**" });
   assert("one card", ctx.__state.messages.length, 1);
-  assertIncludes("headed by the save, then the damage", ctx.__state.messages[0], "**Fireball: applied by saves**\nReflex failure, full damage\n");
+  assertIncludes("headed by the save's bold line, then the damage", ctx.__state.messages[0], "**Fireball: applied by Reflex failure, full damage**\n");
   ctx.__state.messages = [];
   ctx.applyDamage(target, { total: 6, types: [{ type: "fire", value: 6 }], metadata: { damageType: "fire" } }, false);
   assertNotIncludes("without one: as before", ctx.__state.messages[0], "applied by saves");
