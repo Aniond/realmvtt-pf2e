@@ -320,9 +320,19 @@ applyDamage(null, ${JSON.stringify(data.roll)}, false, undefined, true);
 `
   : "";
 
+// A basic save's damage (a spell's, or an ability's whose save is basic):
+// applied to each selected creature by its own save (basic-saves.js)
+const applyBySavesMacro =
+  !isPersistant && data?.roll?.metadata?.basicSave
+    ? `
+${getApplyBySavesButton(data.roll)}
+`
+    : "";
+
 const message = `
 ${damageHeader}
 ${criticalDamageInfo}
+${applyBySavesMacro}
 ${damageMacro}
 ${halfDamageMacro}
 ${doubleDamageMacro}

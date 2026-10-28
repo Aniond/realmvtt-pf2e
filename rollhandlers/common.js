@@ -8884,6 +8884,17 @@ function rollSave(
     metadata.isSpell = true;
   }
 
+  // The saver's token, where save.js keeps the result for Apply by Saves,
+  // and whether it is a basic save (basic-saves.js)
+  const saver = getSaverTokenRef(record);
+  if (saver) {
+    metadata.saverTokenId = saver.id;
+    metadata.saverRecordType = saver.recordType;
+  }
+  if (options.basic) {
+    metadata.basicSave = true;
+  }
+
   // The save-specific and attribute lookups can each bring a status penalty
   // (fatigued, frightened): only the worst one applies
   modifiers.splice(0, modifiers.length, ...keepStrongestPerType(modifiers));
@@ -9082,6 +9093,7 @@ function getSaveMacro(
   isSpell = false,
   showDc = false,
   traits = [],
+  basic = false,
 ) {
   if (!saveType) {
     console.error("getSaveMacro: Invalid saveType");
@@ -9122,8 +9134,13 @@ selectedTokens.forEach(token => {
   const sourceTraits = (Array.isArray(traits) ? traits : [])
     .map((t) => String(typeof t === "string" ? t : t?.name || "").trim())
     .filter((t) => t && !getIsTraitRarity(t));
-  if (sourceTraits.length > 0) {
-    macroContent += `, ${JSON.stringify({ traits: sourceTraits })}`;
+  // A basic save: the save card says what damage it takes (basic-saves.js)
+  const saveOptions = {
+    ...(sourceTraits.length > 0 ? { traits: sourceTraits } : {}),
+    ...(basic ? { basic: true } : {}),
+  };
+  if (Object.keys(saveOptions).length > 0) {
+    macroContent += `, ${JSON.stringify(saveOptions)}`;
   }
 
   // Close the function call and forEach
@@ -15969,6 +15986,14 @@ function executeDamageMacro(
     damageType: damageType,
     traits,
   };
+  // Damage against a basic save (updateDamageMacros: the description's save
+  // button is basic): the card offers Apply by Saves (basic-saves.js)
+  if (category === "standard" && context.basicSave?.saveType) {
+    metadata.basicSave = {
+      saveType: context.basicSave.saveType,
+      ...(context.basicSave.useId ? { useId: context.basicSave.useId } : {}),
+    };
+  }
   // Where it comes from (updateDamageMacros), for resistances that depend
   // on it and for healing received from a magical item
   if (context.damageSource) {
@@ -16117,6 +16142,10 @@ function updateDamageMacros(description, context = {}) {
     description.includes("replaceWithDamageMacro") &&
     hasMaximizeHealing(creature, item);
 
+  // The basic save its damage is against, for the damage card's Apply by
+  // Saves (basic-saves.js)
+  const basicSave = getDescriptionBasicSave(description, item);
+
   const minimalContext = JSON.stringify({
     _id: item._id,
     recordType: item.recordType,
@@ -16126,7 +16155,18 @@ function updateDamageMacros(description, context = {}) {
     // Where the damage or healing comes from (item, its traits, the creature)
     damageSource: getDamageSource(creature, item, context.tradition || ""),
     ...(maximize ? { maximizeHealing: true } : {}),
+    ...(basicSave ? { basicSave } : {}),
   });
+
+  // An NPC's damage buttons come as executeDamageMacro('formula', 'category',
+  // 'name') with no context: against a basic save, they get its save type
+  if (basicSave) {
+    description = description.replace(
+      /executeDamageMacro\(\s*(['"])([^'"]*)\1\s*,\s*(['"])([^'"]*)\3\s*,\s*(['"])([^'"]*)\5\s*\)/g,
+      (match, q1, formula, q2, category, q3, name) =>
+        `executeDamageMacro(${q1}${formula}${q1}, ${q2}${category}${q2}, ${q3}${name}${q3}, ${JSON.stringify({ basicSave })})`,
+    );
+  }
 
   // Find all instances of replaceWithDamageMacro(...) and replace them
   // Pattern: replaceWithDamageMacro('formula', 'category', 'name') or replaceWithDamageMacro("formula", "category", "name")
