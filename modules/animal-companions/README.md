@@ -24,6 +24,32 @@ Animal companions for the PF2e ruleset as **characters**, the way Foundry's [PF2
 - `icons.json` maps each record (`<recordType>|<name>`) to an icon from Realm's catalog.
 - `node modules/animal-companions/build.js` writes `records.json` (ancestries, class, feats). `tests/test-animal-companion-module.js` builds companions from it and checks them against stat blocks worked by hand from Player Core pg. 206-211. The test fails if `records.json` is out of date.
 
+## Adding creature art (once you hold a license for it)
+
+The module ships with catalog icons only. Realm's Monster Core NPCs have real art for most of these animals (the Grizzly Bear's portrait and token, for example), but that art is Paizo's and isn't covered by the ORC License. To use it you need your own license for it; it can't go in a shared module otherwise.
+
+With a license:
+
+1. **Find the art.** For each companion type, pick the matching Monster Core NPC (Bear → Grizzly Bear, Wolf → Wolf, Horse → Riding Horse...). Its record has the two paths you need: `portrait` (`/images/…_bear-grizzly.webp`) and `token.imageUrl` (its round token, also `/images/…`).
+2. **Add `art.json`** next to `build.js`, mapping a companion type to its two pictures:
+
+   ```json
+   {
+     "Bear": {
+       "portrait": "/images/6f864ba6-2eef-4ee1-9e6a-357bee44cb40_bear-grizzly.webp",
+       "token": "/images/f69c610c-cf6c-4614-b1e5-3dab5804dbf4_bear-grizzly.webp"
+     }
+   }
+   ```
+
+   Types you leave out keep their catalog icon.
+3. **Rebuild:** `node modules/animal-companions/build.js`. Each listed ancestry's `portrait` becomes the art, and its `data.tokenImage` the token.
+4. **Load or publish** the records as usual.
+
+When a player drops the ancestry on a new companion, the character takes the portrait and the token image (`getCompanionImageValues` in `rollhandlers/animal-companions.js`). A picture the player has already set is never replaced.
+
+To try a single type in a test campaign without rebuilding, set that ancestry's `portrait` and `data.tokenImage` to the NPC's two paths. We tested it that way with the Bear in testst, using artwork David owns.
+
 ## License
 
 The game rules and companion statistics are from **Pathfinder Player Core** (Paizo Inc.), used under the ORC License, located at the Library of Congress at TX 9-307-067 and available online at various locations including paizo.com/orclicense, azoralaw.com/orclicense, and others. All warranties are disclaimed as set forth therein.
