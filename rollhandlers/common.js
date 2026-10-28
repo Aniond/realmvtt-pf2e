@@ -15989,10 +15989,7 @@ function executeDamageMacro(
   // Damage against a basic save (updateDamageMacros: the description's save
   // button is basic): the card offers Apply by Saves (basic-saves.js)
   if (category === "standard" && context.basicSave?.saveType) {
-    metadata.basicSave = {
-      saveType: context.basicSave.saveType,
-      ...(context.basicSave.useId ? { useId: context.basicSave.useId } : {}),
-    };
+    metadata.basicSave = { saveType: context.basicSave.saveType };
   }
   // Where it comes from (updateDamageMacros), for resistances that depend
   // on it and for healing received from a magical item

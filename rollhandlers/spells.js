@@ -924,7 +924,7 @@ applyPersistentDamage("${spellDamage.persistentDamage}", "${tokenId}", "${tokenN
   const save = spell?.data?.defense?.save;
   const basicSave =
     save?.statistic && (save.basic === true || save.basic === "true")
-      ? { saveType: String(save.statistic).toLowerCase(), useId: getBasicSaveUseId() }
+      ? { saveType: String(save.statistic).toLowerCase() }
       : null;
 
   return `\`\`\`${macroName}
