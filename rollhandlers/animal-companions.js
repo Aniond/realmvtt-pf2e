@@ -23,6 +23,15 @@ function isAnimalCompanionCharacter(creature) {
   );
 }
 
+// Whether an ancestry is an animal companion type: flagged animalCompanion
+// (the module's), or an animal rather than a humanoid. Such an ancestry has
+// no heritages, so dropping it doesn't ask for one.
+function isAnimalCompanionAncestry(ancestry) {
+  if (ancestry?.data?.animalCompanion === true) return true;
+  const traits = (ancestry?.data?.traits || []).map((trait) => String(trait?.name || trait).toLowerCase());
+  return traits.includes("animal") && !traits.includes("humanoid");
+}
+
 // The modifier kinds an animal companion's item bonuses still count for
 const ANIMAL_COMPANION_ITEM_BONUS_TYPES = ["armorClassBonus", "speedBonus", "speed"];
 

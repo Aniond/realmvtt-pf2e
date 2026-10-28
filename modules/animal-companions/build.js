@@ -358,6 +358,9 @@ function buildAncestry(type) {
     unidentifiedName: "Unidentified Ancestries",
     portrait: icon(`ancestry|${name}`, "/icons/fantasy/default-icons/npc.svg"),
     data: {
+      // A companion type: dropping it asks for no heritage
+      // (isAnimalCompanionAncestry)
+      animalCompanion: true,
       hp: type.hp,
       size: type.sizes[0],
       speed: `${type.speed?.land || 0} feet`,

@@ -8,6 +8,7 @@
    "unidentifiedName": "Unidentified Ancestries",
    "portrait": "/icons/fantasy/default-icons/npc.svg",
    "data": {
+    "animalCompanion": true,
     "hp": 8,
     "size": "small",
     "speed": "25 feet",
@@ -301,6 +302,7 @@
    "unidentifiedName": "Unidentified Ancestries",
    "portrait": "/icons/fantasy/skills/druid/sentient-tree-spirit.webp",
    "data": {
+    "animalCompanion": true,
     "hp": 8,
     "size": "small",
     "speed": "25 feet",
@@ -579,6 +581,7 @@
    "unidentifiedName": "Unidentified Ancestries",
    "portrait": "/icons/fantasy/default-icons/npc.svg",
    "data": {
+    "animalCompanion": true,
     "hp": 8,
     "size": "small",
     "speed": "25 feet",
@@ -946,6 +949,7 @@
    "unidentifiedName": "Unidentified Ancestries",
    "portrait": "/icons/fantasy/creatures/mammals/bat-movement-flying-purple.webp",
    "data": {
+    "animalCompanion": true,
     "hp": 6,
     "size": "small",
     "speed": "15 feet",
@@ -1312,6 +1316,7 @@
    "unidentifiedName": "Unidentified Ancestries",
    "portrait": "/icons/fantasy/spells/animal-form-bear.webp",
    "data": {
+    "animalCompanion": true,
     "hp": 8,
     "size": "small",
     "speed": "35 feet",
@@ -1649,6 +1654,7 @@
    "unidentifiedName": "Unidentified Ancestries",
    "portrait": "/icons/fantasy/creatures/birds/raptor-hawk-flying.webp",
    "data": {
+    "animalCompanion": true,
     "hp": 4,
     "size": "small",
     "speed": "10 feet",
@@ -2000,6 +2006,7 @@
    "unidentifiedName": "Unidentified Ancestries",
    "portrait": "/icons/fantasy/creatures/mammals/livestock-pig-green.webp",
    "data": {
+    "animalCompanion": true,
     "hp": 8,
     "size": "small",
     "speed": "35 feet",
@@ -2293,6 +2300,7 @@
    "unidentifiedName": "Unidentified Ancestries",
    "portrait": "/icons/fantasy/creatures/mammals/cat-hunched-glowing-red.webp",
    "data": {
+    "animalCompanion": true,
     "hp": 4,
     "size": "small",
     "speed": "35 feet",
@@ -2644,6 +2652,7 @@
    "unidentifiedName": "Unidentified Ancestries",
    "portrait": "/icons/fantasy/default-icons/npc.svg",
    "data": {
+    "animalCompanion": true,
     "hp": 6,
     "size": "small",
     "speed": "20 feet",
@@ -2981,6 +2990,7 @@
    "unidentifiedName": "Unidentified Ancestries",
    "portrait": "/icons/fantasy/spells/dinosaur-form.webp",
    "data": {
+    "animalCompanion": true,
     "hp": 6,
     "size": "small",
     "speed": "50 feet",
@@ -3332,6 +3342,7 @@
    "unidentifiedName": "Unidentified Ancestries",
    "portrait": "/icons/fantasy/environment/creatures/horse-brown.webp",
    "data": {
+    "animalCompanion": true,
     "hp": 8,
     "size": "medium",
     "speed": "40 feet",
@@ -3632,6 +3643,7 @@
    "unidentifiedName": "Unidentified Ancestries",
    "portrait": "/icons/fantasy/creatures/reptiles/dragon-horned-blue.webp",
    "data": {
+    "animalCompanion": true,
     "hp": 8,
     "size": "large",
     "speed": "45 feet",
@@ -3962,6 +3974,7 @@
    "unidentifiedName": "Unidentified Ancestries",
    "portrait": "/icons/fantasy/environment/creatures/bug-scorpion-silver.webp",
    "data": {
+    "animalCompanion": true,
     "hp": 6,
     "size": "small",
     "speed": "30 feet",
@@ -4284,6 +4297,7 @@
    "unidentifiedName": "Unidentified Ancestries",
    "portrait": "/icons/fantasy/sundries/sea-loot/shark-icon.webp",
    "data": {
+    "animalCompanion": true,
     "hp": 6,
     "size": "small",
     "speed": "0 feet",
@@ -4607,6 +4621,7 @@
    "unidentifiedName": "Unidentified Ancestries",
    "portrait": "/icons/fantasy/creatures/reptiles/snake-fangs-bite-green.webp",
    "data": {
+    "animalCompanion": true,
     "hp": 6,
     "size": "small",
     "speed": "20 feet",
@@ -4937,6 +4952,7 @@
    "unidentifiedName": "Unidentified Ancestries",
    "portrait": "/icons/fantasy/creatures/mammals/wolf-howl-moon-gray.webp",
    "data": {
+    "animalCompanion": true,
     "hp": 6,
     "size": "small",
     "speed": "40 feet",

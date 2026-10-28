@@ -98,6 +98,10 @@ section("Which characters are animal companions");
   assert("a class record flagged animalCompanion", ctx.isAnimalCompanionCharacter(character({ classObj: { name: "Bond Beast", data: { animalCompanion: true } } })), true);
   assert("a fighter isn't", ctx.isAnimalCompanionCharacter(fighter()), false);
   assert("a token's record counts", ctx.isAnimalCompanionCharacter({ record: character() }), true);
+  // Dropping one of these ancestries asks for no heritage
+  assert("a companion ancestry, flagged", ctx.isAnimalCompanionAncestry({ data: { animalCompanion: true, traits: [] } }), true);
+  assert("an animal ancestry (the records loaded before the flag)", ctx.isAnimalCompanionAncestry({ data: { traits: ["Animal"] } }), true);
+  assert("a playable ancestry isn't", ctx.isAnimalCompanionAncestry({ data: { traits: ["Uncommon", "Humanoid", "Kobold"] } }), false);
 }
 
 section("No Automatic Bonus Progression, no attribute boosts at Level Up");

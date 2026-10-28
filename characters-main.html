@@ -63,6 +63,11 @@
         api.setHidden("ancestries", false, () => {
           api.setHidden("ancestryDetailsLabel", true);
         });
+        // An animal companion's type has no heritages (animal-companions.js)
+        if (isAnimalCompanionAncestry(ancestryObj)) {
+          onAddEditFeature(updatedRecord);
+          return;
+        }
         promptForHeritage(updatedRecord, ancestryName);
       },
     );
