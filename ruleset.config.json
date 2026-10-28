@@ -5382,6 +5382,9 @@
         },
         "ActionLimits": {
           "file": "rollhandlers/action-limits.js"
+        },
+        "ItemSpells": {
+          "file": "rollhandlers/item-spells.js"
         }
       },
       "defaultDice": "default",

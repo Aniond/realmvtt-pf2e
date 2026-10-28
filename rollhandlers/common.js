@@ -4478,6 +4478,12 @@ function useInventoryItem(itemDataPath) {
   const itemCount = api.getValue(`${itemDataPath}.data.count`);
   const item = api.getValue(itemDataPath);
 
+  // A scroll or wand casts its spell with the character's own spellcasting,
+  // or offers Trick Magic Item, and spends itself (item-spells.js)
+  if (typeof record !== "undefined" && useItemSpell(record, item, itemDataPath)) {
+    return;
+  }
+
   const indexValue = parseInt(itemDataPath.split(".").pop());
 
   const traits = item.data?.traits || [];
