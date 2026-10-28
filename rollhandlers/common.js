@@ -1973,6 +1973,8 @@ const WEAPON_DIE_STEPS = [4, 6, 8, 10, 12];
  *                   "upgrade"/"downgrade" step it (d4 > d6 > d8 > d10 > d12)
  *   weaponTrait   - value is a trait to add ("deadly-d10"), or "-trait" /
  *                   "remove trait" to take one away
+ *   weaponDiceCount - value is the number of base damage dice (the highest
+ *                   of the weapon's and the modifiers' wins)
  * Both are predicated against the weapon ({weapon} context), e.g. Vicious
  * Incisors: weaponDieSize "d6" with predicate ["item:slug:jaws"].
  */
@@ -1983,6 +1985,7 @@ function getAlteredWeapon(record, weapon) {
     record,
     [
       "weaponDieSize",
+      "weaponDiceCount",
       "weaponTrait",
       "weaponRange",
       "weaponRune",
@@ -2028,6 +2031,18 @@ function getAlteredWeapon(record, weapon) {
       }
     });
     altered.data.damage.die = `d${die}`;
+  }
+
+  // weaponDiceCount: the number of base damage dice, the highest of the
+  // weapon's and any modifier's (Foundry's dice-number upgrade; a mature
+  // animal companion's 2, a specialized one's 3). Striking runes add to it.
+  const diceMods = mods.filter((mod) => mod.modifierType === "weaponDiceCount");
+  if (diceMods.length > 0 && altered.data.damage) {
+    const dice = Math.max(
+      parseInt(altered.data.damage.dice, 10) || 1,
+      ...diceMods.map((mod) => parseInt(mod.value, 10) || 0),
+    );
+    altered.data.damage.dice = dice;
   }
 
   mods
@@ -2133,15 +2148,31 @@ const CREATURE_SIZES = ["tiny", "small", "medium", "large", "huge", "gargantuan"
 const CREATURE_SIZE_ALIASES = { sm: "small", med: "medium", lg: "large", grg: "gargantuan" };
 
 // The size a creatureSize modifier gives (value or field "small"), the last
-// one that applies; "" without one
+// one that applies; "" without one. A value of "+1" is one size larger, up
+// to Large (Foundry's CreatureSize value 1 with maximumSize lg: a mature or
+// savage animal companion "grows by one size if it's Medium or smaller").
+// Those add up, counting from the size set or the ancestry's.
 function getFeatureCreatureSize(record) {
   let size = "";
+  let steps = 0;
   getEffectsAndModifiersForToken(record, ["creatureSize"]).forEach((mod) => {
     if (mod.active === false) return;
     const raw = String(mod.value || mod.field || "").trim().toLowerCase();
+    const step = raw.match(/^\+(\d+)$/);
+    if (step) {
+      steps += parseInt(step[1], 10);
+      return;
+    }
     const value = CREATURE_SIZE_ALIASES[raw] || raw;
     if (CREATURE_SIZES.includes(value)) size = value;
   });
+  if (steps > 0) {
+    const base = size || record.data?.ancestries?.[0]?.data?.size || "";
+    const index = CREATURE_SIZES.indexOf(CREATURE_SIZE_ALIASES[base] || base);
+    if (index < 0) return size;
+    const large = CREATURE_SIZES.indexOf("large");
+    return CREATURE_SIZES[Math.max(index, Math.min(index + steps, large))];
+  }
   return size;
 }
 
@@ -3576,6 +3607,11 @@ function getEffectsAndModifiersForToken(
         ),
     );
   }
+  // An animal companion benefits only from item bonuses to AC and Speed
+  // (Player Core pg. 206; animal-companions.js)
+  if (isAnimalCompanionCharacter(target)) {
+    results = withoutAnimalCompanionItemBonuses(results);
+  }
   results.push(...getAbpModifiers(target));
 
   // Process AdjustModifier rules - these modify existing modifiers by slug
@@ -4927,9 +4963,11 @@ function onItemEquippedFor(itemDataPath, newValue) {
 // Gets the AC for an armor item worn by record
 function getACForArmor(item, record) {
   let ac = item?.data?.acBonus || 0;
-  // Check for potency runes (Automatic Bonus Progression replaces them).
+  const companion = isAnimalCompanionCharacter(record);
+  // Check for potency runes (Automatic Bonus Progression replaces them,
+  // except for an animal companion, which has no ABP).
   // A character's rune armor must be invested; NPCs don't invest.
-  if (!getVariantRules().automaticBonusProgression) {
+  if (!getVariantRules().automaticBonusProgression || companion) {
     const potencyRune = parseInt(item?.data?.runes?.potency || 0, 10);
     if (
       record?.recordType !== "characters" ||
@@ -4938,6 +4976,8 @@ function getACForArmor(item, record) {
       ac += potencyRune;
     }
   }
+  // An animal companion's item bonus to AC is at most +3 (Player Core pg. 206)
+  if (companion) ac = Math.min(ac, ANIMAL_COMPANION_MAX_ARMOR_AC);
   return ac;
 }
 
@@ -8311,6 +8351,13 @@ function onAddEditFeature(
   // Update rollOptions first (these affect predicate evaluation for other modifiers)
   updateRollOptions(record, valuesToSet);
 
+  // The Notes tab's Animal Companion box (master, level) shows for a
+  // character whose class is Animal Companion
+  const hideCompanionBox = !isAnimalCompanionCharacter(record);
+  if (record.fields?.companionProperties?.hidden !== hideCompanionBox) {
+    valuesToSet["fields.companionProperties.hidden"] = hideCompanionBox;
+  }
+
   // Initialize total modifier values for each ability
   const attributes = ["str", "dex", "con", "int", "wis", "cha"];
 
@@ -8336,19 +8383,23 @@ function onAddEditFeature(
   });
 
   // Calculate the total modifier for each ability from other sources
+  // (only active ones, and as numbers: a value kept as text would otherwise
+  // be joined on, "0" + "3" = "03")
   abilityScoreBonus.forEach((modifier) => {
+    if (modifier.active === false) return;
+    const amount = parseFloat(modifier.value) || 0;
     const ability = modifier.field || "";
     if (ability && attributes.includes(ability)) {
       const currentTotalMod =
         valuesToSet[`data.total${capitalize(ability)}Mod`] || 0;
       valuesToSet[`data.total${capitalize(ability)}Mod`] =
-        currentTotalMod + modifier.value;
+        currentTotalMod + amount;
     } else if (ability === "all") {
       attributes.forEach((attribute) => {
         const currentTotalMod =
           valuesToSet[`data.total${capitalize(attribute)}Mod`] || 0;
         valuesToSet[`data.total${capitalize(attribute)}Mod`] =
-          currentTotalMod + modifier.value;
+          currentTotalMod + amount;
       });
     }
   });
@@ -16850,7 +16901,11 @@ function getLevelUpGains(record, newLevel, variants = getVariantRules()) {
     .map((feature) => feature.name)
     .filter((name) => name);
 
-  const boosts = getAttributeBoostGain(newLevel, variants);
+  // An animal companion gains no attribute boosts; its attributes come from
+  // its type and its stage feats (animal-companions.js)
+  const boosts = isAnimalCompanionCharacter(record)
+    ? { count: 0, setLevel: null }
+    : getAttributeBoostGain(newLevel, variants);
 
   return {
     level: newLevel,
@@ -17402,7 +17457,9 @@ function isAbpCharacter(record, variants = getVariantRules()) {
     variants.automaticBonusProgression &&
     !!record &&
     record.recordType !== "npcs" &&
-    record.recordType !== "tokens"
+    record.recordType !== "tokens" &&
+    // An animal companion has no ABP (animal-companions.js)
+    !isAnimalCompanionCharacter(record)
   );
 }
 
