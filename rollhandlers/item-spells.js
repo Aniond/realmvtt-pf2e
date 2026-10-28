@@ -107,31 +107,36 @@ function getCastingEntries(record) {
     });
 }
 
-// The character's best entry (highest DC) of one of the traditions, or null
-function getBestCastingEntry(record, traditions) {
-  const matching = getCastingEntries(record).filter(({ entry }) =>
-    traditions.includes(String(entry?.data?.tradition || "").trim().toLowerCase()),
+// Whether an entry already lists the spell (a sorcerer's bloodline spells,
+// whatever the entry's tradition)
+function entryListsSpell(entry, spell) {
+  const name = String(spell?.name || "").trim().toLowerCase();
+  return SPELL_RANK_LISTS.some((list) =>
+    (entry?.data?.[list] || []).some(
+      (row) => (spell?._id && row?._id === spell._id) || (name && String(row?.name || "").trim().toLowerCase() === name),
+    ),
+  );
+}
+
+// The character's best entry (highest DC) of one of the traditions, or one
+// that already lists the spell (Foundry's canCast: matchesTradition ||
+// isInSpellList), or null
+function getBestCastingEntry(record, traditions, spell = null) {
+  const matching = getCastingEntries(record).filter(
+    ({ entry }) =>
+      traditions.includes(String(entry?.data?.tradition || "").trim().toLowerCase()) ||
+      (spell && entryListsSpell(entry, spell)),
   );
   matching.sort((a, b) => (parseInt(b.entry.data?.dc, 10) || 0) - (parseInt(a.entry.data?.dc, 10) || 0));
   return matching[0]?.entry || null;
 }
 
-// The DC and attack Trick Magic Item casts with (Player Core pg. 264): a
-// character with spell DC proficiency uses their best entry; one without
-// uses their level as the proficiency bonus (trained's if master in the
-// skill, expert's if legendary) and the highest of Int, Wis and Cha
+// The DC and attack Trick Magic Item casts with (Player Core pg. 264), for
+// everyone, casters of another tradition too (Foundry's
+// TrickMagicItemEntry): the level as the proficiency bonus (trained's if
+// master in the skill, expert's if legendary) and the highest of Int, Wis
+// and Cha
 function getTrickMagicItemCasting(record, skill, tradition) {
-  const best = getCastingEntries(record).sort(
-    (a, b) => (parseInt(b.entry.data?.dc, 10) || 0) - (parseInt(a.entry.data?.dc, 10) || 0),
-  )[0]?.entry;
-  if (best) {
-    return {
-      dc: parseInt(best.data?.dc, 10) || 0,
-      mod: parseInt(best.data?.mod, 10) || 0,
-      attribute: best.data?.attribute || "int",
-      tradition: capitalize(tradition),
-    };
-  }
   const level = parseInt(record?.data?.level, 10) || 1;
   const rank = parseInt(record?.data?.[skill] || "0", 10) || 0;
   const proficiency = level + (rank >= 4 ? 4 : rank >= 3 ? 2 : 0);
@@ -144,14 +149,16 @@ function getTrickMagicItemCasting(record, skill, tradition) {
   return { dc: 10 + mod, mod, attribute: attributes[0].attribute, tradition: capitalize(tradition) };
 }
 
-// The character's entries with the spell in the Scrolls and Wands entry at
-// the rank, and that entry's DC, attack, attribute and tradition set from
-// `casting`: { entries, path }. The same spell at the same rank reuses its
-// row, so an older card's buttons still find it.
+// The Scrolls and Wands entry with the spell at the rank, and its DC,
+// attack, attribute and tradition set from `casting`: { entry, index, isNew,
+// path, entries }. Only the entry is written (data.spells.<index>), never
+// the whole list. The same spell at the same rank reuses its row, so an
+// older card's buttons still find it.
 function getItemSpellEntries(record, spell, rank, casting) {
   const entries = JSON.parse(JSON.stringify(record?.data?.spells || []));
   let index = entries.findIndex(isItemSpellsEntry);
-  if (index < 0) {
+  const isNew = index < 0;
+  if (isNew) {
     entries.push(
       buildSpellcastingEntry({
         name: ITEM_SPELLS_ENTRY_NAME,
@@ -193,7 +200,7 @@ function getItemSpellEntries(record, spell, rank, casting) {
     rows[rowIndex] = row;
   }
   entry.data[list] = rows;
-  return { entries, path: `data.spells.${index}.data.${list}.${rowIndex}` };
+  return { entries, entry, index, isNew, path: `data.spells.${index}.data.${list}.${rowIndex}` };
 }
 
 // The spell's record: by id, then by name (a description links the module's
@@ -207,23 +214,51 @@ function findItemSpell(ref, callback) {
   api.getRecord("spells", ref._id, (spell) => (spell ? callback(spell) : byName()));
 }
 
-// Casts the spell into the Scrolls and Wands entry and posts its card.
-// useValues (the scroll or wand spent) go in the same write as the entry.
-function castItemSpellWith(record, item, spell, rank, casting, note = "", useValues = {}) {
+// Casts the spell into the Scrolls and Wands entry and posts its card. use:
+// getItemSpellUseValues' { values, destroy, bulk }, the scroll or wand spent
+// in the same write as the entry (the first time, after the entry is added).
+function castItemSpellWith(record, item, itemIndex, spell, rank, casting, note = "", use = {}) {
   const castRank = rank || parseInt(spell?.data?.level, 10) || 1;
-  const { entries, path } = getItemSpellEntries(record, spell, castRank, casting);
+  const { entry, index, isNew, path } = getItemSpellEntries(record, spell, castRank, casting);
   const ordinal = getOrdinal(castRank);
   api.sendMessage(
     `**${getTokenDisplayName(record)}** casts ${spell.name} (${ordinal} rank) from ${item.name}, with ${casting.tradition} spell DC ${casting.dc} and attack +${casting.mod}.${note ? `\n${note}` : ""}`,
   );
-  api.setValuesOnRecord(record, { ...useValues, "data.spells": entries }, (updated) => {
-    const target = updated || { ...record, data: { ...record.data, spells: entries } };
+  const values = use.values || {};
+  const cast = (updated) => {
+    const target = updated || record;
     castSpell(target, api.getValueOnRecord(target, path), path);
-  });
+    finishItemSpellUse(target, itemIndex, use);
+  };
+  if (isNew) {
+    // A new entry is added; the item is spent once it's there
+    api.addValue("data.spells", entry, () => {
+      if (Object.keys(values).length > 0) {
+        api.setValuesOnRecord(record, values, cast);
+      } else {
+        api.getRecord(record.recordType, record._id, cast);
+      }
+    });
+  } else {
+    api.setValuesOnRecord(record, { ...values, [`data.spells.${index}`]: entry }, cast);
+  }
+}
+
+// After the cast: a used-up scroll is removed when it auto-destroys, as other
+// consumables are, and bulk is worked out again
+function finishItemSpellUse(record, itemIndex, use) {
+  const recalc = () =>
+    api.getRecord(record.recordType, record._id, (updated) => updateTotalBulk(updated || record, true));
+  if (use?.destroy && Number.isInteger(itemIndex) && itemIndex >= 0) {
+    api.removeValue("data.inventory", itemIndex, recalc);
+  } else if (use?.bulk) {
+    recalc();
+  }
 }
 
 // The values that spend a scroll (one fewer) or a wand's use for the day,
-// and the card's line for an overcharge, or "": { values, line }
+// and the card's line for an overcharge, or "": { values, line, destroy,
+// bulk }. A scroll at 0 that auto-destroys is removed (destroy).
 function getItemSpellUseValues(item, itemPath, kind) {
   if (kind === "wand") {
     const left = parseInt(item?.data?.uses?.value, 10);
@@ -235,8 +270,14 @@ function getItemSpellUseValues(item, itemPath, kind) {
       line: "**Overcharge:** already used today (DC 10 flat check, GM Core pg. 282).",
     };
   }
-  const count = parseInt(item?.data?.count, 10) || 0;
-  return { values: { [`${itemPath}.data.count`]: Math.max(0, count - 1) }, line: "" };
+  const count = Math.max(0, (parseInt(item?.data?.count, 10) || 0) - 1);
+  const autoDestroy = item?.data?.uses?.autoDestroy === true || item?.data?.uses?.autoDestroy === "true";
+  return {
+    values: { [`${itemPath}.data.count`]: count },
+    line: "",
+    destroy: count <= 0 && autoDestroy,
+    bulk: true,
+  };
 }
 
 // Use on a scroll or wand from the sheet: casts its spell, with the
@@ -253,8 +294,9 @@ function useItemSpell(record, item, itemPath) {
       return;
     }
     const traditions = getSpellTraditions(spell);
-    const best = getBestCastingEntry(record, traditions);
+    const best = getBestCastingEntry(record, traditions, spell);
     const use = getItemSpellUseValues(item, itemPath, kind);
+    const itemIndex = parseInt(String(itemPath).split(".").pop(), 10);
     if (!best) {
       // No matching tradition: Trick Magic Item's DC and attack, with the
       // tradition skill the character is best at
@@ -267,17 +309,19 @@ function useItemSpell(record, item, itemPath) {
       castItemSpellWith(
         record,
         item,
+        itemIndex,
         spell,
         rank,
         getTrickMagicItemCasting(record, TRADITION_SKILLS[tradition], tradition),
         ["*Trick Magic Item* (Player Core pg. 264)", use.line].filter(Boolean).join("\n"),
-        use.values,
+        use,
       );
       return;
     }
     castItemSpellWith(
       record,
       item,
+      itemIndex,
       spell,
       rank,
       {
@@ -287,7 +331,7 @@ function useItemSpell(record, item, itemPath) {
         tradition: best.data?.tradition || capitalize(traditions[0] || "arcane"),
       },
       use.line,
-      use.values,
+      use,
     );
   });
   return true;

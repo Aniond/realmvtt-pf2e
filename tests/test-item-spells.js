@@ -80,12 +80,30 @@ let records = {};
 ctx.api.getRecord = (type, id, cb) => cb(type === "spells" ? Object.values(spellsByName).find((s) => s._id === id) || null : records[id] || null);
 ctx.api.getRecordByTypeAndName = (type, name, cb) => cb(spellsByName[name] || null);
 ctx.castSpell = (record, spell, path) => casts.push({ record, spell, path });
+// Adding the new entry, removing a used-up scroll, and bulk worked out again
+let added = [];
+let removed = [];
+let bulk = 0;
+ctx.api.addValue = (path, value, cb) => {
+  added.push([path, value]);
+  const record = ctx.record;
+  if (record && path === "data.spells") record.data.spells = [...(record.data.spells || []), value];
+  if (cb) cb();
+};
+ctx.api.removeValue = (path, index, cb) => {
+  removed.push([path, index]);
+  if (cb) cb();
+};
+ctx.updateTotalBulk = () => (bulk += 1);
 
 function reset() {
   sets = [];
   recordWrites = [];
   casts = [];
   notices = [];
+  added = [];
+  removed = [];
+  bulk = 0;
   ctx.__state.messages = [];
 }
 
@@ -124,6 +142,11 @@ section("The character's matching spellcasting");
   assert("the best prepared or spontaneous entry of the tradition", ctx.getBestCastingEntry(pc, ["arcane", "primal"]).name, "Bloodline");
   assert("divine: its own entry", ctx.getBestCastingEntry(pc, ["divine"]).name, "Divine");
   assert("no occult entry: none (focus, innate and Scrolls and Wands don't count)", ctx.getBestCastingEntry(pc, ["occult"]), null);
+  // An entry that already lists the spell counts, whatever its tradition
+  // (Foundry's canCast: isInSpellList), like a sorcerer's bloodline spells
+  const sorcerer = character([entry("Occult Spontaneous Spells", { tradition: "Occult", type: "spontaneous", dc: 20, spells3: [{ _id: "x", name: "Lightning Bolt", data: {} }] })]);
+  assert("an entry listing the spell: it casts with that entry", ctx.getBestCastingEntry(sorcerer, ["arcane", "primal"], LIGHTNING_BOLT).name, "Occult Spontaneous Spells");
+  assert("without the spell given: tradition only", ctx.getBestCastingEntry(sorcerer, ["arcane", "primal"]), null);
 }
 
 section("The Scrolls and Wands entry, refreshed on every cast");
@@ -136,10 +159,12 @@ section("The Scrolls and Wands entry, refreshed on every cast");
   assert("the spell at the item's rank, with a use", [first.path, made.data.spells3[0].name, made.data.spells3[0].data.uses], ["data.spells.1.data.spells3.0", "Lightning Bolt", 1]);
   assert("its rank shown", [made.data.shownSpells, made.fields.spells3Box], [["spells3"], { hidden: false }]);
   assert("the character's own entries untouched", first.entries[0], pc.data.spells[0]);
+  assert("a new entry, to add at the end", [first.isNew, first.index, first.entry.name], [true, 1, "Scrolls and Wands"]);
 
   const leveled = character(first.entries);
   const again = ctx.getItemSpellEntries(leveled, LIGHTNING_BOLT, 3, { dc: 23, mod: 13, attribute: "int", tradition: "Arcane" });
   assert("the same spell again: the same row, so old cards still find it", [again.path, again.entries[1].data.spells3.length], ["data.spells.1.data.spells3.0", 1]);
+  assert("the existing entry, written in place", [again.isNew, again.index], [false, 1]);
   assert("the DC and attack refreshed (a level up)", [again.entries[1].data.dc, again.entries[1].data.mod], [23, 13]);
   const other = ctx.getItemSpellEntries(character(again.entries), HEAL, 1, { dc: 23, mod: 13, attribute: "wis", tradition: "Divine" });
   assert("another spell: its own row, one entry", [other.path, other.entries.length, other.entries[1].data.tradition], ["data.spells.1.data.spells1.0", 2, "Divine"]);
@@ -152,10 +177,16 @@ section("Using a wand or scroll from the sheet");
   const pc = character([entry("Arcane Prepared Spells", { dc: 21, mod: 11 })], {}, [wand()]);
   ctx.record = pc;
   assert("handled", ctx.useItemSpell(pc, wand(), "data.inventory.0"), true);
-  assert("the wand's use for the day is spent, the wand kept, in the same write as the entry", [sets, recordWrites.length, recordWrites[0]["data.inventory.0.data.uses.value"], Array.isArray(recordWrites[0]["data.spells"])], [[], 1, 0, true]);
   assertIncludes("chat says what is cast and with what", ctx.__state.messages[0], "**Ezren** casts Lightning Bolt (3rd rank) from Wand of Crackling Lightning (3rd-Rank Spell), with Arcane spell DC 21 and attack +11.");
-  assert("the entry is written", recordWrites[0]["data.spells"][1].data.spells3[0]._id, "spell-lb");
+  assert("the first time, the entry is added (not all of data.spells written)", [added.length, added[0][0], added[0][1].data.spells3[0]._id], [1, "data.spells", "spell-lb"]);
+  assert("then the wand's use is spent, the wand kept", [sets, recordWrites, bulk], [[], [{ "data.inventory.0.data.uses.value": 0 }], 0]);
   assert("castSpell casts it from there (found by name: the link has the module's id)", [casts[0].path, casts[0].spell._id, casts[0].spell.data.uses], ["data.spells.1.data.spells3.0", "spell-lb", 1]);
+
+  // Later casts write only the Scrolls and Wands entry, with the item's use
+  reset();
+  ctx.useItemSpell(pc, wand(), "data.inventory.0");
+  assert("only data.spells.<index>, with the use, in one write", [added.length, recordWrites.length, Object.keys(recordWrites[0]).sort()], [0, 1, ["data.inventory.0.data.uses.value", "data.spells.1"]]);
+  assert("not the whole list", "data.spells" in recordWrites[0], false);
 
   reset();
   ctx.useItemSpell(pc, wand(0), "data.inventory.0");
@@ -165,9 +196,19 @@ section("Using a wand or scroll from the sheet");
 
   reset();
   const cleric = character([entry("Divine Prepared Spells", { tradition: "Divine", attribute: "wis", dc: 19, mod: 9 })], {}, [scroll()]);
+  ctx.record = cleric;
   ctx.useItemSpell(cleric, scroll(2), "data.inventory.0");
-  assert("a scroll is used up, in the same write", [sets, recordWrites[0]["data.inventory.0.data.count"]], [[], 1]);
+  assert("a scroll is used up: one fewer, and bulk worked out again", [sets, recordWrites[0]["data.inventory.0.data.count"], removed, bulk], [[], 1, [], 1]);
   assertIncludes("cast at its rank with the cleric's DC", ctx.__state.messages[0], "casts Heal (1st rank) from Scroll of Heal (1st-Rank), with Divine spell DC 19");
+
+  // The last scroll, which auto-destroys like other consumables (Sean's review)
+  reset();
+  const lastScroll = { ...scroll(1), data: { ...scroll(1).data, uses: { autoDestroy: true } } };
+  ctx.useItemSpell(cleric, lastScroll, "data.inventory.0");
+  assert("at 0 it is removed, then bulk", [removed, bulk], [[["data.inventory", 0]], 1]);
+  reset();
+  ctx.useItemSpell(cleric, scroll(1), "data.inventory.0");
+  assert("without auto-destroy it stays at 0", [removed, recordWrites[0]["data.inventory.0.data.count"]], [[], 0]);
 
   reset();
   assert("a potion: Use as before", ctx.useItemSpell(pc, potion, "data.inventory.1"), false);
@@ -191,16 +232,17 @@ section("Trick Magic Item without the tradition: it just casts");
   assert("master in the skill: the trained bonus (level + 2)", ctx.getTrickMagicItemCasting(fighter, "nature", "primal").mod, 9);
   assert("legendary: the expert bonus (level + 4)", ctx.getTrickMagicItemCasting({ ...fighter, data: { ...fighter.data, nature: 4 } }, "nature", "primal").mod, 11);
   const wizard = character([entry("Arcane Prepared Spells", { dc: 22, mod: 12 })]);
-  assert("a caster of another tradition: their own spell DC", ctx.getTrickMagicItemCasting(wizard, "religion", "divine"), { dc: 22, mod: 12, attribute: "int", tradition: "Divine" });
+  assert("a caster of another tradition: Trick Magic Item's numbers too, not their own DC (Sean's review; Foundry's TrickMagicItemEntry)", ctx.getTrickMagicItemCasting(wizard, "religion", "divine"), { dc: 19, mod: 9, attribute: "int", tradition: "Divine" });
 
   // No check card and no second button: Use casts straight away, with the
   // tradition skill the fighter is best at (Nature for primal)
   reset();
+  ctx.record = fighter;
   ctx.useItemSpell(fighter, wand(), "data.inventory.0");
   assertIncludes("cast with Trick Magic Item's numbers, and the card says so", ctx.__state.messages[0], "with Primal spell DC 19 and attack +9.\n*Trick Magic Item* (Player Core pg. 264)");
   assert("one card", ctx.__state.messages.length, 1);
-  assert("the wand's use is spent, in the same write as the entry", [recordWrites.length, recordWrites[0]["data.inventory.0.data.uses.value"]], [1, 0]);
-  assert("into the Scrolls and Wands entry", [casts[0].path, recordWrites[0]["data.spells"][0].data.dc], ["data.spells.0.data.spells3.0", 19]);
+  assert("the wand's use is spent", recordWrites, [{ "data.inventory.0.data.uses.value": 0 }]);
+  assert("into a new Scrolls and Wands entry", [casts[0].path, added[0][1].data.dc], ["data.spells.0.data.spells3.0", 19]);
 }
 
 section("The entry stays out of slots, rest and the class's entries");
