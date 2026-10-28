@@ -96,8 +96,9 @@ function getApplyBySavesButton(roll) {
   return `${fence}Apply_by_Saves\napplyDamageBySaves(${JSON.stringify(roll)});\n${fence}`;
 }
 
-// Applies damage to each selected creature by its last save, and posts what
-// each took
+// Applies damage to each selected creature by its last save. A creature
+// that takes damage gets one card: its damage card, headed by its save. Those
+// that take none (a critical success, or no save to use) share one card.
 function applyDamageBySaves(roll) {
   const saveType = roll?.metadata?.basicSave?.saveType || "";
   const useId = roll?.metadata?.basicSave?.useId || "";
@@ -106,6 +107,8 @@ function applyDamageBySaves(roll) {
     api.showNotification("Select the creatures that saved, then click again.", "yellow", "Notice");
     return;
   }
+  const source = roll?.metadata?.attack || roll?.metadata?.rollName || "Damage";
+  const title = `**${source}: applied by saves**`;
   const lines = [];
   creatures.forEach((creature) => {
     const name = getTokenDisplayName(creature);
@@ -121,13 +124,23 @@ function applyDamageBySaves(roll) {
       return;
     }
     const result = BASIC_SAVE_RESULTS[save.degree];
-    lines.push(`- ${name}: ${capitalize(save.saveType || "save")} ${result.name}, ${result.label}`);
-    if (result.multiplier === 0.5) {
-      applyDamage(creature, roll, true);
+    const saveLine = `${capitalize(save.saveType || "save")} ${result.name}, ${result.label}`;
+    const header = { header: `${title}\n${saveLine}` };
+    if (result.multiplier === 0) {
+      lines.push(`- ${name}: ${saveLine}`);
+    } else if (result.multiplier === 0.5) {
+      applyDamage(creature, roll, true, null, false, header);
     } else if (result.multiplier === 1) {
-      applyDamage(creature, roll, false);
+      applyDamage(creature, roll, false, null, false, header);
     } else if (result.multiplier === 2) {
-      applyDamage(creature, { ...roll, metadata: { ...(roll?.metadata || {}), critical: true } }, false);
+      applyDamage(
+        creature,
+        { ...roll, metadata: { ...(roll?.metadata || {}), critical: true } },
+        false,
+        null,
+        false,
+        { ...header, criticalLabel: "critical failure on a save" },
+      );
     }
     // Used for this use: its other damage parts can use it, a later use
     // needs a new save (without a use id, it's used up)
@@ -135,6 +148,7 @@ function applyDamageBySaves(roll) {
       "data.lastSave": useId ? { ...save, usedBy: useId } : null,
     });
   });
-  const source = roll?.metadata?.attack || roll?.metadata?.rollName || "Damage";
-  api.sendMessage(`**${source}: applied by saves**\n${lines.join("\n")}`);
+  if (lines.length > 0) {
+    api.sendMessage(`${title}\n${lines.join("\n")}`);
+  }
 }
