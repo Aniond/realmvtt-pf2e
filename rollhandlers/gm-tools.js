@@ -24,16 +24,21 @@ const CREATURE_XP_WITHOUT_LEVEL = {
   1: 48, 2: 60, 3: 72, 4: 90, 5: 108, 6: 135, 7: 160,
 };
 
+// Simple hazards (GM Core), with or without Proficiency without Level: the
+// variant has only a creature table, and Foundry's getHazardXp keeps this one
+const SIMPLE_HAZARD_XP = { "-4": 2, "-3": 3, "-2": 4, "-1": 6, 0: 8, 1: 12, 2: 16, 3: 24, 4: 32 };
+
 // XP for one enemy: a creature or complex hazard by the creature table, a
-// simple hazard a fifth of it (GM Core's 2 to 32). Below the table it
-// grants nothing; above it, the table's highest.
+// simple hazard by its own. Below the table it grants nothing; above it,
+// the table's highest.
 function getEncounterXp(levelDiff, { hazard = false, complex = false } = {}, variants = getVariantRules()) {
-  const table = variants.proficiencyWithoutLevel ? CREATURE_XP_WITHOUT_LEVEL : CREATURE_XP;
-  const range = variants.proficiencyWithoutLevel ? 7 : 4;
+  const simpleHazard = hazard && !complex;
+  const withoutLevel = variants.proficiencyWithoutLevel && !simpleHazard;
+  const table = simpleHazard ? SIMPLE_HAZARD_XP : withoutLevel ? CREATURE_XP_WITHOUT_LEVEL : CREATURE_XP;
+  const range = withoutLevel ? 7 : 4;
   const diff = parseInt(levelDiff, 10) || 0;
   if (diff < -range) return 0;
-  const xp = table[String(Math.min(range, diff))];
-  return hazard && !complex ? Math.round(xp / 5) : xp;
+  return table[String(Math.min(range, diff))];
 }
 
 // ---------------------------------------------------------------- Advancement
@@ -67,10 +72,11 @@ function getInitiativeSkill(creature) {
   return data?.initiativeSkill || "Perception";
 }
 
-// A hazard's Stealth modifier: its sheet stores only the Stealth DC
+// A hazard's Stealth modifier: data.stealth.value, as the converter copies
+// Foundry's system.attributes.stealth.value (Hidden Pit: 8, DC 18)
 function getHazardStealthMod(record) {
-  const dc = parseInt(record?.data?.stealth?.value, 10);
-  return Number.isFinite(dc) && dc > 0 ? dc - 10 : 0;
+  const mod = parseInt(record?.data?.stealth?.value, 10);
+  return Number.isFinite(mod) ? mod : 0;
 }
 
 // Ties (Player Core): "If your result is tied with a foe's result,

@@ -180,11 +180,11 @@ Animal companions are characters, as Foundry's PF2e Companion Compendia builds t
 
 `rollhandlers/gm-tools.js`:
 
-- Encounter XP (`getEncounterXp`, used by `onEncounterEnd.js`): the creature table from -4 to +4, or from -7 to +7 under Proficiency without Level (Foundry's `xpVariantCreatureDifferences`). Below the table: 0 XP. Above it: the table's highest. A simple hazard gets a fifth, and a complex hazard uses the creature table.
+- Encounter XP (`getEncounterXp`, used by `onEncounterEnd.js`): the creature table from -4 to +4, or from -7 to +7 under Proficiency without Level (Foundry's `xpVariantCreatureDifferences`). Below the table: 0 XP. Above it: the table's highest. A simple hazard always uses the standard simple-hazard table (2 to 32, as Foundry's `getHazardXp`), and a complex hazard uses the creature table.
 - Advancement speed: the campaign setting `advancementSpeed` (standard, fast, slow, milestone) feeds `getXpToNextLevel`. The XP bar's `maxvaluefield` is `data.xpToNextLevel`, which `onLoadCharacter` writes once (`getXpBarValues`). Story milestones return 0 XP, so Level Up always shows (it confirms), and the XP bar hides.
 - Initiative:
-  - A hazard rolls Stealth (`getInitiativeSkill`). Its Stealth modifier is its Stealth DC minus 10 (`getHazardStealthMod`, used in `rollSkill` and the NPC sheet).
-  - An adversary that ties a PC goes first. The tracker sorts on `data.initiative` alone, so `initiative.js` stores an enemy's roll plus 0.1 (`getInitiativeValue`). The roll's metadata says which tokens are adversaries.
+  - A hazard rolls Stealth (`getInitiativeSkill`). Its Stealth modifier is `data.stealth.value`, which the converter copies from Foundry's `system.attributes.stealth.value` (`getHazardStealthMod`, used in `rollSkill` and the NPC sheet). The DC is that plus 10.
+  - An adversary that ties a PC goes first. The tracker sorts on `data.initiative` alone, so `initiative.js` stores an enemy's roll plus 0.1 (`getInitiativeValue`). The roll's metadata says which tokens are adversaries; a roll from a sheet uses the sheet's token faction (`api.getToken()`) when there is one.
 - DCs: `getSimpleDC(rank)`, `getDCAdjustment` (rarity maps to hard, very hard or incredibly hard) and `getDCForLevel` (PF2e.js). `showDCHelper()`, run from a GM's chat macro, prompts for the skill, the DC and the adjustment. It then posts a roll button for the selected tokens, with the DC in `[gm]` tags.
 
 ### Data Structure

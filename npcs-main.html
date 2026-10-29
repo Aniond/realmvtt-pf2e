@@ -11,7 +11,7 @@
     const valuesToSet = {};
 
     // Set default initiative skill to Perception if not set. A hazard
-    // rolls its Stealth (gm-tools.js).
+    // rolls its Stealth modifier (gm-tools.js).
     if (npc.data?.type === "hazard") {
       if (npc.data?.initiativeSkill !== "Stealth") {
         valuesToSet[`${dataPrefix}.initiativeSkill`] = "Stealth";
@@ -2633,8 +2633,9 @@
             width="100%"
             size="xs"
             field="stealth.value"
-            label="Stealth DC"
-            placeholder="0"
+            label="Stealth"
+            showsign="true"
+            placeholder="+0"
           ></numberfield>
         </div>
         <richtextfield

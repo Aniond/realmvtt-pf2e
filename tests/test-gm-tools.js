@@ -30,7 +30,7 @@ section("Encounter XP: the standard table");
   assert("-4 to +4: 10 ... 160", [-4, -1, 0, 1, 4].map((d) => xp(d)), [10, 30, 40, 60, 160]);
   assert("more than 4 below: none", xp(-5), 0);
   assert("more than 4 above: 160", xp(6), 160);
-  assert("simple hazard: a fifth (2 to 32)", [-4, 0, 4].map((d) => xp(d, { hazard: true })), [2, 8, 32]);
+  assert("simple hazard: 2 to 32", [-4, 0, 4].map((d) => xp(d, { hazard: true })), [2, 8, 32]);
   assert("complex hazard: the creature table", xp(2, { hazard: true, complex: true }), 80);
 }
 
@@ -42,7 +42,9 @@ section("Encounter XP: Proficiency without Level (Q36)");
   assert("6 below still grants XP", xp(-6), 12);
   assert("more than 7 below: none", xp(-8), 0);
   assert("more than 7 above: 160", xp(9), 160);
-  assert("simple hazard: a fifth", [-7, 0, 7].map((d) => xp(d, { hazard: true })), [2, 8, 32]);
+  assert("simple hazard: the standard table still", [-4, 1, 4, 7].map((d) => xp(d, { hazard: true })), [2, 12, 32, 32]);
+  assert("... nothing 5 or more below", [-5, -7].map((d) => xp(d, { hazard: true })), [0, 0]);
+  assert("complex hazard: the variant creature table", xp(4, { hazard: true, complex: true }), 90);
 
   runHook("onEncounterEnd.js", { tokens: [...party, foe("Ogre", 0), foe("Boss", 8)] });
   const message = ctx.__state.messages.find((m) => `${m}`.includes("Encounter Ended"));
@@ -78,15 +80,44 @@ section("Advancement speed (Q18)");
   settings = {};
 }
 
+section("Level 0 to 1st level: the next threshold is the campaign's");
+{
+  const sheet = fs.readFileSync(`${__dirname}/../characters-main.html`, "utf8");
+  for (const match of sheet.matchAll(/<script>([\s\S]*?)<\/script>/g)) {
+    new vm.Script(match[1], { filename: "characters-main.html" }).runInContext(ctx);
+  }
+  const written = [];
+  const setValues = ctx.api.setValues;
+  ctx.api.setValues = (values) => written.push(values);
+  const takeClass = (xp) => {
+    written.length = 0;
+    ctx.record = { _id: "pc", data: { level: 0, xp, classes: [{ data: { isLevelZero: true } }], traits: [], traitsList: [] }, fields: {} };
+    ctx.applyClassAtFirstLevel({ _id: "fighter", name: "Fighter", data: { traits: [], keyAbility: ["str"] } });
+    return written[0];
+  };
+  settings = {};
+  const first = takeClass(1700);
+  assert("1,700 XP at level 0: 900 left, below 1,000, so no Level Up yet", [first["data.xp"], first["fields.levelUpBtn.hidden"]], [900, true]);
+  assert("... and the XP bar is 1,000 long at once", first["data.xpToNextLevel"], 1000);
+  settings = { advancementSpeed: "fast" };
+  assert("fast: Level Up shows at 900 (of 800)", takeClass(1700)["fields.levelUpBtn.hidden"], false);
+  settings = { advancementSpeed: "milestone" };
+  const milestone = takeClass(0);
+  assert("milestones: Level Up shows, no XP bar length written", [milestone["fields.levelUpBtn.hidden"], "data.xpToNextLevel" in milestone], [false, false]);
+  settings = {};
+  ctx.api.setValues = setValues;
+}
+
 section("Initiative: hazards roll Stealth (Q13)");
 {
-  const hazard = foe("Spinning Blade Pillar", 4, { type: "hazard", isComplex: true, stealth: { value: 21 } });
+  const hazard = foe("Spinning Blade Pillar", 4, { type: "hazard", isComplex: true, stealth: { value: 11 } });
   assert("a hazard rolls Stealth", ctx.getInitiativeSkill(hazard), "Stealth");
   assert("... even when its sheet says Perception", ctx.getInitiativeSkill({ data: { ...hazard.data, initiativeSkill: "Perception" } }), "Stealth");
   assert("a creature rolls what its sheet picks", ctx.getInitiativeSkill(foe("Rogue", 2, { initiativeSkill: "Stealth" })), "Stealth");
   assert("Perception by default", ctx.getInitiativeSkill(pc("a", 1)), "Perception");
-  assert("Stealth DC 21: +11", ctx.getHazardStealthMod(hazard), 11);
-  assert("no DC: +0", ctx.getHazardStealthMod(foe("x", 1, { type: "hazard" })), 0);
+  assert("the stored value is the modifier: +11", ctx.getHazardStealthMod(hazard), 11);
+  assert("Hidden Pit (8, DC 18): +8", ctx.getHazardStealthMod({ data: { stealth: { value: 8 } } }), 8);
+  assert("none: +0", ctx.getHazardStealthMod(foe("x", 1, { type: "hazard" })), 0);
 
   // rollSkill reads the hazard's Stealth from its DC
   let prompted = null;
@@ -99,6 +130,14 @@ section("Initiative: hazards roll Stealth (Q13)");
   runHook("onRollInitiative.js", { token: { ...hazard, recordType: "tokens" } });
   assert("the hazard's initiative roll: Stealth +11", [prompted.metadata.initiativeSkill, prompted.modifiers.reduce((sum, m) => sum + m.value, 0)], ["Stealth", 11]);
   assert("... marked as an adversary", prompted.metadata.initiativeAdversary, true);
+
+  // From the sheet: the token's faction when there is one
+  ctx.api.getToken = () => ({ recordType: "npcs", faction: "friendly" });
+  ctx.performInitiativeRoll({ recordType: "npcs", data: { level: 1 } });
+  assert("an allied NPC rolling from its sheet: not an adversary", prompted.metadata.initiativeAdversary, false);
+  ctx.api.getToken = () => null;
+  ctx.performInitiativeRoll({ recordType: "npcs", data: { level: 1 } });
+  assert("... no token: an NPC counts as one", prompted.metadata.initiativeAdversary, true);
 }
 
 section("Initiative: an adversary wins a tie (Q13)");

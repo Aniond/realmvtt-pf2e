@@ -605,7 +605,9 @@ ${getLevelUpSummary(gains)}`,
       {
         "data.level": 1,
         "data.xp": newXp,
-        "fields.levelUpBtn.hidden": newXp < getXpToNextLevel(record),
+        // From 1st level on, the campaign's advancement speed
+        "fields.levelUpBtn.hidden": newXp < getAdvancementXp(),
+        ...(getAdvancementXp() > 0 ? { "data.xpToNextLevel": getAdvancementXp() } : {}),
         "data.classes": [classObj],
         "data.className": classObj.name,
         "data.traitsList": newTraitsList,

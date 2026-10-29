@@ -15954,6 +15954,15 @@ function applyDamage(
   });
 }
 
+// The sheet's token, or null (no scene, or a sheet opened from the sidebar)
+function getSheetToken() {
+  try {
+    return api.getToken?.() || null;
+  } catch (e) {
+    return null;
+  }
+}
+
 function performInitiativeRoll(record) {
   const initiativeSkill = getInitiativeSkill(record);
   rollSkill(
@@ -15969,8 +15978,9 @@ function performInitiativeRoll(record) {
     undefined,
     {
       initiativeSkill: initiativeSkill,
-      // Who rolled, for the tie rule (initiative.js)
-      initiativeAdversary: isInitiativeAdversary(record),
+      // Who rolled, for the tie rule (initiative.js): the sheet's token
+      // knows its faction, a record doesn't
+      initiativeAdversary: isInitiativeAdversary(getSheetToken() || record),
     },
   );
 }
