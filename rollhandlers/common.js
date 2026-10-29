@@ -4538,6 +4538,14 @@ function useInventoryItem(itemDataPath) {
   if (investWarning) {
     api.showNotification(investWarning, "yellow", "Not Invested");
   }
+  // Sickened: no drinking potions or elixirs, a reminder (check-tools.js)
+  const sickenedWarning = getSickenedDrinkWarning(
+    getCastingCreature(typeof record !== "undefined" ? record : null, api.getToken()),
+    item,
+  );
+  if (sickenedWarning) {
+    api.showNotification(sickenedWarning, "yellow", "Sickened");
+  }
 
   const traits = item.data?.traits || [];
   const hasConsumableTrait = traits
@@ -9001,6 +9009,14 @@ function rollSave(
   if (options.basic) {
     metadata.basicSave = true;
   }
+  // Incapacitation: one degree better for a high enough level, and Retch's
+  // button (check-tools.js)
+  if (isIncapacitationResisted(record, options)) {
+    metadata.incapacitation = true;
+  }
+  if (options.retch) {
+    metadata.retch = true;
+  }
 
   // The save-specific and attribute lookups can each bring a status penalty
   // (fatigued, frightened): only the worst one applies
@@ -9201,6 +9217,7 @@ function getSaveMacro(
   showDc = false,
   traits = [],
   basic = false,
+  rank = null,
 ) {
   if (!saveType) {
     console.error("getSaveMacro: Invalid saveType");
@@ -9245,6 +9262,7 @@ selectedTokens.forEach(token => {
   const saveOptions = {
     ...(sourceTraits.length > 0 ? { traits: sourceTraits } : {}),
     ...(basic ? { basic: true } : {}),
+    ...(rank > 0 ? { rank } : {}),
   };
   if (Object.keys(saveOptions).length > 0) {
     macroContent += `, ${JSON.stringify(saveOptions)}`;
@@ -9536,24 +9554,33 @@ function rollSkill(
   modifiers.splice(0, modifiers.length, ...keepStrongestPerType(modifiers));
 
   // Use promptRoll to allow players to modify the roll
-  if (isMacro) {
-    api.promptRollForToken(
-      record,
-      `${skillDisplay} Check`,
-      "1d20",
-      modifiers,
-      metadata,
-      isInitiative ? "initiative" : "skill",
-    );
-  } else {
-    api.promptRoll(
-      `${skillDisplay} Check`,
-      "1d20",
-      modifiers,
-      metadata,
-      isInitiative ? "initiative" : "skill",
-    );
+  const roll = () => {
+    if (isMacro) {
+      api.promptRollForToken(
+        record,
+        `${skillDisplay} Check`,
+        "1d20",
+        modifiers,
+        metadata,
+        isInitiative ? "initiative" : "skill",
+      );
+    } else {
+      api.promptRoll(
+        `${skillDisplay} Check`,
+        "1d20",
+        modifiers,
+        metadata,
+        isInitiative ? "initiative" : "skill",
+      );
+    }
+  };
+  // Assurance: roll, or take 10 + the proficiency bonus (check-tools.js)
+  if (isInitiative || isPerception || isNPC) {
+    roll();
+    return;
   }
+  const skillRank = isLore ? loreSkillTraining : parseInt(record.data?.[skill] || "0", 10);
+  offerAssurance(record, isLore ? toSlug(skillName) : skill, skillRank, roll, metadata);
 }
 
 // Generate a clickable skill check macro for PF2e
@@ -15986,6 +16013,13 @@ function applyDamage(
             dyingButtons.push(getMonsterFerocityButton(target, ferocityBefore));
           }
         }
+      }
+
+      // Confused: a DC 11 flat check to recover after taking damage
+      // (check-tools.js)
+      if (damage > 0 && !instantDeath && !isTokenDead(target)) {
+        const confusedButton = getConfusedRecoveryButton(target);
+        if (confusedButton) dyingButtons.push(confusedButton);
       }
 
       // Apply all value changes in a single batch

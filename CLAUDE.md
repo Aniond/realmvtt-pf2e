@@ -228,6 +228,18 @@ Animal companions are characters, as Foundry's PF2e Companion Compendia builds t
   - At 0 HP a regenerating monster is dead as any NPC, with a Regeneration button (`useRegeneration`): Dead off, dying (at most 3), unconscious and prone.
 - Ferocity (an NPC ability named so): a button at 0 HP until wounded 3. `useMonsterFerocity` sets 1 HP and wounded + 1, and removes the Dead or Unconscious the damage added.
 
+### Check tools (Assurance, incapacitation, signature spells, counteract, condition flat checks)
+
+`rollhandlers/check-tools.js` (global script `CheckTools`), with the `counteract` roll type (`rollhandlers/counteract.js`):
+- Assurance: `rollSkill` asks "Roll the check / Use Assurance (N)" for a character's skill with Assurance (trained or better). The skill comes from the feat's name ("Assurance (Athletics)") or its choice (`data.choices[i].data.choices[0]`). An Assurance with neither is offered on every trained skill. The fixed result (10 + `getProficiencyBonusForRank`) goes to `skill.js` through `api.roll`, so the DC, notes and degree adjustments still apply. Not for initiative, Perception or NPCs.
+- Untrained Improvisation has no code: the module feat's `skillBonus` modifier (predicate `proficiency:untrained`) already adds it on untrained rolls. The sheet's skill modifier stays ability + proficiency, as for every other modifier.
+- Incapacitation: `getSpellSaveMacro` passes the casting rank (`rank` in the save options) for an incapacitation spell. `rollSave` sets `metadata.incapacitation` when the saver's level is more than twice that rank (or, with `level`, higher than the effect's level). `save.js` makes the result one degree better after every other adjustment.
+- Signature spells: a Signature checkbox (`data.signature`) on spontaneous spell rows. `castSpell` first asks for the rank (its own up to the highest with a slot left), then casts again with `spell.castRank`, which `getCastingRank` returns ahead of the list's rank.
+- Counteract: a spell whose text mentions counteracting gets a Counteract button (`counteract(name, rank, mod)`). It asks the DC, then the target's rank (a targeted creature's half level first), then rolls with the spell attack modifier. `getCounteractOutcome` is the Player Core table.
+- Flat checks to cast (`rollCastingFlatChecks`, after the spell's card): stupefied (DC 5 + value), grabbed for a manipulate spell, deafened for an auditory one (DC 5). `flatCheck.js` adds `metadata.failureNote` on a failure. Nothing is undone.
+- Sickened: `retch()` rolls Fortitude against a typed DC (`metadata.retch`), and `save.js` adds a Reduce Sickened button on a success (2 on a critical success). `useInventoryItem` warns about a potion, elixir or ingested item while sickened.
+- Confused: `applyDamage` adds a DC 11 recovery flat check button. `flatCheck.js` removes `metadata.endsCondition` from the token on a success.
+
 ### Data Structure
 
 - Character data is nested under `record.data`

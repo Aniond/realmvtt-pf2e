@@ -432,6 +432,10 @@ function addSpellcastingEntry(record) {
 }
 
 function getCastingRank(record, spell, dataPathToSpell) {
+  // A signature spell cast at a chosen rank (check-tools.js)
+  const chosenRank = parseInt(spell?.castRank, 10);
+  if (chosenRank > 0) return chosenRank;
+
   const pathParts = dataPathToSpell.split(".");
 
   // Find which spell list this is in (cantrips, spells1, spells2, etc.)
@@ -1096,7 +1100,12 @@ function getSpellSaveMacro(record, spell, spellCastingEntry, dataPathToSpell) {
     sourceTraits.push("forced-movement");
   }
   const basic = spell?.data?.defense?.save?.basic;
-  return getSaveMacro(saveType, saveDC, true, true, sourceTraits, basic === true || basic === "true");
+  // Incapacitation compares the saver's level with the spell's rank
+  // (check-tools.js)
+  const rank = sourceTraits.some((t) => `${t}`.toLowerCase() === "incapacitation")
+    ? getCastingRank(record, spell, dataPathToSpell)
+    : null;
+  return getSaveMacro(saveType, saveDC, true, true, sourceTraits, basic === true || basic === "true", rank);
 }
 
 function getSpellAttackMacro(
@@ -1404,6 +1413,10 @@ api.getRecord('${record.recordType}', '${record._id}', (record) => {
 }
 
 function castSpell(record, spell, dataPathToSpell, isOverlay = false) {
+  // A signature spell asks for its rank first, then casts again with it
+  // (check-tools.js)
+  if (promptSignatureRank(record, spell, dataPathToSpell, isOverlay)) return;
+
   // spellDamageType modifiers can change the damage type for this casting
   spell = getAlteredSpell(record, spell);
   const isCantrip = (spell?.data?.traits || []).some(
@@ -1729,6 +1742,18 @@ function castSpell(record, spell, dataPathToSpell, isOverlay = false) {
     }
   }
 
+  // A spell that counteracts: the counteract check, at the casting rank with
+  // the spell attack modifier (check-tools.js)
+  if (mentionsCounteract(spell)) {
+    macros.push(
+      getCounteractButton(
+        spellName,
+        castingRank,
+        (spellCastingEntry?.data?.mod || 0) + getNpcProficiencyWithoutLevelAdjustment(record)
+      )
+    );
+  }
+
   // Add overlay macros if this is not already an overlay
   const overlayMacros = [];
   if (!isOverlay) {
@@ -1803,6 +1828,12 @@ api.getRecord('${record.recordType}', '${record._id}', (updatedRecord) => {
       ? () => finishItemSpellCast(record, itemSpellCast.use)
       : undefined
   );
+
+  // Stupefied, grabbed (manipulate) and deafened (auditory): the flat check
+  // to cast, rolled now; a failure is reported (check-tools.js)
+  if (!isOverlay) {
+    rollCastingFlatChecks(getCastingCreature(record, ourToken), spell);
+  }
 
   // Play animation only if not using attack macro (macro handles animation)
   if (animation && tokenId && !hasAttackMacro) {

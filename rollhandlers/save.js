@@ -85,8 +85,12 @@ if (dc > 0) {
     { natural: naturalRoll, total, dc }
   );
   degreeOfSuccess = adjustmentResult.degree;
+  // Incapacitation: one degree better, after the rest (check-tools.js)
+  const incapacitation = applyIncapacitation(degreeOfSuccess, data?.roll?.metadata);
+  degreeOfSuccess = incapacitation.degree;
   noteDegree = degreeOfSuccess;
-  const adjustmentModifierName = adjustmentResult.modifierName;
+  const adjustmentModifierName =
+    [adjustmentResult.modifierName, incapacitation.name].filter(Boolean).join(", ") || null;
 
   // Calculate margin of success/failure
   const margin = total - dc;
@@ -130,6 +134,14 @@ if (dc > 0) {
 
 // Notes from the creature's features for this result (rollNote)
 message += getRollNotesText(data?.roll?.metadata?.notes, noteDegree);
+
+// Retch: the button that lowers sickened (check-tools.js)
+{
+  const retchLine = getRetchLine(data?.roll?.metadata, noteDegree);
+  if (retchLine) {
+    message += `\n\n${retchLine}`;
+  }
+}
 
 // A basic save says what damage it takes, and the result is kept on the
 // saver's token for the damage card's Apply by Saves (basic-saves.js)
