@@ -9273,6 +9273,10 @@ function rollSkill(
       (s) => s?.name?.toLowerCase() === skillName?.toLowerCase(),
     );
     skillMod = skillObj?.data?.mod || 0;
+    // A hazard stores only its Stealth DC (gm-tools.js)
+    if (!skillObj && skill === "stealth" && record.data?.type === "hazard") {
+      skillMod = getHazardStealthMod(record);
+    }
   }
 
   // Capitalize the skill name for display
@@ -15950,8 +15954,17 @@ function applyDamage(
   });
 }
 
+// The sheet's token, or null (no scene, or a sheet opened from the sidebar)
+function getSheetToken() {
+  try {
+    return api.getToken?.() || null;
+  } catch (e) {
+    return null;
+  }
+}
+
 function performInitiativeRoll(record) {
-  const initiativeSkill = record.data?.initiativeSkill || "Perception";
+  const initiativeSkill = getInitiativeSkill(record);
   rollSkill(
     record,
     initiativeSkill.toLowerCase(),
@@ -15965,6 +15978,9 @@ function performInitiativeRoll(record) {
     undefined,
     {
       initiativeSkill: initiativeSkill,
+      // Who rolled, for the tie rule (initiative.js): the sheet's token
+      // knows its faction, a record doesn't
+      initiativeAdversary: isInitiativeAdversary(getSheetToken() || record),
     },
   );
 }
@@ -17755,9 +17771,28 @@ function isLevelZeroCharacter(record) {
   return !!record?.data?.classes?.[0]?.data?.isLevelZero;
 }
 
-// Level 0 characters advance at the fast speed (800 XP)
+// XP a level at the campaign's advancement speed (gm-tools.js); Level 0
+// characters advance at the fast speed (800 XP). 0 for story milestones:
+// Level Up always shows.
 function getXpToNextLevel(record) {
-  return isLevelZeroCharacter(record) ? 800 : 1000;
+  const speed = getAdvancementSpeed();
+  if (speed === "milestone") return 0;
+  return isLevelZeroCharacter(record) ? 800 : getAdvancementXp(speed);
+}
+
+// The XP bar's length and whether it shows (story milestones: no XP bar),
+// only what changed
+function getXpBarValues(record) {
+  const values = {};
+  const xpToNextLevel = getXpToNextLevel(record);
+  if (xpToNextLevel > 0 && record.data?.xpToNextLevel !== xpToNextLevel) {
+    values["data.xpToNextLevel"] = xpToNextLevel;
+  }
+  const hideBar = xpToNextLevel === 0;
+  if ((record.fields?.nextLevelProgress?.hidden ?? false) !== hideBar) {
+    values["fields.nextLevelProgress.hidden"] = hideBar;
+  }
+  return values;
 }
 
 // Starting money: 15 gp, or 5 gp for Level 0 characters

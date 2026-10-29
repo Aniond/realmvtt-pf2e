@@ -353,6 +353,13 @@
       api.setHidden("levelUpBtn", true);
     }
 
+    // The XP bar fills to a level's worth at the campaign's advancement
+    // speed; story milestones have no XP bar
+    const xpValues = getXpBarValues(record);
+    if (Object.keys(xpValues).length > 0) {
+      api.setValues(xpValues);
+    }
+
     // If this is the first time we're loading the character, add the unarmed attack
     if (!record.data?.initialized) {
       api.setValue("data.initialized", true, () => {
@@ -598,7 +605,9 @@ ${getLevelUpSummary(gains)}`,
       {
         "data.level": 1,
         "data.xp": newXp,
-        "fields.levelUpBtn.hidden": newXp < 1000,
+        // From 1st level on, the campaign's advancement speed
+        "fields.levelUpBtn.hidden": newXp < getAdvancementXp(),
+        ...(getAdvancementXp() > 0 ? { "data.xpToNextLevel": getAdvancementXp() } : {}),
         "data.classes": [classObj],
         "data.className": classObj.name,
         "data.traitsList": newTraitsList,
@@ -694,10 +703,10 @@ ${getLevelUpSummary(gains)}`,
 
   function applyLevelUp(newLevel, gains) {
     const newXp = Math.max(0, (record.data?.xp || 0) - getXpToNextLevel(record));
-    const showLevelUpBtn = newXp >= 1000 && newLevel < 20;
+    const showLevelUpBtn = newXp >= getXpToNextLevel(record) && newLevel < 20;
     const valuesToSet = {
       "data.level": newLevel,
-      // Decrease XP by 1000
+      // Decrease XP by a level's worth (the campaign's advancement speed)
       "data.xp": newXp,
       // Hide the level up button if XP needed
       "fields.levelUpBtn.hidden": !showLevelUpBtn,
@@ -1791,7 +1800,7 @@ ${getLevelUpSummary(gains)}`,
             field="nextLevelProgress"
             label=""
             width="100%"
-            maxvalue="1000"
+            maxvaluefield="xpToNextLevel"
             currentvaluefield="xp"
             color="primary"
             size="xs"
