@@ -9815,6 +9815,11 @@ function getForcedMovementNotes(target, actionName) {
 // and Administer First Aid have their own buttons.
 function getSkillActionMacros(action) {
   const name = String(action?.name || "").trim();
+  if (name === "Battle Medicine") {
+    return String(action?.data?.description || "").includes("battleMedicine")
+      ? ""
+      : "\n```Battle_Medicine\nbattleMedicine();\n```";
+  }
   if (name === "Treat Wounds") {
     return String(action?.data?.description || "").includes("treatWounds")
       ? ""
@@ -14828,7 +14833,34 @@ function applyPersistentDamage(persistentDamage, tokenId, tokenName) {
             name: tokenName,
           }
         : persistentDamage;
-    api.addEffect("Persistent Damage", target, undefined, effectValue);
+    // Of one damage type, only the higher amount applies (healing-tools.js)
+    const token = target?.token || target;
+    const change = getPersistentStackChange(token, persistentDamage);
+    const name = getCreatureName(token);
+    if (!change.add) {
+      api.sendMessage(
+        `${name} already takes ${change.kept} persistent damage, as much or more: ${persistentDamage} doesn't add to it.`,
+        undefined,
+        [],
+        [],
+        token,
+      );
+      return;
+    }
+    const add = () => api.addEffect("Persistent Damage", target, undefined, effectValue);
+    const effect = getPersistentDamageEffect(token);
+    if (change.removeIndex !== null && effect) {
+      api.sendMessage(
+        `${name}'s ${persistentDamage} persistent damage replaces the lower one of that type.`,
+        undefined,
+        [],
+        [],
+        token,
+      );
+      api.removeEffectById(effect._id, token, add, { instanceIndex: change.removeIndex });
+    } else {
+      add();
+    }
   });
 }
 
@@ -15631,6 +15663,10 @@ function applyDamage(
         0,
       );
 
+      // Damage of a type its regeneration lists turns it off until the end
+      // of the creature's next turn, before the damage lands (healing-tools.js)
+      const regenerationDeactivated = getRegenerationDeactivation(target, finalDamageByType);
+
       // Precision-specific IWR (immunity/resistance/weakness) was already
       // applied to the precision portion before the main IWR loop above, so
       // there is nothing further to adjust here.
@@ -15799,6 +15835,10 @@ function applyDamage(
       }
 
       valuesToSet["data.curhp"] = curhp;
+      if (regenerationDeactivated) {
+        oldValues["data.regenerationOff"] = target.data?.regenerationOff ?? "";
+        valuesToSet["data.regenerationOff"] = "pending";
+      }
 
       // Healing from 0 Hit Points ends dying and unconscious (dying.js)
       let wakes = false;
@@ -15882,6 +15922,10 @@ function applyDamage(
         message += ` No longer dying (wounded ${valuesToSet["data.wounded"]}).`;
       }
 
+      if (regenerationDeactivated) {
+        message += `\nRegeneration is off until the end of ${targetName}'s next turn.`;
+      }
+
       // Handle death conditions. Buttons (Heroic Recovery, Orc Ferocity) go
       // after the message, as its Undo button repeats the message's text.
       let dyingButtons = [];
@@ -15924,15 +15968,33 @@ function applyDamage(
           dyingButtons = buttons;
         } else if (target.recordType === "npcs") {
           // Other NPCs die at 0 HP, unless nonlethal damage knocks them out
-          // (Player Core pg. 410); objects are destroyed either way
+          // (Player Core pg. 410); objects are destroyed either way. Active
+          // regeneration keeps a monster dying (up to 3) and unconscious
+          // instead, and Ferocity can keep it at 1 HP (healing-tools.js).
+          const ferocityBefore = {
+            dying: getDyingValue(target),
+            addedUnconscious: !getTokenCondition(target, "unconscious"),
+          };
           if (isNonlethalDamage(traits) && !isObject) {
             if (!getTokenCondition(target, "unconscious")) {
               api.addEffects(["Unconscious", "Prone"], target);
             }
             message += `\n${targetName} is knocked out by nonlethal damage.`;
+          } else if (!isObject && hasActiveRegeneration(target, regenerationDeactivated)) {
+            message += `\n${getRegenerationZeroHpChanges(
+              target,
+              typeof isCritical !== "undefined" && isCritical && !immuneToCritical,
+              valuesToSet,
+              oldValues,
+            )}`;
           } else {
             api.addEffect("Dead", target);
             message += `\n${targetName} is ${isObject ? "destroyed" : "dead"}.`;
+            ferocityBefore.addedDead = true;
+            ferocityBefore.addedUnconscious = false;
+          }
+          if (!isObject && canUseMonsterFerocity(target)) {
+            dyingButtons.push(getMonsterFerocityButton(target, ferocityBefore));
           }
         }
       }
@@ -16355,8 +16417,11 @@ function updateDamageMacros(description, context = {}) {
 }
 
 // Treat Wounds Macro for Pathfinder 2e
-// This function handles the Treat Wounds action from the Medicine skill
-function treatWounds() {
+// This function handles the Treat Wounds action from the Medicine skill, and
+// Battle Medicine (kind "battleMedicine"): the same check and healing in 1
+// action, a 1-day immunity to that healer, and wounded stays (healing-tools.js)
+function treatWounds(kind = "treatWounds") {
+  const medicine = getMedicineKind(kind);
   let selectedTokens = api.getSelectedOrDroppedToken();
 
   // If no tokens selected, try to get the current token
@@ -16394,7 +16459,7 @@ function treatWounds() {
   // Check if character is trained in Medicine
   if (medicineTraining < 1) {
     api.showNotification(
-      "You must be at least Trained in Medicine to use Treat Wounds",
+      `You must be at least Trained in Medicine to use ${medicine.label}`,
       "red",
       "Notice",
     );
@@ -16434,12 +16499,22 @@ function treatWounds() {
       .join(", ")}`;
   }
 
+  // A target still immune to this healing: a reminder, the check goes ahead
+  const immunityWarning = getMedicineImmunityWarning(targets, kind, healer);
+  if (immunityWarning) {
+    api.showNotification(immunityWarning, "yellow", "Immune");
+  }
+  const note =
+    medicine.kind === "battleMedicine"
+      ? "Note: 1 action (manipulate), with healer's tools. The target becomes immune to your Battle Medicine for 1 day. It doesn't end the wounded condition."
+      : "Note: This takes 10 minutes. Target becomes immune to Treat Wounds for 1 hour.\nTreating for a full hour doubles the healing.";
+
   // Prompt for DC selection
   api.showPrompt(
-    "Treat Wounds",
+    medicine.label,
     `Select the DC for your Medicine check.\n\n${proficiencyName} in Medicine (${
       medicineMod >= 0 ? "+" : ""
-    }${medicineMod})\n\n${targetInfo}\n\nNote: This takes 10 minutes. Target becomes immune to Treat Wounds for 1 hour.\nTreating for a full hour doubles the healing.`,
+    }${medicineMod})\n\n${targetInfo}\n\n${immunityWarning ? `${immunityWarning}\n\n` : ""}${note}`,
     "Select DC...",
     dcOptions,
     null,
@@ -16479,7 +16554,7 @@ function treatWounds() {
       const additionalModsSet = new Set();
       // The action (action:treat-wounds) and statistic for predicates
       const treatWoundsContext = getRollSourceContext(
-        { action: "Treat Wounds" },
+        { action: medicine.label },
         "medicine",
       );
       const skillMods = getEffectsAndModifiersForToken(
@@ -16529,23 +16604,27 @@ function treatWounds() {
 
       // Prepare metadata for the roll
       const metadata = {
-        rollName: "Treat Wounds",
-        tooltip: "Treat Wounds (Medicine Check)",
+        rollName: medicine.label,
+        tooltip: `${medicine.label} (Medicine Check)`,
         skillName: "medicine",
         dc: dc,
         degreeOfSuccessAdjustments: degreeOfSuccessAdjustments,
-        action: "Treat Wounds",
-        // Store healing info for the roll handler
+        action: medicine.label,
+        // Store healing info for the roll handler, and who healed for the
+        // immunity (healing-tools.js)
         treatWounds: {
           successHealing: successHealing,
           critSuccessHealing: critSuccessHealing,
           dc: dc,
+          kind: medicine.kind,
+          healerId: healer._id,
+          healerName: getCreatureName(healer),
         },
       };
 
       // Make the Medicine check
       api.promptRoll(
-        "Treat Wounds (Medicine)",
+        `${medicine.label} (Medicine)`,
         "1d20",
         modifiers,
         metadata,

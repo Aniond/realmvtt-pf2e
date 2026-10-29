@@ -42,7 +42,9 @@ if (dc <= 1) {
 
     // Handle persistent damage recovery
     if (isPersistent && persistentPartIndex !== undefined) {
-      const token = api.getToken();
+      // The card's token, or the one an automatic roll names
+      // (healing-tools.js)
+      const token = getPersistentRecoveryToken(data?.roll?.metadata?.tokenId);
       if (token) {
         const effects = token?.effects || [];
         const persistentDamageEffect = effects.find(

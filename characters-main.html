@@ -1057,7 +1057,13 @@ ${getLevelUpSummary(gains)}`,
   }
 
   // Resets spells, alchemy for alchemists, and provides healing
+  // Rest asks how the character rested first: no shelter, sleeping in armor,
+  // long-term rest days (healing-tools.js)
   function rest() {
+    showRestOptions(record, (options) => restWith(options));
+  }
+
+  function restWith(restOptions = {}) {
     const valuesToSet = {};
 
     // Add HP per resting rules
@@ -1067,12 +1073,14 @@ ${getLevelUpSummary(gains)}`,
     const maxHp = record.data?.hitpoints || 0;
 
     const restHealing = getRestHealing(record);
-    const healedBy = restHealing.amount;
+    const healedBy = getRestHealingAmount(restHealing.amount, restOptions);
+    // Sleeping in armor without the comfort trait: wakes up fatigued
+    const wakesFatigued = isRestFatiguing(record, restOptions);
     const newHp = Math.min(curHp + healedBy, maxHp);
 
     valuesToSet["data.curhp"] = newHp;
 
-    let message = `Resting for the day.`;
+    let message = restOptions.days > 0 ? `Long-term rest.` : `Resting for the day.`;
     if (healedBy > 0) {
       const added =
         restHealing.names.length > 0 ? ` (${restHealing.names.join(", ")})` : "";
@@ -1236,9 +1244,20 @@ ${getLevelUpSummary(gains)}`,
 
     // Find effects that need to be modified
     const effects = record?.effects || [];
-    const fatiguedEffect = effects.find((effect) =>
+    const hadFatigued = effects.find((effect) =>
       effect.name.toLowerCase().startsWith("fatigued"),
     );
+    // Sleeping in armor: fatigue doesn't go, and comes if it wasn't there
+    const fatiguedEffect = wakesFatigued ? null : hadFatigued;
+
+    // The message once every effect change is done, then fatigue from armor
+    const finishRest = () => {
+      const notes = getRestOptionNotes(record, restOptions);
+      api.sendMessage(`${message}${notes.length > 0 ? `\n${notes.join(" ")}` : ""}`, undefined, [], []);
+      if (wakesFatigued && !hadFatigued) {
+        api.addEffect("Fatigued", record);
+      }
+    };
     const doomedEffect = effects.find((effect) =>
       effect.name.toLowerCase().startsWith("doomed"),
     );
@@ -1260,19 +1279,19 @@ ${getLevelUpSummary(gains)}`,
               if (drainedEffect) {
                 message += " Drained condition reduced by 1.";
                 api.deductEffectById(drainedEffect._id, record, () => {
-                  api.sendMessage(message, undefined, [], []);
+                  finishRest();
                 });
               } else {
-                api.sendMessage(message, undefined, [], []);
+                finishRest();
               }
             });
           } else if (drainedEffect) {
             message += " Drained condition reduced by 1.";
             api.deductEffectById(drainedEffect._id, record, () => {
-              api.sendMessage(message, undefined, [], []);
+              finishRest();
             });
           } else {
-            api.sendMessage(message, undefined, [], []);
+            finishRest();
           }
         });
       } else {
@@ -1283,19 +1302,19 @@ ${getLevelUpSummary(gains)}`,
             if (drainedEffect) {
               message += " Drained condition reduced by 1.";
               api.deductEffectById(drainedEffect._id, record, () => {
-                api.sendMessage(message, undefined, [], []);
+                finishRest();
               });
             } else {
-              api.sendMessage(message, undefined, [], []);
+              finishRest();
             }
           });
         } else if (drainedEffect) {
           message += " Drained condition reduced by 1.";
           api.deductEffectById(drainedEffect._id, record, () => {
-            api.sendMessage(message, undefined, [], []);
+            finishRest();
           });
         } else {
-          api.sendMessage(message, undefined, [], []);
+          finishRest();
         }
       }
     };

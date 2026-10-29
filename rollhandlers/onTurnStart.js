@@ -58,6 +58,16 @@ if (isCharacter && getDyingValue(token) > 0 && !isTokenDead(token)) {
   });
 }
 
+// Fast healing and regeneration: Hit Points back at the start of the
+// monster's turn, and regeneration switched off before it stays off through
+// it (healing-tools.js). Once per round.
+if (token && token.recordType === "npcs") {
+  const selfHealing = getSelfHealing(token);
+  if (selfHealing.fastHealing || selfHealing.regeneration) {
+    getCombatRound((round) => runTurnStartSelfHealing(token, round));
+  }
+}
+
 // Whose turn it is, for the attack log: the multiple attack penalty and the
 // momentum weapon traits count this turn's attacks (attack-log.js). The round
 // keeps the turn's log when Next after Previous starts the same turn again.

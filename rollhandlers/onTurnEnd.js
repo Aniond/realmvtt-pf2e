@@ -50,8 +50,10 @@ applyDamage(null, roll, false);
 \`\`\``;
     // The recovery flat check, as damage.js offers for rolled persistent
     // damage
+    // (rolled now with the setting on), and the button for help
+    // (healing-tools.js)
     const recovery =
-      partIndex >= 0 ? `\n${getPersistentRecoveryButton(recoveryDC, partIndex)}` : "";
+      partIndex >= 0 ? `\n${getPersistentRecoveryOutput(recoveryDC, partIndex, token?._id)}` : "";
     api.sendMessage(`${macro}${recovery}`, undefined, undefined, undefined, token);
   }
 };
@@ -63,6 +65,13 @@ getTurnEndPersistentDamage(token).forEach(({ value, partIndex }) => {
     processPersistentDamage(value, partIndex);
   }
 });
+
+// Regeneration switched off before this turn comes back on as it ends
+// (healing-tools.js)
+const regenerationValues = getTurnEndRegenerationValues(token);
+if (token && regenerationValues) {
+  api.setValuesOnTokenById(token._id, token.recordType, regenerationValues);
+}
 
 // Condition upkeep: frightened goes down by 1 at the end of each of the
 // creature's turns, but not again when Next after Previous ends the same turn

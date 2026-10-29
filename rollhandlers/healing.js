@@ -33,6 +33,9 @@ let message = "";
 
 // Treat Wounds' healing also ends the wounded condition (dying.js)
 const treatWounds = data.roll?.metadata?.treatWounds === true;
+// Treat Wounds or Battle Medicine: who healed, for the patient's immunity
+// (healing-tools.js)
+const medicine = data.roll?.metadata?.medicine || null;
 
 const tempMacro = tempHealing
   ? `
@@ -96,7 +99,7 @@ const healingMacro = regularHealing
   
   targets.forEach(target => {
     // Hit Points, dying and unconscious, and wounded for Treat Wounds
-    applyHealingToToken(target?.token || target, healing, { treatWounds: ${treatWounds}, isSpell: ${data.roll?.metadata?.isSpell === true}, source: ${JSON.stringify(String(data.roll?.metadata?.rollName || ""))}, damageSource: ${JSON.stringify(data.roll?.metadata?.damageSource || null)} });
+    applyHealingToToken(target?.token || target, healing, { treatWounds: ${treatWounds}, medicine: ${JSON.stringify(medicine)}, action: ${JSON.stringify(medicine?.label || "")}, isSpell: ${data.roll?.metadata?.isSpell === true}, source: ${JSON.stringify(String(data.roll?.metadata?.rollName || ""))}, damageSource: ${JSON.stringify(data.roll?.metadata?.damageSource || null)} });
   });
   \`\`\`
   `

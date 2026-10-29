@@ -270,6 +270,9 @@ function applyHealingToToken(target, healing, options = {}) {
   const received = getHealingReceivedAdjustment(target, options);
   healing = Math.max(0, healing + received.amount);
   if (!(healing > 0)) {
+    // Treat Wounds and Battle Medicine still leave the patient immune
+    // (healing-tools.js)
+    if (options.medicine) applyMedicineImmunity(target, options.medicine);
     return;
   }
   const oldHp = parseInt(target.data?.curhp || "0", 10) || 0;
@@ -286,14 +289,34 @@ function applyHealingToToken(target, healing, options = {}) {
     valuesToSet["data.wounded"] = 0;
     lines.push("no longer wounded");
   }
+  // Persistent bleed ends at full Hit Points (healing-tools.js)
+  const endsBleed = maxHp > 0 && newHp >= maxHp && getPersistentBleedIndexes(target).length > 0;
+  if (endsBleed) {
+    lines.push("persistent bleed ends");
+  }
   const oldValues = {};
   for (const key of Object.keys(valuesToSet)) {
     oldValues[key] =
       key === "data.curhp" ? oldHp : parseInt(target.data?.[key.slice(5)] || "0", 10) || 0;
   }
-  api.setValuesOnTokenById(target._id, target.recordType, valuesToSet);
+  // extraValues: the caller's own values in the same write, left out of Undo
+  // (fast healing's round, healing-tools.js)
+  api.setValuesOnTokenById(target._id, target.recordType, { ...valuesToSet, ...(options.extraValues || {}) });
+  // One effect change after the other: waking, the bleed, the immunity
+  const afterBleed = () => {
+    if (options.medicine) applyMedicineImmunity(target, options.medicine);
+  };
+  const afterWake = () => {
+    if (endsBleed) {
+      endPersistentBleed(target, afterBleed);
+    } else {
+      afterBleed();
+    }
+  };
   if (wake) {
-    wakeCreature(target);
+    wakeCreature(target, afterWake);
+  } else {
+    afterWake();
   }
 
   const name = getCreatureName(target);

@@ -436,7 +436,7 @@ section("Refocus, an hour passing and rest");
   assert("nothing to bring back: nothing written", [calls, state.messages[0]], [[], "An hour passes. No uses to bring back."]);
   ctx.record = spent();
   reset();
-  ctx.rest();
+  ctx.restWith({}); // rest() asks how they rested first (healing-tools.js)
   const rested = calls.find((call) => call[0] === "setValues")?.[1] || {};
   assert(
     "rest: per day and everything shorter",
@@ -446,7 +446,7 @@ section("Refocus, an hour passing and rest");
   assertIncludes("the message says so", state.messages[0], "Uses back: Clue In, Orc Ferocity and Per Hour.");
   ctx.record = apply(spent(), { "data.orcFerocityUsed": true });
   reset();
-  ctx.rest();
+  ctx.restWith({}); // rest() asks how they rested first (healing-tools.js)
   const flagged = calls.find((call) => call[0] === "setValues")?.[1] || {};
   assert("and the old Orc Ferocity flag is cleared", [flagged["data.feats.0.data.usesLeft"], flagged["data.orcFerocityUsed"]], [1, false]);
   ctx.record = { data: {}, fields: {}, type: "characters", _id: "test" };

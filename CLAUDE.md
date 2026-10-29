@@ -207,6 +207,28 @@ Animal companions are characters, as Foundry's PF2e Companion Compendia builds t
   - Crossing a limit posts a chat card (`getEncumbranceMessage`), with an Apply_Encumbered button when the character becomes encumbered. It's posted only for changes the user made: `updateTotalBulk(record, true, true)` (adding, removing, using or selling an item, coins, a count). The tab's onload never posts it.
   - `speedPenalty` (untyped) and `speedPenalty-circumstance`/`-item`/`-status` effect types exist. Foundry's Encumbered is an untyped -10 to all Speeds plus Clumsy 1.
 
+### Healing tools (Treat Wounds and Battle Medicine, persistent damage, rest, regeneration)
+
+`rollhandlers/healing-tools.js`:
+
+- Treat Wounds and Battle Medicine: `treatWounds(kind)` runs both (`battleMedicine()` is `treatWounds("battleMedicine")`, the button on the Battle Medicine feat's card).
+  - The metadata's `treatWounds` carries `kind`, `healerId` and `healerName`. The healing adds the module's "Treat Wounds Immunity" (anyone's, 1 hour) or "Battle Medicine Immunity" (that healer's, 1 day) with the healer as applier (`applyMedicineImmunity`). Every result card also has an Apply button for it, safe to click again.
+  - A patient already immune gets a warning before the check (`getMedicineImmunityWarning`). Nothing is blocked.
+  - Battle Medicine's healing passes `treatWounds: false`, so wounded stays.
+  - Several instances of an effect: `effectIds` repeats the id, and `effectValues[id]` becomes an array of `{ value, tokenId, tokenName }` (`getEffectInstances`).
+- Persistent damage:
+  - `applyPersistentDamage` keeps the higher of one type (`getPersistentStackChange`, by average): a lower or equal one isn't added, and a higher one replaces it (`removeEffectById` with `instanceIndex`).
+  - The recovery check: `getPersistentRecoveryOutput` gives the Roll_Recovery button, or rolls it now with the setting "Persistent Damage Recovery" (`persistentRecoveryRoll: auto`), plus an Assisted Recovery button at DC - 5. `flatCheck.js` finds the token by `metadata.tokenId` for an automatic roll.
+  - Healing to full Hit Points ends persistent bleed (`applyHealingToToken`, `endPersistentBleed`).
+- Rest: `rest()` asks first (`showRestOptions`), then runs `restWith(options)`.
+  - No shelter halves the healing (minimum 1). Each long-term rest day heals double (`getRestHealingAmount`). Sleeping in armor without the comfort trait wakes the character fatigued (`isRestFatiguing`).
+  - The chat line reminds the GM to advance the calendar. `showWatchOrder()` (a GM chat macro) posts the party's watches (GM Core: 8 h x n / (n - 1)).
+- Fast healing and regeneration (NPCs, from `hpDetails` or an ability's name, `getSelfHealing`):
+  - `onTurnStart` heals once per round (`data.selfHealRound`, in the healing's own write via `applyHealingToToken`'s `extraValues`).
+  - Damage of a listed type, after IWR, sets `data.regenerationOff` to "pending". The next turn start makes it the round number, and that turn's end clears it, so regeneration is off until the end of the creature's next turn.
+  - With regeneration on, a monster at 0 HP is dying (up to 3) and unconscious, not dead (`getRegenerationZeroHpChanges`).
+- Ferocity (an NPC ability named so): a button at 0 HP until wounded 3. `useMonsterFerocity` sets 1 HP and wounded + 1, and removes the Dead or Unconscious the damage added.
+
 ### Data Structure
 
 - Character data is nested under `record.data`
