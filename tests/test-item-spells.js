@@ -504,7 +504,7 @@ section("The entry stays out of slots and the class's entries; rest refills its 
     writes.push(values);
     if (cb) cb(copy(stored()));
   };
-  ctx.rest();
+  ctx.restWith({}); // rest() asks how they rested first (healing-tools.js)
   const rested = writes.find((values) => "data.curhp" in values) || {};
   assert("rest refills the wand's use", rested["data.inventory.0.data.uses.value"], 1);
   assert("and its row shows it", rested["data.spells.1.data.spells3.0.data.uses"], 1);

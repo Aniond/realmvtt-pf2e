@@ -50,8 +50,10 @@ applyDamage(null, roll, false);
 \`\`\``;
     // The recovery flat check, as damage.js offers for rolled persistent
     // damage
+    // (rolled now with the setting on), and the button for help
+    // (healing-tools.js)
     const recovery =
-      partIndex >= 0 ? `\n${getPersistentRecoveryButton(recoveryDC, partIndex)}` : "";
+      partIndex >= 0 ? `\n${getPersistentRecoveryOutput(recoveryDC, partIndex, token?._id)}` : "";
     api.sendMessage(`${macro}${recovery}`, undefined, undefined, undefined, token);
   }
 };

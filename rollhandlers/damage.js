@@ -308,7 +308,7 @@ applyPersistentDamage("${doubledPersistentDamage}", "${tokenId}", "${tokenName}"
 const persistentRecoveryMacro =
   isPersistant && persistentPartIndex >= 0
     ? `
-${getPersistentRecoveryButton(data.roll?.metadata?.recoveryDC, persistentPartIndex)}
+${getPersistentRecoveryOutput(data.roll?.metadata?.recoveryDC, persistentPartIndex, tokenId)}
 `
     : "";
 

@@ -5420,6 +5420,9 @@
         },
         "InventoryTools": {
           "file": "rollhandlers/inventory-tools.js"
+        },
+        "HealingTools": {
+          "file": "rollhandlers/healing-tools.js"
         }
       },
       "defaultDice": "default",
@@ -5505,6 +5508,21 @@
           {
             "label": "Yes",
             "value": "yes"
+          }
+        ]
+      },
+      {
+        "name": "Persistent Damage Recovery",
+        "key": "persistentRecoveryRoll",
+        "description": "Player Core pg. 450. After persistent damage, the DC 15 flat check to end it: a button to roll, or rolled automatically. Either way a button for particularly appropriate help (DC 10) comes with it.",
+        "values": [
+          {
+            "label": "Button",
+            "value": "button"
+          },
+          {
+            "label": "Roll Automatically",
+            "value": "auto"
           }
         ]
       },

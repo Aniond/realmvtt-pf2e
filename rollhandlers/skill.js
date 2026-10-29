@@ -141,8 +141,19 @@ if (dc > 0) {
     message += `\n\n${outcomeMessage}`;
   }
 
-  // Handle Treat Wounds results
+  // Handle Treat Wounds results (and Battle Medicine's, which keep wounded):
+  // who healed, for the patient's immunity (healing-tools.js)
   const treatWoundsData = data?.roll?.metadata?.treatWounds;
+  const medicineKind = getMedicineKind(treatWoundsData?.kind);
+  const medicine = treatWoundsData
+    ? {
+        kind: medicineKind.kind,
+        label: medicineKind.label,
+        healerId: treatWoundsData.healerId || null,
+        healerName: treatWoundsData.healerName || "",
+      }
+    : null;
+  const woundedText = medicineKind.endsWounded ? " and loses the wounded condition" : "";
   if (
     treatWoundsData &&
     (degreeOfSuccess === 1 || degreeOfSuccess === 2 || degreeOfSuccess === -1)
@@ -153,11 +164,11 @@ if (dc > 0) {
     if (degreeOfSuccess === 2) {
       // Critical Success: 4d8 HP (+ bonus) and remove wounded condition
       healingFormula = treatWoundsData.critSuccessHealing;
-      message += `\n\n**The target regains ${healingFormula} Hit Points and loses the wounded condition.**`;
+      message += `\n\n**The target regains ${healingFormula} Hit Points${woundedText}.**`;
     } else if (degreeOfSuccess === 1) {
       // Success: 2d8 HP (+ bonus) and remove wounded condition
       healingFormula = treatWoundsData.successHealing;
-      message += `\n\n**The target regains ${healingFormula} Hit Points and loses the wounded condition.**`;
+      message += `\n\n**The target regains ${healingFormula} Hit Points${woundedText}.**`;
     } else if (degreeOfSuccess === -1) {
       // Critical Failure: 1d8 damage
       damageFormula = "1d8";
@@ -185,7 +196,7 @@ if (targets.length === 0) {
   api.showNotification("No targets selected for healing", "error");
 } else {
   // Roll healing for the first target
-  api.roll("${healingFormula}", { rollName: "Treat Wounds Healing", targets: targets, treatWounds: true }, "healing");
+  api.roll("${healingFormula}", { rollName: "${medicineKind.label} Healing", targets: targets, treatWounds: ${medicineKind.endsWounded}, medicine: ${JSON.stringify(medicine)} }, "healing");
 }
 \`\`\``;
       message += `\n\n${healingMacro}`;
@@ -209,11 +220,17 @@ if (targets.length === 0) {
   api.showNotification("No targets selected for damage", "error");
 } else {
   // Roll damage for the first target
-  api.roll("${damageFormula}", { rollName: "Treat Wounds Critical Failure", targets: targets }, "damage");
+  api.roll("${damageFormula}", { rollName: "${medicineKind.label} Critical Failure", targets: targets }, "damage");
 }
 \`\`\``;
       message += `\n\n${damageMacro}`;
     }
+  }
+
+  // Whatever the result, the patient is then immune: added with the healing,
+  // or with this button (healing-tools.js)
+  if (medicine) {
+    message += `\n\nThe target is now immune to ${medicineKind.perHealer ? `${medicine.healerName}'s ` : ""}${medicineKind.label} for ${medicineKind.duration}.\n${getMedicineImmunityButton(medicine)}`;
   }
 
   // Administer First Aid: the result and the button that applies it
