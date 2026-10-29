@@ -12,43 +12,6 @@ if (partyTokens.length > 0) {
   );
   const partySize = partyTokens.length;
 
-  // XP lookup tables
-  const creatureXP = {
-    "-4": 10,
-    "-3": 15,
-    "-2": 20,
-    "-1": 30,
-    0: 40,
-    1: 60,
-    2: 80,
-    3: 120,
-    4: 160,
-  };
-
-  const simpleHazardXP = {
-    "-4": 2,
-    "-3": 3,
-    "-2": 4,
-    "-1": 6,
-    0: 8,
-    1: 12,
-    2: 16,
-    3: 24,
-    4: 32,
-  };
-
-  const complexHazardXP = {
-    "-4": 10,
-    "-3": 15,
-    "-2": 20,
-    "-1": 30,
-    0: 40,
-    1: 60,
-    2: 80,
-    3: 120,
-    4: 160,
-  };
-
   // Filter enemy tokens
   const enemies = (data?.tokens || []).filter((t) => t?.faction === "enemy");
 
@@ -61,34 +24,14 @@ if (partyTokens.length > 0) {
     const tokenType = token?.data?.type;
     const levelDiff = tokenLevel - avgPartyLevel;
 
-    let xp = 0;
-    let typeLabel = "";
-
-    // Creatures more than 4 levels below the party grant 0 XP
-    if (levelDiff < -4) {
-      xp = 0;
-      typeLabel =
-        tokenType === "hazard" ? "Trivial Hazard" : "Trivial Creature";
-    } else {
-      // Clamp level difference to -4 to +4 for XP lookup
-      const clampedDiff = Math.max(-4, Math.min(4, levelDiff));
-      const diffKey = clampedDiff.toString();
-
-      // Determine if it's a hazard or creature
-      if (tokenType === "hazard") {
-        const isComplex = token?.data?.isComplex || false;
-        if (isComplex) {
-          xp = complexHazardXP[diffKey];
-          typeLabel = "Complex Hazard";
-        } else {
-          xp = simpleHazardXP[diffKey];
-          typeLabel = "Simple Hazard";
-        }
-      } else {
-        // null, undefined, or "npc" are treated as creatures
-        xp = creatureXP[diffKey];
-        typeLabel = "Creature";
-      }
+    // Creatures too far below the party grant no XP; Proficiency without
+    // Level uses its own table (gm-tools.js)
+    const isHazard = tokenType === "hazard";
+    const isComplex = !!token?.data?.isComplex;
+    const xp = getEncounterXp(levelDiff, { hazard: isHazard, complex: isComplex });
+    let typeLabel = isHazard ? (isComplex ? "Complex Hazard" : "Simple Hazard") : "Creature";
+    if (xp === 0) {
+      typeLabel = isHazard ? "Trivial Hazard" : "Trivial Creature";
     }
 
     totalXP += xp;

@@ -5394,6 +5394,9 @@
         },
         "AnimalCompanions": {
           "file": "rollhandlers/animal-companions.js"
+        },
+        "GmTools": {
+          "file": "rollhandlers/gm-tools.js"
         }
       },
       "defaultDice": "default",
@@ -5479,6 +5482,29 @@
           {
             "label": "Yes",
             "value": "yes"
+          }
+        ]
+      },
+      {
+        "name": "Advancement Speed",
+        "key": "advancementSpeed",
+        "description": "GM Core. XP a character needs for each level: fast 800, standard 1,000, slow 1,200, or story milestones (no XP bar; Level Up is always available and the GM says when).",
+        "values": [
+          {
+            "label": "Standard (1,000 XP)",
+            "value": "standard"
+          },
+          {
+            "label": "Fast (800 XP)",
+            "value": "fast"
+          },
+          {
+            "label": "Slow (1,200 XP)",
+            "value": "slow"
+          },
+          {
+            "label": "Story Milestones",
+            "value": "milestone"
           }
         ]
       },
