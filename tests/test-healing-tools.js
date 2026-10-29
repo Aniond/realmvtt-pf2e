@@ -198,7 +198,7 @@ section("Fast healing, regeneration and ferocity (Q10)");
   reset();
   ctx.runTurnStartSelfHealing(troll(), 3);
   assert("turn start: only the round is written", calls, [["set", "troll", { "data.selfHealRound": 3 }]]);
-  assertIncludes("... the card says what deactivates it", state.messages[0], "Regeneration 20 (deactivated by electricity or fire), unless deactivated.");
+  assertIncludes("... the card says what deactivates it, to the GM only", state.messages[0], "Regeneration 20[gm] (deactivated by electricity or fire)[/gm], unless deactivated.");
   assertIncludes("... with an Apply Healing button", state.messages[0], "```Apply_Healing");
   assertIncludes("... that heals through applyHealingToToken", state.messages[0], 'applyHealingToToken(token, 20, {"source":"regeneration 20"})');
   reset();

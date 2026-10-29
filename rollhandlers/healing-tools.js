@@ -458,7 +458,7 @@ function getTurnStartSelfHealing(creature) {
       amount: regeneration,
       source: `regeneration ${regeneration}`,
       button: "Apply_Regeneration",
-      line: `Regeneration ${regeneration}${types ? ` (deactivated by ${types})` : ""}, unless deactivated.`,
+      line: `Regeneration ${regeneration}${types ? `[gm] (deactivated by ${types})[/gm]` : ""}, unless deactivated.`,
     });
   }
   return parts;
