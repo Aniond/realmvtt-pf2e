@@ -36,7 +36,7 @@
       () => {
         // Requery the record to get the latest data
         api.getRecord(recordType, recordId, (recordRetrieved) => {
-          updateTotalBulk(recordRetrieved);
+          updateTotalBulk(recordRetrieved, true, true);
         });
       }
     );

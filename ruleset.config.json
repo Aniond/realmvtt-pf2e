@@ -4103,6 +4103,11 @@
         "freeTextField": false
       },
       {
+        "label": "Speed Penalty (Untyped)",
+        "type": "speedPenalty",
+        "fields": []
+      },
+      {
         "label": "Speed Circumstance Penalty",
         "type": "speedPenalty-circumstance",
         "fields": []
@@ -5492,6 +5497,21 @@
         "name": "Variant: Level 0 Characters",
         "key": "levelZeroCharacters",
         "description": "GM Core pg. 84. New characters start at level 0 with an ancestry and background but no class, and take a class on reaching 1st level.",
+        "values": [
+          {
+            "label": "No",
+            "value": "no"
+          },
+          {
+            "label": "Yes",
+            "value": "yes"
+          }
+        ]
+      },
+      {
+        "name": "Allow Selling from the Sheet",
+        "key": "sellFromSheet",
+        "description": "Shows a Sell button on each inventory item, which sells it for half its Price (treasure for full Price). Off by default, for GMs who run selling through a merchant, downtime or themselves.",
         "values": [
           {
             "label": "No",

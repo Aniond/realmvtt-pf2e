@@ -114,7 +114,33 @@ function getUninvestedUseWarning(item) {
 function getSellValueCp(item) {
   const unitCp = getItemPriceCp(item) / getItemBundleSize(item);
   const isTreasure = item?.data?.type === "treasure";
-  return Math.floor(isTreasure ? unitCp : unitCp / 2);
+  return isTreasure ? unitCp : unitCp / 2;
+}
+
+// What selling `count` of the item brings, in cp: the total is rounded down,
+// not each unit (10 arrows at 1 sp for 10 sell for 5 cp)
+function getSellTotalCp(item, count) {
+  return Math.floor(getSellValueCp(item) * count + 1e-9);
+}
+
+// The campaign setting "Allow Selling from the Sheet" (off by default): many
+// GMs run selling through a merchant or downtime
+function isSellingAllowed() {
+  const value = typeof api?.getSetting === "function" ? api.getSetting("sellFromSheet") : null;
+  return value === "yes";
+}
+
+// The rows' Sell buttons shown or hidden to match the setting: only the
+// fields that differ, for the Inventory tab's one write when it loads
+function getSellButtonValues(record) {
+  const hidden = !isSellingAllowed();
+  const valuesToSet = {};
+  (record?.data?.inventory || []).forEach((item, index) => {
+    if (item?.fields?.sellBtn?.hidden !== hidden) {
+      valuesToSet[`data.inventory.${index}.fields.sellBtn.hidden`] = hidden;
+    }
+  });
+  return valuesToSet;
 }
 
 // Why an item usually can't be sold (Player Core: shoddy items; temporary
@@ -135,7 +161,7 @@ function getSellValues(record, index, count) {
   const item = record?.data?.inventory?.[index];
   const have = parseFloat(item?.data?.count || "0") || 0;
   const sold = Math.max(0, Math.min(have, count));
-  const totalCp = getSellValueCp(item) * sold;
+  const totalCp = getSellTotalCp(item, sold);
   const valuesToSet = getCoinRefund(record, totalCp);
   const removeRow = sold >= have;
   if (!removeRow) {
@@ -147,18 +173,18 @@ function getSellValues(record, index, count) {
 // Sells an inventory item from the sheet: asks how many and confirms the
 // price, adds the coins, and takes the item off (or lowers its count)
 function sellInventoryItem(itemDataPath) {
+  if (!isSellingAllowed()) return;
   const index = parseInt(`${itemDataPath}`.split(".").pop(), 10);
   const item = record?.data?.inventory?.[index];
   if (!item) return;
   const have = parseFloat(item.data?.count || "0") || 0;
   if (have <= 0) return;
   const confirmSale = (count) => {
-    const each = getSellValueCp(item);
     const rule = item.data?.type === "treasure" ? "full Price (treasure)" : "half Price";
     const note = getSellNote(item);
     api.showConfirm(
       `Sell ${item.name}`,
-      `Sell ${count > 1 ? `${count} ` : ""}${item.name} for ${formatCp(each * count)} (${rule})?${note ? `\n\n${note}` : ""}`,
+      `Sell ${count > 1 ? `${count} ` : ""}${item.name} for ${formatCp(getSellTotalCp(item, count))} (${rule})?${note ? `\n\n${note}` : ""}`,
       "Sell",
       "Cancel",
       () => finishSale(item._id, count),
@@ -202,6 +228,11 @@ function finishSale(itemId, count) {
     const recalc = () =>
       api.getRecord(current.recordType, current._id, (after) => {
         const updated = after || current;
+        // The sale changed the Bulk carried: a card if it crossed a limit
+        const encumbrance = getEncumbranceMessage(updated, current.data?.totalBulk, updateTotalBulk(updated, false));
+        if (encumbrance) {
+          api.sendMessage(encumbrance);
+        }
         if (wasEquipped && removeRow) {
           onAddEditFeature(updated, undefined, true);
         } else {

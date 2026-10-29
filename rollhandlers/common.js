@@ -4674,14 +4674,14 @@ performDamageRollForSpellOrItem("${record._id}","${record.recordType}", "${itemD
       api.setValues(valuesToSet, () => {
         // Re-query the record to get the latest data
         api.getRecord(record.recordType, record._id, (updatedRecord) => {
-          updateTotalBulk(updatedRecord, true);
+          updateTotalBulk(updatedRecord, true, true);
         });
       });
     } else if (shouldDestroy && !isNaN(indexValue)) {
       api.removeValue(`data.inventory`, indexValue, () => {
         // Re-query the record to get the latest data
         api.getRecord(record.recordType, record._id, (updatedRecord) => {
-          updateTotalBulk(updatedRecord, true);
+          updateTotalBulk(updatedRecord, true, true);
         });
       });
     }
@@ -4839,6 +4839,13 @@ function setItemFields(item, itemDataPath, valuesToSet) {
     itemFields?.invested?.hidden !== true
   ) {
     valuesToSet[`${itemDataPath}.fields.invested.hidden`] = true;
+  }
+
+  // The Sell button follows the "Allow Selling from the Sheet" setting
+  // (inventory-tools.js)
+  const sellHidden = !isSellingAllowed();
+  if (itemDataPath && itemFields?.sellBtn?.hidden !== sellHidden) {
+    valuesToSet[`${itemDataPath}.fields.sellBtn.hidden`] = sellHidden;
   }
 
   if ((isConsumable || hasUseBtn) && itemFields?.useBtn?.hidden !== false) {
@@ -9853,7 +9860,10 @@ function rollSkillCheck(skill, dc, options = {}) {
   });
 }
 
-function updateTotalBulk(record, setValue = true) {
+// announce: post the encumbrance card when the new total crosses a limit.
+// Only for changes the user made (adding, removing or using an item, coins),
+// never when a sheet or tab loads
+function updateTotalBulk(record, setValue = true, announce = false) {
   // Update total weight
   const items = record?.data?.inventory || [];
   let totalBulk = 0;
@@ -9909,7 +9919,7 @@ function updateTotalBulk(record, setValue = true) {
   if (setValue) {
     api.setValuesOnRecord(record, { "data.totalBulk": totalBulk });
     // Crossing a Bulk limit: a chat card (Apply Encumbered)
-    const encumbrance = getEncumbranceMessage(record, record?.data?.totalBulk, totalBulk);
+    const encumbrance = announce && getEncumbranceMessage(record, record?.data?.totalBulk, totalBulk);
     if (encumbrance) {
       api.sendMessage(encumbrance);
     }

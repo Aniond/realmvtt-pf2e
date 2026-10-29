@@ -58,7 +58,12 @@ section("Selling (Q30)");
   const gem = item("Jade", { type: "treasure", price: { value: { gp: 10 } } });
   assert("treasure sells for its full Price", ctx.getSellValueCp(gem), 1000);
   const arrows = item("Arrows", { type: "weapon", bundleSize: 10, price: { value: { sp: 1 } }, count: 30 });
-  assert("a bundle's Price is shared: an arrow sells for 0 cp (half of 1 cp, rounded down)", ctx.getSellValueCp(arrows), 0);
+  assert("a bundle's Price is shared: an arrow is worth half of 1 cp", ctx.getSellValueCp(arrows), 0.5);
+  assert("the total is rounded down, not each arrow: 10 sell for 5 cp", ctx.getSellTotalCp(arrows, 10), 5);
+  assert("... 1 sells for 0 cp", ctx.getSellTotalCp(arrows, 1), 0);
+  assert("... 3 sell for 1 cp", ctx.getSellTotalCp(arrows, 3), 1);
+  const quiver = character([arrows], { cp: 0 });
+  assert("selling 10 of 30 arrows: +5 cp, 20 left", ctx.getSellValues(quiver, 0, 10).valuesToSet, { "data.cp": 5, "data.inventory.0.data.count": 20 });
   assertIncludes("shoddy: a note", ctx.getSellNote(item("Shoddy Longsword", {})), "Shoddy");
   assertIncludes("infused: a note", ctx.getSellNote(item("Elixir", { traits: ["Infused"] })), "infused");
   assert("an ordinary item: none", ctx.getSellNote(sword), "");
@@ -69,6 +74,28 @@ section("Selling (Q30)");
   const some = ctx.getSellValues(pc, 1, 2);
   assert("selling 2 of 3 gems: +20 gp, 1 left", [some.valuesToSet, some.removeRow], [{ "data.gp": 22, "data.inventory.1.data.count": 1 }, false]);
   assert("can't sell more than you have", ctx.getSellValues(pc, 1, 9).sold, 3);
+
+  // The setting "Allow Selling from the Sheet" is off by default
+  assert("selling is off by default", ctx.isSellingAllowed(), false);
+  const shown = character([sword, { ...gem, fields: { sellBtn: { hidden: true } } }]);
+  assert("off: the tab's load hides only the rows not hidden yet", ctx.getSellButtonValues(shown), { "data.inventory.0.fields.sellBtn.hidden": true });
+  const offValues = {};
+  ctx.setItemFields(sword, "data.inventory.0", offValues);
+  assert("off: setItemFields hides a new row's Sell button", offValues["data.inventory.0.fields.sellBtn.hidden"], true);
+  const offCalls = [];
+  ctx.record = pc;
+  ctx.api.showConfirm = () => offCalls.push("confirm");
+  ctx.api.showPrompt = () => offCalls.push("prompt");
+  ctx.sellInventoryItem("data.inventory.1");
+  assert("off: sellInventoryItem does nothing", offCalls, []);
+
+  ctx.api.getSetting = (key) => (key === "sellFromSheet" ? "yes" : null);
+  assert("on: selling is allowed", ctx.isSellingAllowed(), true);
+  assert("on: the tab's load shows the hidden rows", ctx.getSellButtonValues(shown), {
+    "data.inventory.0.fields.sellBtn.hidden": false,
+    "data.inventory.1.fields.sellBtn.hidden": false,
+  });
+  assert("... and writes nothing once they match", ctx.getSellButtonValues(character([{ ...sword, fields: { sellBtn: { hidden: false } } }])), {});
 
   // The sheet flow: confirm, write the coins, then remove the row by its id
   const calls = [];
@@ -94,6 +121,7 @@ section("Selling (Q30)");
   assert("... the sword's row", calls[2].slice(1), ["data.inventory", 0]);
   assertIncludes("a chat line says what sold", ctx.__state.messages[0], "Sold Longsword for 5 sp");
   ctx.api.setValues = () => {};
+  ctx.api.getSetting = () => null;
 }
 
 section("Handwraps of mighty blows (Q33)");
@@ -147,6 +175,15 @@ section("Bulk limits and Encumbered (Q16)");
   assertIncludes("back to 7: no longer", ctx.getEncumbranceMessage(pc, 8, 7), "no longer encumbered");
   assertIncludes("over 12: can't carry that much", ctx.getEncumbranceMessage(pc, 10, 13), "more than the most they can carry (12)");
 
+  // The card is posted only for changes the user made, never when the tab loads
+  const heavy = character([item("Anvil", { bulk: { value: 8 }, count: 1, carried: "carried" })], { bulk: 7, maxBulk: 12, totalBulk: 6 });
+  ctx.__state.messages.length = 0;
+  ctx.updateTotalBulk(heavy, true);
+  assert("a load's recalc (no announce) posts no card", ctx.__state.messages, []);
+  ctx.updateTotalBulk(heavy, true, true);
+  assert("a user's change (announce) posts it", ctx.__state.messages.length, 1);
+  ctx.__state.messages.length = 0;
+
   // Speed penalties from effects (the Encumbered condition's -10 feet)
   const slowed = {
     ...character([]),
@@ -155,6 +192,9 @@ section("Bulk limits and Encumbered (Q16)");
   };
   const mods = ctx.getEffectsAndModifiersForToken(slowed, ["speedPenalty"]);
   assert("a speedPenalty-status effect reaches the Speed lookup", mods.map((m) => [m.value, m.type]), [[-10, "status"]]);
+  const untyped = { ...slowed, effects: [{ _id: "enc", name: "Encumbered", rules: [{ type: "speedPenalty", value: "10", valueType: "number" }] }] };
+  const untypedMods = ctx.getEffectsAndModifiersForToken(untyped, ["speedPenalty"]);
+  assert("an untyped speedPenalty effect (Foundry's Encumbered) reaches it too", untypedMods.map((m) => m.value), [-10]);
 }
 
 summary();

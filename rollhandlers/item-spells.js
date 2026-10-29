@@ -481,7 +481,7 @@ function getItemSpellCast(record, spell, rowPath, entryPath, isOverlay = false) 
 // place.
 function finishItemSpellCast(record, use) {
   if (!use?.bulk) return;
-  const recalc = (updated) => updateTotalBulk(updated || record, true);
+  const recalc = (updated) => updateTotalBulk(updated || record, true, true);
   api.getRecord(record.recordType, record._id, (fresh) => {
     const current = fresh || record;
     if (!use.destroy) return recalc(current);

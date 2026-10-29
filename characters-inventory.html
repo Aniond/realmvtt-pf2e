@@ -1,6 +1,15 @@
 <script>
   function updateCoinage() {
-    updateTotalBulk(record);
+    updateTotalBulk(record, true, true);
+  }
+
+  // When the tab loads: the total Bulk, and the Sell buttons shown or hidden
+  // to match the setting, in one write. No encumbrance card: nothing changed
+  function onInventoryLoad() {
+    api.setValuesOnRecord(record, {
+      "data.totalBulk": updateTotalBulk(record, false),
+      ...getSellButtonValues(record),
+    });
   }
 
   // After an add: a scroll or wand gets its row in the Scrolls and Wands
@@ -8,10 +17,10 @@
   // read again: item-spells.js)
   function afterItemsAdded(updated, items) {
     if (!items.some((item) => getItemSpellKind(item))) {
-      updateTotalBulk(updated);
+      updateTotalBulk(updated, true, true);
       return;
     }
-    syncItemSpells(updated, (fresh) => updateTotalBulk(fresh));
+    syncItemSpells(updated, (fresh) => updateTotalBulk(fresh, true, true));
   }
 
   function onDropItem(recordLink) {
@@ -147,6 +156,10 @@
     const valuesToSet = {};
     const totalBulk = updateTotalBulk(record, false);
     valuesToSet["data.totalBulk"] = totalBulk;
+    const encumbrance = getEncumbranceMessage(record, record?.data?.totalBulk, totalBulk);
+    if (encumbrance) {
+      api.sendMessage(encumbrance);
+    }
 
     api.setValues(valuesToSet, (recordUpdated) => {
       // A deleted scroll or wand takes its row out of the Scrolls and Wands
@@ -477,7 +490,7 @@
         variant="striped"
         field="inventory"
         onchange="onItemDeleted()"
-        onload="updateTotalBulk(record)"
+        onload="onInventoryLoad()"
         layout="rows"
         layoutfield="data.inventoryViewMode"
         cellsize="56"
@@ -492,7 +505,7 @@
         usesposition="tr"
         cellbadges='[{"field": "fields.invested.hidden", "eq": "false", "activeField": "data.invested", "activeEq": "true", "icon": "IconDiamond", "inactiveIcon": "IconDiamondOff", "position": "bl", "label": "Investment"}]'
         celltooltipfields='[{"label": "Type", "field": "data.type", "capitalize": true}, {"label": "Category", "field": "data.itemCategory", "capitalize": true}, {"label": "Bulk", "field": "data.bulk.value"}]'
-        cellactions='[{"label": "Equip", "fn": "gridEquip(data.itemIndex)", "icon": "IconShirt"}, {"label": "Carry (Unequip)", "fn": "gridCarry(data.itemIndex)", "icon": "IconBackpack"}, {"label": "Drop", "fn": "gridDrop(data.itemIndex)", "icon": "IconArrowDown"}, {"label": "Invest", "fn": "gridInvest(data.itemIndex)", "icon": "IconDiamond", "showField": "fields.invested.hidden", "showEq": "false"}, {"label": "Divest", "fn": "gridDivest(data.itemIndex)", "icon": "IconDiamondOff", "showField": "fields.invested.hidden", "showEq": "false"}, {"label": "Sell", "fn": "gridSell(data.itemIndex)", "icon": "IconCoins"}]'
+        cellactions='[{"label": "Equip", "fn": "gridEquip(data.itemIndex)", "icon": "IconShirt"}, {"label": "Carry (Unequip)", "fn": "gridCarry(data.itemIndex)", "icon": "IconBackpack"}, {"label": "Drop", "fn": "gridDrop(data.itemIndex)", "icon": "IconArrowDown"}, {"label": "Invest", "fn": "gridInvest(data.itemIndex)", "icon": "IconDiamond", "showField": "fields.invested.hidden", "showEq": "false"}, {"label": "Divest", "fn": "gridDivest(data.itemIndex)", "icon": "IconDiamondOff", "showField": "fields.invested.hidden", "showEq": "false"}, {"label": "Sell", "fn": "gridSell(data.itemIndex)", "icon": "IconCoins", "showField": "fields.sellBtn.hidden", "showEq": "false"}]'
         celluse="useGridItem(data.itemIndex)"
         celluselabel="Use"
         celluseshowfield="fields.useBtn.hidden"
