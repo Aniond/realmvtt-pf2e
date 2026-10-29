@@ -15663,10 +15663,6 @@ function applyDamage(
         0,
       );
 
-      // Damage of a type its regeneration lists turns it off until the end
-      // of the creature's next turn, before the damage lands (healing-tools.js)
-      const regenerationDeactivated = getRegenerationDeactivation(target, finalDamageByType);
-
       // Precision-specific IWR (immunity/resistance/weakness) was already
       // applied to the precision portion before the main IWR loop above, so
       // there is nothing further to adjust here.
@@ -15835,10 +15831,6 @@ function applyDamage(
       }
 
       valuesToSet["data.curhp"] = curhp;
-      if (regenerationDeactivated) {
-        oldValues["data.regenerationOff"] = target.data?.regenerationOff ?? "";
-        valuesToSet["data.regenerationOff"] = "pending";
-      }
 
       // Healing from 0 Hit Points ends dying and unconscious (dying.js)
       let wakes = false;
@@ -15922,10 +15914,6 @@ function applyDamage(
         message += ` No longer dying (wounded ${valuesToSet["data.wounded"]}).`;
       }
 
-      if (regenerationDeactivated) {
-        message += `\nRegeneration is off until the end of ${targetName}'s next turn.`;
-      }
-
       // Handle death conditions. Buttons (Heroic Recovery, Orc Ferocity) go
       // after the message, as its Undo button repeats the message's text.
       let dyingButtons = [];
@@ -15968,9 +15956,9 @@ function applyDamage(
           dyingButtons = buttons;
         } else if (target.recordType === "npcs") {
           // Other NPCs die at 0 HP, unless nonlethal damage knocks them out
-          // (Player Core pg. 410); objects are destroyed either way. Active
-          // regeneration keeps a monster dying (up to 3) and unconscious
-          // instead, and Ferocity can keep it at 1 HP (healing-tools.js).
+          // (Player Core pg. 410); objects are destroyed either way. The GM
+          // decides on regeneration (a button: dying and unconscious instead)
+          // and Ferocity (a button: 1 HP) (healing-tools.js).
           const ferocityBefore = {
             dying: getDyingValue(target),
             addedUnconscious: !getTokenCondition(target, "unconscious"),
@@ -15980,18 +15968,19 @@ function applyDamage(
               api.addEffects(["Unconscious", "Prone"], target);
             }
             message += `\n${targetName} is knocked out by nonlethal damage.`;
-          } else if (!isObject && hasActiveRegeneration(target, regenerationDeactivated)) {
-            message += `\n${getRegenerationZeroHpChanges(
-              target,
-              typeof isCritical !== "undefined" && isCritical && !immuneToCritical,
-              valuesToSet,
-              oldValues,
-            )}`;
           } else {
             api.addEffect("Dead", target);
             message += `\n${targetName} is ${isObject ? "destroyed" : "dead"}.`;
             ferocityBefore.addedDead = true;
             ferocityBefore.addedUnconscious = false;
+            if (!isObject && hasRegeneration(target)) {
+              dyingButtons.push(
+                getRegenerationButton(
+                  target,
+                  typeof isCritical !== "undefined" && isCritical && !immuneToCritical,
+                ),
+              );
+            }
           }
           if (!isObject && canUseMonsterFerocity(target)) {
             dyingButtons.push(getMonsterFerocityButton(target, ferocityBefore));

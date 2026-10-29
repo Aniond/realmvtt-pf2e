@@ -66,13 +66,6 @@ getTurnEndPersistentDamage(token).forEach(({ value, partIndex }) => {
   }
 });
 
-// Regeneration switched off before this turn comes back on as it ends
-// (healing-tools.js)
-const regenerationValues = getTurnEndRegenerationValues(token);
-if (token && regenerationValues) {
-  api.setValuesOnTokenById(token._id, token.recordType, regenerationValues);
-}
-
 // Condition upkeep: frightened goes down by 1 at the end of each of the
 // creature's turns, but not again when Next after Previous ends the same turn
 // a second time

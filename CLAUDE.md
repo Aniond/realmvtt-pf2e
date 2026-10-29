@@ -218,15 +218,14 @@ Animal companions are characters, as Foundry's PF2e Companion Compendia builds t
   - Several instances of an effect: `effectIds` repeats the id, and `effectValues[id]` becomes an array of `{ value, tokenId, tokenName }` (`getEffectInstances`).
 - Persistent damage:
   - `applyPersistentDamage` keeps the higher of one type (`getPersistentStackChange`, by average): a lower or equal one isn't added, and a higher one replaces it (`removeEffectById` with `instanceIndex`).
-  - The recovery check: `getPersistentRecoveryOutput` gives the Roll_Recovery button, or rolls it now with the setting "Persistent Damage Recovery" (`persistentRecoveryRoll: auto`), plus an Assisted Recovery button at DC - 5. `flatCheck.js` finds the token by `metadata.tokenId` for an automatic roll.
+  - The recovery check: `getPersistentRecoveryOutput` gives the Roll_Recovery button, or rolls it now with the setting "Persistent Damage Recovery" (`persistentRecoveryRoll: auto`), plus an Assisted Recovery button at a flat DC 10 (particularly appropriate help). `flatCheck.js` finds the token by `metadata.tokenId` for an automatic roll.
   - Healing to full Hit Points ends persistent bleed (`applyHealingToToken`, `endPersistentBleed`).
-- Rest: `rest()` asks first (`showRestOptions`), then runs `restWith(options)`.
+- Rest: `rest()` asks first (`showRestOptions`: one choice, a normal night's rest first, and a days prompt only for long-term rest), then runs `restWith(options)`.
   - No shelter halves the healing (minimum 1). Each long-term rest day heals double (`getRestHealingAmount`). Sleeping in armor without the comfort trait wakes the character fatigued (`isRestFatiguing`).
   - The chat line reminds the GM to advance the calendar. `showWatchOrder()` (a GM chat macro) posts the party's watches (GM Core: 8 h x n / (n - 1)).
 - Fast healing and regeneration (NPCs, from `hpDetails` or an ability's name, `getSelfHealing`):
-  - `onTurnStart` heals once per round (`data.selfHealRound`, in the healing's own write via `applyHealingToToken`'s `extraValues`).
-  - Damage of a listed type, after IWR, sets `data.regenerationOff` to "pending". The next turn start makes it the round number, and that turn's end clears it, so regeneration is off until the end of the creature's next turn.
-  - With regeneration on, a monster at 0 HP is dying (up to 3) and unconscious, not dead (`getRegenerationZeroHpChanges`).
+  - Never automatic: only the GM knows whether regeneration was deactivated (damage types, materials, traits). `onTurnStart` posts a card ("Regeneration 20 (deactivated by electricity or fire), unless deactivated.") with an Apply Healing button that calls `applyHealingToToken`. No card at full Hit Points, and once per round (`data.selfHealRound`).
+  - At 0 HP a regenerating monster is dead as any NPC, with a Regeneration button (`useRegeneration`): Dead off, dying (at most 3), unconscious and prone.
 - Ferocity (an NPC ability named so): a button at 0 HP until wounded 3. `useMonsterFerocity` sets 1 HP and wounded + 1, and removes the Dead or Unconscious the damage added.
 
 ### Data Structure

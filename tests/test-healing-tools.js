@@ -117,8 +117,8 @@ section("Persistent damage (Q12)");
   assertIncludes("... and the chat says why", state.messages[0], "already takes 1d6 fire persistent damage");
   selected = [];
 
-  assert("help lowers DC 15 to 10", ctx.getPersistentAssistDC(15), 10);
-  assert("... and Charhide Goblin's 10 to 5", ctx.getPersistentAssistDC(10), 5);
+  assertIncludes("help is a flat DC 10", ctx.getPersistentAssistButton(1, "orc1"), '"dc":10');
+  assertIncludes("... whatever the recovery DC", ctx.getPersistentRecoveryOutput(5, 1, "orc1"), "```Assisted_Recovery_(DC_10)");
   const output = ctx.getPersistentRecoveryOutput(15, 1, "orc1");
   assertIncludes("the recovery button", output, "```Roll_Recovery");
   assertIncludes("and the help button", output, "```Assisted_Recovery_(DC_10)");
@@ -155,6 +155,21 @@ section("Rest (Q28)");
   assert("slept in armor: fatigued", ctx.isRestFatiguing({ data: { inventory: [plate] } }, { armor: true }), true);
   assert("... not in comfort armor", ctx.isRestFatiguing({ data: { inventory: [comfy] } }, { armor: true }), false);
   assert("... not when the option isn't ticked", ctx.isRestFatiguing({ data: { inventory: [plate] } }, {}), false);
+  // The prompt: one choice, normal first; the days only for long-term rest
+  let prompts = [];
+  ctx.api.showPrompt = (title, text, placeholder, options, value, cb, ok, cancel, max) => prompts.push({ title, options, cb, max });
+  let rested = [];
+  ctx.showRestOptions({}, (options) => rested.push(options));
+  assert("one prompt, a single choice, a normal night first", [prompts.length, prompts[0].max, prompts[0].options[0].label], [1, 1, "Normal night's rest"]);
+  prompts[0].cb("normal");
+  assert("a normal night: no second prompt", [prompts.length, rested[0]], [1, { noShelter: false, armor: false, days: 0 }]);
+  prompts[0].cb(["noShelterArmor"]);
+  assert("no shelter, in armor", rested[1], { noShelter: true, armor: true, days: 0 });
+  prompts[0].cb("longTerm");
+  assert("long-term rest: then the days", [prompts.length, prompts[1].title, rested.length], [2, "Long-Term Rest", 2]);
+  prompts[1].cb("3");
+  assert("... 3 days", rested[2], { noShelter: false, armor: false, days: 3 });
+
   assertIncludes("the chat reminds the GM to advance the calendar", ctx.getRestOptionNotes({}, { days: 2 }).join(" "), "Long-term rest, 2 days: advance the calendar");
 
   assert("watches for 4: 10 hours 40 minutes, 2 hours 40 each", ctx.getWatchSchedule(4), { totalMinutes: 640, watchMinutes: 160 });
@@ -179,25 +194,27 @@ section("Fast healing, regeneration and ferocity (Q10)");
   assert("from an ability's name too", ctx.getSelfHealing(byAction), { fastHealing: 0, regeneration: 15, deactivatedBy: ["acid"] });
   assert("characters: none", ctx.getSelfHealing(token({ hpDetails: "fast healing 5" })).fastHealing, 0);
 
-  assert("fire damage turns it off", ctx.getRegenerationDeactivation(troll(), { fire: 6, slashing: 4 }), true);
-  assert("resisted to 0: it doesn't", ctx.getRegenerationDeactivation(troll(), { fire: 0 }), false);
-  assert("slashing doesn't", ctx.getRegenerationDeactivation(troll(), { slashing: 9 }), false);
-
-  // Turn start: heals once per round; off stays off through the next turn
+  // Turn start: a card for the GM, nothing healed on its own; once per round
   reset();
   ctx.runTurnStartSelfHealing(troll(), 3);
-  assert("turn start: +20 HP, and the round remembered in the same write", calls[0], ["set", "troll", { "data.curhp": 70, "data.selfHealRound": 3 }]);
+  assert("turn start: only the round is written", calls, [["set", "troll", { "data.selfHealRound": 3 }]]);
+  assertIncludes("... the card says what deactivates it", state.messages[0], "Regeneration 20 (deactivated by electricity or fire), unless deactivated.");
+  assertIncludes("... with an Apply Healing button", state.messages[0], "```Apply_Healing");
+  assertIncludes("... that heals through applyHealingToToken", state.messages[0], 'applyHealingToToken(token, 20, {"source":"regeneration 20"})');
   reset();
   ctx.runTurnStartSelfHealing(troll({ selfHealRound: 3 }), 3);
-  assert("not again in the same round", calls, []);
+  assert("not again in the same round", [calls, state.messages], [[], []]);
   reset();
-  ctx.runTurnStartSelfHealing(troll({ regenerationOff: "pending" }), 4);
-  assert("switched off before this turn: no healing, off through this turn", calls[0], ["set", "troll", { "data.selfHealRound": 4, "data.regenerationOff": 4 }]);
-  assertIncludes("... and the chat says so", state.messages[0], "regeneration is off this turn");
-  assert("its turn ends: back on", ctx.getTurnEndRegenerationValues(troll({ regenerationOff: 4 })), { "data.regenerationOff": "" });
-  assert("switched off during its own turn: stays off until the next one ends", ctx.getTurnEndRegenerationValues(troll({ regenerationOff: "pending" })), null);
+  ctx.runTurnStartSelfHealing(troll({ curhp: 125 }), 4);
+  assert("no card at full Hit Points", [calls, state.messages], [[], []]);
+  reset();
+  ctx.runTurnStartSelfHealing(token({ curhp: 3, hitpoints: 10, hpDetails: "fast healing 2" }, { id: "imp", name: "Imp", recordType: "npcs" }), 2);
+  assertIncludes("fast healing works the same way", state.messages[0], "Fast healing 2.");
+  reset();
+  ctx.runTurnStartSelfHealing(token({ curhp: 3, hitpoints: 10, hpDetails: "fast healing 2, regeneration 5 (deactivated by acid)" }, { id: "both", name: "Both", recordType: "npcs" }), 2);
+  assert("both: a button for each", ["Apply_Fast_Healing", "Apply_Regeneration"].every((label) => state.messages[0].includes("```" + label)), true);
 
-  // Damage: a listed type turns it off; at 0 HP with it on, dying, not dead
+  // Damage at 0 HP: dead as any NPC, with a Regeneration button for the GM
   const slash = (value, type = "slashing") => ({ types: [{ die: 6, value, type }], dice: [{ type: 6, value }], total: value, metadata: { traits: [], damageCategories: [], damageType: type } });
   const hit = (target, roll) => {
     reset();
@@ -205,16 +222,24 @@ section("Fast healing, regeneration and ferocity (Q10)");
     return { set: calls.filter((c) => c[0] === "set")[0]?.[2] || {}, calls, message: state.messages[state.messages.length - 1] || "" };
   };
   let r = hit(troll({ curhp: 5 }), slash(9));
-  assert("regeneration on: dying 1 at 0 HP, not dead", [r.set["data.curhp"], r.set["data.dying"], r.calls.some((c) => c[1] === "Dead")], [0, 1, false]);
-  assert("... unconscious and prone", r.calls.some((c) => c.includes("Unconscious")), true);
-  assertIncludes("... the message says why", r.message, "kept alive by regeneration (dying 1)");
+  assert("at 0 HP: dead, no dying", [r.set["data.curhp"], r.set["data.dying"], r.calls.some((c) => c[1] === "Dead")], [0, undefined, true]);
+  assertIncludes("... with a Regeneration button, dying 1", r.message, "useRegeneration(token, 1)");
   r = hit(troll({ curhp: 5, dying: 3 }), slash(9));
-  assert("dying stops at 3", r.set["data.dying"], 3);
-  r = hit(troll({ curhp: 5 }), slash(9, "fire"));
-  assert("fire: regeneration off first, so the troll dies", [r.set["data.regenerationOff"], r.calls.some((c) => c[1] === "Dead")], ["pending", true]);
-  assertIncludes("... the message says regeneration is off", r.message, "Regeneration is off until the end of Forest Troll's next turn");
+  assertIncludes("dying stops at 3", r.message, "useRegeneration(token, 3)");
   r = hit(troll({ curhp: 50 }), slash(9, "fire"));
-  assert("fire without 0 HP: just off", [r.set["data.regenerationOff"], r.calls.some((c) => c[1] === "Dead")], ["pending", false]);
+  assert("fire tracks nothing", Object.keys(r.set), ["data.curhp"]);
+  const goblin = token({ curhp: 5, hitpoints: 10 }, { id: "gob", name: "Goblin", recordType: "npcs" });
+  assertNotIncludes("no regeneration: no button", hit(goblin, slash(9)).message, "```Regeneration");
+
+  reset();
+  const deadTroll = troll({ curhp: 0 }, { effects: [[{ _id: "dead", name: "Dead", rules: [] }, undefined]] });
+  ctx.useRegeneration(deadTroll, 2);
+  assert("the button: dying 2, Dead off, then unconscious and prone", calls, [
+    ["set", "troll", { "data.dying": 2 }],
+    ["remove", "dead", "troll", undefined],
+    ["add", "Unconscious", "Prone", "troll"],
+  ]);
+  assertIncludes("... the chat says so", state.messages[0], "Forest Troll's regeneration");
 
   // Ferocity
   const orc = (data = {}) => token({ curhp: 5, hitpoints: 30, ...data, actions: [{ name: "Ferocity" }] }, { id: "orc", name: "Orc Brute", recordType: "npcs" });

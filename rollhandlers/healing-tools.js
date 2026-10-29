@@ -195,12 +195,9 @@ function isPersistentRecoveryAuto() {
   return value === "auto";
 }
 
-// Particularly appropriate help (Player Core pg. 450) lowers the DC to 10:
-// 5 less than the creature's own DC
-function getPersistentAssistDC(dc) {
-  const recoveryDC = parseInt(dc, 10) || PERSISTENT_RECOVERY_DC;
-  return Math.max(1, recoveryDC - 5);
-}
+// Particularly appropriate help (Player Core pg. 450) makes it a DC 10 flat
+// check, whatever the creature's own DC
+const PERSISTENT_ASSIST_DC = 10;
 
 function getPersistentRecoveryMetadata(dc, partIndex, tokenId, assisted = false) {
   return {
@@ -215,17 +212,16 @@ function getPersistentRecoveryMetadata(dc, partIndex, tokenId, assisted = false)
   };
 }
 
-function getPersistentAssistButton(dc, partIndex, tokenId) {
-  const assistDC = getPersistentAssistDC(dc);
+function getPersistentAssistButton(partIndex, tokenId) {
   const fence = "```";
-  return `${fence}Assisted_Recovery_(DC_${assistDC})\napi.promptRoll("Assisted Recovery", "1d20", [], ${JSON.stringify(getPersistentRecoveryMetadata(assistDC, partIndex, tokenId, true))}, "flatCheck");\n${fence}`;
+  return `${fence}Assisted_Recovery_(DC_${PERSISTENT_ASSIST_DC})\napi.promptRoll("Assisted Recovery", "1d20", [], ${JSON.stringify(getPersistentRecoveryMetadata(PERSISTENT_ASSIST_DC, partIndex, tokenId, true))}, "flatCheck");\n${fence}`;
 }
 
 // The recovery check after persistent damage: rolled now when the setting
 // says so, else the Roll_Recovery button. Either way, the button for help.
 function getPersistentRecoveryOutput(dc, partIndex, tokenId) {
   const recoveryDC = parseInt(dc, 10) || PERSISTENT_RECOVERY_DC;
-  const assist = getPersistentAssistButton(recoveryDC, partIndex, tokenId);
+  const assist = getPersistentAssistButton(partIndex, tokenId);
   if (isPersistentRecoveryAuto()) {
     api.roll("1d20", getPersistentRecoveryMetadata(recoveryDC, partIndex, tokenId), "flatCheck");
     return assist;
@@ -281,8 +277,11 @@ function endPersistentBleed(token, callback) {
 // ---------------------------------------------------------------- Rest
 
 const REST_OPTIONS = [
+  { label: "Normal night's rest", value: "normal" },
   { label: "No shelter or comfort (half healing)", value: "noShelter" },
   { label: "Slept in armor (wake fatigued)", value: "armor" },
+  { label: "No shelter, and slept in armor", value: "noShelterArmor" },
+  { label: "Long-term rest (full days)", value: "longTerm" },
 ];
 
 // Whether the character's worn armor lets them sleep in it (comfort trait)
@@ -310,41 +309,48 @@ function isRestFatiguing(creature, options = {}) {
   return !!options.armor && !hasComfortArmor(creature);
 }
 
-// The rest prompt: options, then long-term rest days, then the rest
+// The options a choice of the rest prompt stands for
+function getRestChoice(value) {
+  return {
+    noShelter: value === "noShelter" || value === "noShelterArmor",
+    armor: value === "armor" || value === "noShelterArmor",
+    days: 0,
+  };
+}
+
+// The rest prompt: one choice, and the number of days only for long-term rest
 function showRestOptions(creature, callback) {
   api.showPrompt(
     "Rest",
-    "How did the character rest? Leave both unticked for a normal night's rest.",
+    "How did the character rest?",
     "Select...",
     REST_OPTIONS,
     null,
     (choice) => {
-      const chosen = Array.isArray(choice) ? choice : choice ? [choice] : [];
+      const value = Array.isArray(choice) ? choice[0] : choice;
+      if (!value) return;
+      if (value !== "longTerm") {
+        callback(getRestChoice(value));
+        return;
+      }
       api.showPrompt(
         "Long-Term Rest",
-        "Full days of long-term rest (each heals double). Pick 8 hours for a normal rest.",
+        "Full days of long-term rest (each heals double).",
         "Select...",
-        [
-          { label: "8 hours", value: "0" },
-          ...[1, 2, 3, 4, 5, 6, 7].map((n) => ({ label: `${n} day${n > 1 ? "s" : ""}`, value: `${n}` })),
-        ],
+        [1, 2, 3, 4, 5, 6, 7].map((n) => ({ label: `${n} day${n > 1 ? "s" : ""}`, value: `${n}` })),
         null,
         (days) => {
-          const value = parseInt(Array.isArray(days) ? days[0] : days, 10) || 0;
-          callback({
-            noShelter: chosen.includes("noShelter"),
-            armor: chosen.includes("armor"),
-            days: value,
-          });
+          const count = parseInt(Array.isArray(days) ? days[0] : days, 10) || 0;
+          if (count > 0) callback({ ...getRestChoice("normal"), days: count });
         },
         "Rest",
         "Cancel",
         1,
       );
     },
-    "Next",
+    "Rest",
     "Cancel",
-    REST_OPTIONS.length,
+    1,
   );
 }
 
@@ -434,85 +440,101 @@ function getSelfHealing(creature) {
   return result;
 }
 
-// Regeneration is off from damage of a listed type until the end of the
-// creature's next turn: data.regenerationOff is "pending" until that turn
-// starts, then the round it started in, cleared when it ends
-function isRegenerationOff(creature) {
-  const off = creature?.data?.regenerationOff;
-  return off === "pending" || off === "on" || parseInt(off, 10) > 0;
-}
-
-// Whether damage of these types (after immunities, weaknesses and
-// resistances) turns the creature's regeneration off
-function getRegenerationDeactivation(creature, damageByType) {
-  const { regeneration, deactivatedBy } = getSelfHealing(creature);
-  if (!regeneration || deactivatedBy.length === 0) return false;
-  return Object.entries(damageByType || {}).some(
-    ([type, value]) => value > 0 && deactivatedBy.includes(`${type}`.toLowerCase()),
-  );
-}
-
-// Whether the creature's regeneration keeps it from dying (dying stops at 3)
-function hasActiveRegeneration(creature, deactivatedNow = false) {
-  return getSelfHealing(creature).regeneration > 0 && !deactivatedNow && !isRegenerationOff(creature);
-}
-
-// A monster with active regeneration at 0 Hit Points: dying (up to 3) and
-// unconscious, not dead
-function getRegenerationZeroHpChanges(target, critical, valuesToSet, oldValues) {
-  const dying = getDyingValue(target);
-  const next = Math.min(3, getDyingAfterDamage(target, critical));
-  oldValues["data.dying"] = dying;
-  valuesToSet["data.dying"] = next;
-  if (!getTokenCondition(target, "unconscious")) {
-    api.addEffects(["Unconscious", "Prone"], target);
-  }
-  return `${getCreatureName(target)} falls unconscious, kept alive by regeneration (dying ${next}).`;
-}
-
-// The Hit Points a creature gets back at the start of its turn, and from what
+// What a monster may heal at the start of its turn: one part each for fast
+// healing and regeneration, with the card's line and the healing's source
 function getTurnStartSelfHealing(creature) {
-  if (isTokenDead(creature)) return null;
-  const { fastHealing, regeneration } = getSelfHealing(creature);
-  const amount =
-    (fastHealing || 0) + (regeneration && !isRegenerationOff(creature) ? regeneration : 0);
-  if (!(amount > 0)) return null;
-  const names = [];
-  if (fastHealing) names.push(`fast healing ${fastHealing}`);
-  if (regeneration && !isRegenerationOff(creature)) names.push(`regeneration ${regeneration}`);
-  return { amount, source: names.join(" and ") };
+  if (isTokenDead(creature)) return [];
+  const { fastHealing, regeneration, deactivatedBy } = getSelfHealing(creature);
+  const parts = [];
+  if (fastHealing) {
+    parts.push({ amount: fastHealing, source: `fast healing ${fastHealing}`, button: "Apply_Fast_Healing", line: `Fast healing ${fastHealing}.` });
+  }
+  if (regeneration) {
+    const types =
+      deactivatedBy.length > 1
+        ? `${deactivatedBy.slice(0, -1).join(", ")} or ${deactivatedBy[deactivatedBy.length - 1]}`
+        : deactivatedBy[0];
+    parts.push({
+      amount: regeneration,
+      source: `regeneration ${regeneration}`,
+      button: "Apply_Regeneration",
+      line: `Regeneration ${regeneration}${types ? ` (deactivated by ${types})` : ""}, unless deactivated.`,
+    });
+  }
+  return parts;
 }
 
-// Turn start: regeneration switched off before this turn stays off through
-// it (the round it started in); fast healing and regeneration heal. Once per
-// round, as Next after Previous starts the same turn again.
+// Turn start: a card with an Apply Healing button for each part, as only the
+// GM knows whether regeneration was deactivated. Nothing heals on its own.
+// None at full Hit Points, and once per round, as Next after Previous starts
+// the same turn again.
 function runTurnStartSelfHealing(token, round) {
-  const { fastHealing, regeneration } = getSelfHealing(token);
-  if (!fastHealing && !regeneration) return;
-  if (round !== null && round !== undefined && token.data?.selfHealRound === round) return;
-  const extraValues = {};
-  if (round !== null && round !== undefined) extraValues["data.selfHealRound"] = round;
-  if (token.data?.regenerationOff === "pending") {
-    extraValues["data.regenerationOff"] = round ?? "on";
-  }
-  const healing = getTurnStartSelfHealing(token);
+  const parts = getTurnStartSelfHealing(token);
+  if (parts.length === 0) return;
+  const hasRound = round !== null && round !== undefined;
+  if (hasRound && token.data?.selfHealRound === round) return;
   const curhp = parseInt(token.data?.curhp || "0", 10) || 0;
   const maxHp = parseInt(token.data?.hitpoints || "0", 10) || 0;
-  if (healing && curhp < maxHp) {
-    applyHealingToToken(token, healing.amount, { source: healing.source, extraValues });
-  } else if (Object.keys(extraValues).length > 0) {
-    api.setValuesOnTokenById(token._id, token.recordType, extraValues);
+  if (curhp >= maxHp) return;
+  if (hasRound) {
+    api.setValuesOnTokenById(token._id, token.recordType, { "data.selfHealRound": round });
   }
-  if (regeneration && isRegenerationOff(token)) {
-    api.sendMessage(`${getCreatureName(token)}'s regeneration is off this turn.`, undefined, [], [], token);
-  }
+  const lines = parts.map((part) => {
+    const label = parts.length > 1 ? part.button : "Apply_Healing";
+    const call = `applyHealingToToken(token, ${part.amount}, ${JSON.stringify({ source: part.source })})`;
+    return `${part.line}\n${getChatButton(label, token, call)}`;
+  });
+  api.sendMessage(`**${getCreatureName(token)}**\n${lines.join("\n")}`, undefined, [], [], token);
 }
 
-// Turn end: regeneration switched off before this turn comes back on
-function getTurnEndRegenerationValues(token) {
-  const off = token?.data?.regenerationOff;
-  if (!isRegenerationOff(token) || off === "pending") return null;
-  return { "data.regenerationOff": "" };
+// A monster with regeneration at 0 Hit Points dies as any other, with a
+// Regeneration button for when the GM knows it wasn't deactivated
+function hasRegeneration(creature) {
+  return getSelfHealing(creature).regeneration > 0;
+}
+
+function getRegenerationButton(target, critical) {
+  const dying = Math.min(3, getDyingAfterDamage(target, critical));
+  return getChatButton("Regeneration", target, `useRegeneration(token, ${dying})`);
+}
+
+// Regeneration keeps the monster alive: Dead comes off, and it's dying (at
+// most 3) and unconscious instead (Monster Core). Safe to click twice.
+function useRegeneration(token, dying) {
+  if (!token?.data) return;
+  if (!canChangeToken(token)) {
+    api.showNotification("Only the GM can use a monster's regeneration.", "yellow", "Notice");
+    return;
+  }
+  const value = Math.min(3, Math.max(1, parseInt(dying, 10) || 1));
+  api.setValuesOnTokenById(token._id, token.recordType, { "data.dying": value });
+  removeAddedConditions(token, { addedDead: true }, () => {
+    if (!getTokenCondition(token, "unconscious")) {
+      api.addEffects(["Unconscious", "Prone"], token);
+    }
+  });
+  const name = getCreatureName(token);
+  api.sendMessage(`**${name}'s regeneration**: not dead, unconscious and dying ${value}.`, undefined, undefined, undefined, token);
+}
+
+// Removes, one after the other, the conditions the damage added at 0 HP:
+// Dead, or Unconscious and Prone (`before`, as the damage recorded it)
+function removeAddedConditions(token, before, callback) {
+  const remove = [
+    ...(before.addedDead ? ["dead"] : []),
+    ...(before.addedUnconscious ? ["unconscious", "prone"] : []),
+  ]
+    .map((condition) => getTokenCondition(token, condition)?.effect?._id)
+    .filter(Boolean);
+  const removeNext = () => {
+    const id = remove.shift();
+    if (id) {
+      api.removeEffectById(id, token, removeNext);
+    } else if (callback) {
+      callback();
+    }
+  };
+  removeNext();
 }
 
 // A monster's Ferocity reaction (Monster Core): it can use it until wounded 3
@@ -547,17 +569,7 @@ function useMonsterFerocity(token, before = {}) {
     "data.dying": parseInt(before.dying || "0", 10) || 0,
     "data.wounded": wounded,
   });
-  const remove = [
-    ...(before.addedDead ? ["dead"] : []),
-    ...(before.addedUnconscious ? ["unconscious", "prone"] : []),
-  ]
-    .map((condition) => getTokenCondition(token, condition)?.effect?._id)
-    .filter(Boolean);
-  const removeNext = () => {
-    const id = remove.shift();
-    if (id) api.removeEffectById(id, token, removeNext);
-  };
-  removeNext();
+  removeAddedConditions(token, before);
   api.sendMessage(`**${name} uses Ferocity**: stays at 1 HP, wounded ${wounded}.`, undefined, undefined, undefined, token);
 }
 

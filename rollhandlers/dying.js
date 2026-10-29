@@ -299,9 +299,7 @@ function applyHealingToToken(target, healing, options = {}) {
     oldValues[key] =
       key === "data.curhp" ? oldHp : parseInt(target.data?.[key.slice(5)] || "0", 10) || 0;
   }
-  // extraValues: the caller's own values in the same write, left out of Undo
-  // (fast healing's round, healing-tools.js)
-  api.setValuesOnTokenById(target._id, target.recordType, { ...valuesToSet, ...(options.extraValues || {}) });
+  api.setValuesOnTokenById(target._id, target.recordType, valuesToSet);
   // One effect change after the other: waking, the bleed, the immunity
   const afterBleed = () => {
     if (options.medicine) applyMedicineImmunity(target, options.medicine);
