@@ -357,6 +357,11 @@
   function investGridItem(index, invested) {
     const itemDataPath = "data.inventory." + index;
     const newValue = invested ? "true" : "false";
+    // More than 10 invested items: a warning (inventory-tools.js)
+    const warning = getInvestmentWarning(record, api.getValue(itemDataPath), newValue);
+    if (warning) {
+      api.showNotification(warning, "yellow", "Investiture");
+    }
     api.setValue(itemDataPath + ".data.invested", newValue, function () {
       // Same stale-snapshot problem as equipGridItem — investiture gates a
       // magic item's bonuses, so the recalc has to see the new state rather
@@ -398,6 +403,9 @@
   }
   function gridDivest(index) {
     investGridItem(index, false);
+  }
+  function gridSell(index) {
+    sellInventoryItem("data.inventory." + index);
   }
 </script>
 
@@ -484,7 +492,7 @@
         usesposition="tr"
         cellbadges='[{"field": "fields.invested.hidden", "eq": "false", "activeField": "data.invested", "activeEq": "true", "icon": "IconDiamond", "inactiveIcon": "IconDiamondOff", "position": "bl", "label": "Investment"}]'
         celltooltipfields='[{"label": "Type", "field": "data.type", "capitalize": true}, {"label": "Category", "field": "data.itemCategory", "capitalize": true}, {"label": "Bulk", "field": "data.bulk.value"}]'
-        cellactions='[{"label": "Equip", "fn": "gridEquip(data.itemIndex)", "icon": "IconShirt"}, {"label": "Carry (Unequip)", "fn": "gridCarry(data.itemIndex)", "icon": "IconBackpack"}, {"label": "Drop", "fn": "gridDrop(data.itemIndex)", "icon": "IconArrowDown"}, {"label": "Invest", "fn": "gridInvest(data.itemIndex)", "icon": "IconDiamond", "showField": "fields.invested.hidden", "showEq": "false"}, {"label": "Divest", "fn": "gridDivest(data.itemIndex)", "icon": "IconDiamondOff", "showField": "fields.invested.hidden", "showEq": "false"}]'
+        cellactions='[{"label": "Equip", "fn": "gridEquip(data.itemIndex)", "icon": "IconShirt"}, {"label": "Carry (Unequip)", "fn": "gridCarry(data.itemIndex)", "icon": "IconBackpack"}, {"label": "Drop", "fn": "gridDrop(data.itemIndex)", "icon": "IconArrowDown"}, {"label": "Invest", "fn": "gridInvest(data.itemIndex)", "icon": "IconDiamond", "showField": "fields.invested.hidden", "showEq": "false"}, {"label": "Divest", "fn": "gridDivest(data.itemIndex)", "icon": "IconDiamondOff", "showField": "fields.invested.hidden", "showEq": "false"}, {"label": "Sell", "fn": "gridSell(data.itemIndex)", "icon": "IconCoins"}]'
         celluse="useGridItem(data.itemIndex)"
         celluselabel="Use"
         celluseshowfield="fields.useBtn.hidden"
@@ -536,8 +544,27 @@
         width="50%"
         placeholder="0"
         field="bulk"
+        label="Encumbered Above"
+      ></numberfield>
+      <numberfield
+        width="50%"
+        placeholder="0"
+        field="maxBulk"
         label="Max Bulk"
       ></numberfield>
+    </div>
+    <div
+      style="display: flex; flex-direction: row; gap: 4px; align-items: center"
+    >
+      <numberfield
+        width="50%"
+        placeholder="0"
+        field="investedCount"
+        label="Invested Items"
+      ></numberfield>
+      <div style="margin-top: 16px">
+        <label class="rvtt-sheet-label" label="/ 10"></label>
+      </div>
     </div>
   </div>
 

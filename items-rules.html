@@ -166,6 +166,11 @@
 
 <!-- Weapon Runes -->
 <box field="weaponProperties" hidden="true" hidewhenidentified="false">
+  <checkbox
+    size="xs"
+    field="handwraps"
+    label="Handwraps of Mighty Blows (runes apply to unarmed attacks while worn and invested)"
+  ></checkbox>
   <div style="display: flex; flex-direction: row; width: 100%; gap: 8px">
     <dropdown
       width="100%"
@@ -542,6 +547,19 @@
   >
   </dropdown>
 </div>
+
+<dropdown
+  width="100%"
+  field="useEffects"
+  label="Effects on Use"
+  searchable="true"
+  multiselect="20"
+  description="Effects its Use card offers to apply (effects its description links to are offered too)"
+  optionsquery='{"type": "effects", "query": {}}'
+  placeholder="Select Effects..."
+  hidewhenidentified="false"
+>
+</dropdown>
 
 <dropdown
   width="100%"

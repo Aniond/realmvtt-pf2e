@@ -4103,6 +4103,21 @@
         "freeTextField": false
       },
       {
+        "label": "Speed Circumstance Penalty",
+        "type": "speedPenalty-circumstance",
+        "fields": []
+      },
+      {
+        "label": "Speed Item Penalty",
+        "type": "speedPenalty-item",
+        "fields": []
+      },
+      {
+        "label": "Speed Status Penalty",
+        "type": "speedPenalty-status",
+        "fields": []
+      },
+      {
         "label": "Initiative Circumstance Bonus",
         "type": "initiativeBonus-circumstance",
         "fields": []
@@ -5397,6 +5412,9 @@
         },
         "GmTools": {
           "file": "rollhandlers/gm-tools.js"
+        },
+        "InventoryTools": {
+          "file": "rollhandlers/inventory-tools.js"
         }
       },
       "defaultDice": "default",
