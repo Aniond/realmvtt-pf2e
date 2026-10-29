@@ -28,7 +28,7 @@
           [`${containerDataPath}.data.bulkUsed`]: totalBulk,
         },
         (recordUpdated) => {
-          updateTotalBulk(recordUpdated);
+          updateTotalBulk(recordUpdated, true, true);
         }
       );
     } else {
@@ -65,7 +65,7 @@
             [`data.inventory`]: inventory,
           },
           (recordUpdated2) => {
-            updateTotalBulk(recordUpdated2);
+            updateTotalBulk(recordUpdated2, true, true);
           }
         );
       }

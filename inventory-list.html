@@ -12,6 +12,10 @@
     let valuesToSet = {
       "data.totalBulk": totalBulk,
     };
+    const encumbrance = getEncumbranceMessage(record, record?.data?.totalBulk, totalBulk);
+    if (encumbrance) {
+      api.sendMessage(encumbrance);
+    }
 
     // Determine if any ammo values need adjusting (if it's ammo, a thrown weapon, or a bomb)
     if (isAmmo) {
@@ -32,6 +36,11 @@
     } else {
       api.setValues(valuesToSet);
     }
+  }
+
+  // Sell the item: half Price, full for treasure (inventory-tools.js)
+  function sellItem() {
+    sellInventoryItem(getNearestParentDataPath(dataPath));
   }
 </script>
 
@@ -74,7 +83,7 @@
     field="invested"
     variant="default"
     options='[{"icon": "IconDiamondOff", "label": "Not Invested", "value": "false"}, {"icon": "IconDiamond", "label": "Invested", "value": "true"}]'
-    onchange="onItemInvested();"
+    onchange="onItemInvested(value);"
     onclick=""
   ></iconbutton>
   <div style="max-width: 45px">
@@ -88,6 +97,15 @@
       label="Use"
     ></button>
   </div>
+  <iconbutton
+    hidden="true"
+    size="sm"
+    variant="default"
+    hideonlocked="true"
+    field="sellBtn"
+    options='[{"icon": "IconCoins", "label": "Sell", "value": "sell"}]'
+    onclick="sellItem();"
+  ></iconbutton>
   <div style="width: 95px; min-width: 95px">
     <dropdown
       size="xs"

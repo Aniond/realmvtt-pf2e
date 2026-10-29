@@ -187,6 +187,26 @@ Animal companions are characters, as Foundry's PF2e Companion Compendia builds t
   - An adversary that ties a PC goes first. The tracker sorts on `data.initiative` alone, so `initiative.js` stores an enemy's roll plus 0.1 (`getInitiativeValue`). The roll's metadata says which tokens are adversaries; a roll from a sheet uses the sheet's token faction (`api.getToken()`) when there is one.
 - DCs: `getSimpleDC(rank)`, `getDCAdjustment` (rarity maps to hard, very hard or incredibly hard) and `getDCForLevel` (PF2e.js). `showDCHelper()`, run from a GM's chat macro, prompts for the skill, the DC and the adjustment. It then posts a roll button for the selected tokens, with the DC in `[gm]` tags.
 
+### Inventory tools (effects on Use, selling, investiture, handwraps, Bulk)
+
+`rollhandlers/inventory-tools.js`:
+
+- Effects on Use: `useInventoryItem` adds Apply buttons (`getEffectMacrosFor`) for `getItemUseEffects(item)`. Those are the item's own `data.useEffects` (the "Effects on Use" multiselect on the Rules tab) plus every effects `<record-link>` in its description, which is how the modules link "Effect: Bestial Mutagen (Lesser)".
+- Selling: `sellInventoryItem(itemDataPath)` is the row's coin button and the grid's Sell action.
+  - Both are hidden, and `sellInventoryItem` does nothing, unless the campaign setting "Allow Selling from the Sheet" (`sellFromSheet`, default No) is Yes. `setItemFields` sets `fields.sellBtn.hidden`, and the Inventory tab's onload (`onInventoryLoad`, `getSellButtonValues`) brings every row in line after the setting changes.
+  - An item sells for half its Price per unit (the Price is per bundle, `getItemBundleSize`). Treasure sells for its full Price. The total is rounded down, not each unit (`getSellTotalCp`): 10 arrows sell for 5 cp.
+  - Shoddy, temporary and infused items get a note in the confirm, not a block.
+  - It reads the record again, writes the coins and count in one `setValues`, then removes a sold-out row by its id (`removeValueFromRecord`) and recalculates.
+- Investiture: `data.investedCount` is set in the recalc (`getInvestedCount`). It counts items with the invested trait, and armor with runes, that are invested. Investing an 11th (`getInvestmentWarning`) or using an uninvested item that needs it (`getUninvestedUseWarning`) shows a notification. Nothing is blocked.
+- Handwraps of mighty blows: an item named so, or with `data.handwraps` ticked, worn (`carried: equipped`) and invested, lends its potency, striking and property runes to every other unarmed attack.
+  - `withHandwrapsRunes` is applied first in `getAlteredWeapon`.
+  - `getEffectsAndModifiersForToken` also lets the handwraps' item-only modifiers (their property runes' features) apply when `itemId` is an unarmed attack (`getHandwrapsItemIdFor`).
+  - The handwraps' own attack is left as it is, and NPCs are skipped.
+- Bulk: `data.bulk` is "encumbered above" (5 + Str + `bulkLimit`), and `data.maxBulk` is 10 + Str + `bulkLimit`.
+  - `updateTotalBulk` drops fractions (`dropBulkFractions`: 12 light items are 1 Bulk).
+  - Crossing a limit posts a chat card (`getEncumbranceMessage`), with an Apply_Encumbered button when the character becomes encumbered. It's posted only for changes the user made: `updateTotalBulk(record, true, true)` (adding, removing, using or selling an item, coins, a count). The tab's onload never posts it.
+  - `speedPenalty` (untyped) and `speedPenalty-circumstance`/`-item`/`-status` effect types exist. Foundry's Encumbered is an untyped -10 to all Speeds plus Clumsy 1.
+
 ### Data Structure
 
 - Character data is nested under `record.data`

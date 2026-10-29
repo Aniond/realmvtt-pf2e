@@ -1980,6 +1980,9 @@ const WEAPON_DIE_STEPS = [4, 6, 8, 10, 12];
  */
 function getAlteredWeapon(record, weapon) {
   if (!record || !weapon?.data) return weapon;
+  // Worn, invested handwraps of mighty blows lend an unarmed attack their
+  // runes (inventory-tools.js)
+  weapon = withHandwrapsRunes(record, weapon);
   const targets = (typeof api.getTargets === "function" && api.getTargets()) || [];
   const mods = getEffectsAndModifiersForToken(
     record,
@@ -3782,8 +3785,15 @@ function getEffectsAndModifiersForToken(
   }
 
   // Filter by itemId if provided, some effects only apply to the itemId, or if the field is set to the itemId
+  // An unarmed attack also takes the item-only modifiers of the handwraps of
+  // mighty blows lending it their runes (inventory-tools.js)
+  const handwrapsId = getHandwrapsItemIdFor(target, itemId);
   results = results.filter(
-    (r) => r.itemId === itemId || r.field === itemId || r.itemId === undefined,
+    (r) =>
+      r.itemId === itemId ||
+      r.field === itemId ||
+      r.itemId === undefined ||
+      (handwrapsId && r.itemId === handwrapsId),
   );
 
   // For the roll, we need only count 1 status / item / circumstance bonus or penalty,
@@ -4522,6 +4532,13 @@ function useInventoryItem(itemDataPath) {
 
   const indexValue = parseInt(itemDataPath.split(".").pop());
 
+  // An item that needs investing works only while invested: a reminder,
+  // the Use goes ahead (inventory-tools.js)
+  const investWarning = getUninvestedUseWarning(item);
+  if (investWarning) {
+    api.showNotification(investWarning, "yellow", "Not Invested");
+  }
+
   const traits = item.data?.traits || [];
   const hasConsumableTrait = traits
     .map((trait) => trait.toLowerCase())
@@ -4580,6 +4597,17 @@ ${itemDescription}
 performDamageRollForSpellOrItem("${record._id}","${record.recordType}", "${itemDataPath}");
 \`\`\``;
     markdownDescription += `\n${damageButton}`;
+  }
+
+  // Its effects (an elixir's, a mutagen's) get Apply buttons, for the user or
+  // a target, as an action's do (inventory-tools.js)
+  const effectMacros = getEffectMacrosFor(
+    getItemUseEffects(item),
+    itemDescription,
+    isMagicalSource(traits),
+  );
+  if (effectMacros) {
+    markdownDescription += `\n${effectMacros}`;
   }
 
   api.sendMessage(markdownDescription, undefined, recordLinks);
@@ -4646,21 +4674,28 @@ performDamageRollForSpellOrItem("${record._id}","${record.recordType}", "${itemD
       api.setValues(valuesToSet, () => {
         // Re-query the record to get the latest data
         api.getRecord(record.recordType, record._id, (updatedRecord) => {
-          updateTotalBulk(updatedRecord, true);
+          updateTotalBulk(updatedRecord, true, true);
         });
       });
     } else if (shouldDestroy && !isNaN(indexValue)) {
       api.removeValue(`data.inventory`, indexValue, () => {
         // Re-query the record to get the latest data
         api.getRecord(record.recordType, record._id, (updatedRecord) => {
-          updateTotalBulk(updatedRecord, true);
+          updateTotalBulk(updatedRecord, true, true);
         });
       });
     }
   }
 }
 
-function onItemInvested() {
+function onItemInvested(value) {
+  // More than 10 invested items: a warning, nothing blocked
+  // (inventory-tools.js)
+  const item = api.getValue(getNearestParentDataPath(dataPath));
+  const warning = getInvestmentWarning(record, item, value);
+  if (warning) {
+    api.showNotification(warning, "yellow", "Investiture");
+  }
   onAddEditFeature(record, undefined, true);
 }
 
@@ -4804,6 +4839,13 @@ function setItemFields(item, itemDataPath, valuesToSet) {
     itemFields?.invested?.hidden !== true
   ) {
     valuesToSet[`${itemDataPath}.fields.invested.hidden`] = true;
+  }
+
+  // The Sell button follows the "Allow Selling from the Sheet" setting
+  // (inventory-tools.js)
+  const sellHidden = !isSellingAllowed();
+  if (itemDataPath && itemFields?.sellBtn?.hidden !== sellHidden) {
+    valuesToSet[`${itemDataPath}.fields.sellBtn.hidden`] = sellHidden;
   }
 
   if ((isConsumable || hasUseBtn) && itemFields?.useBtn?.hidden !== false) {
@@ -5562,7 +5604,12 @@ function updateAttribute({
     if (mod.active === false) return;
     bulkLimitBonus += parseInt(mod.value || 0, 10) || 0;
   });
-  valuesToSet[`data.bulk`] = 5 + strength + bulkLimitBonus;
+  // Encumbered above data.bulk, and no more than data.maxBulk
+  // (inventory-tools.js)
+  const bulkLimits = getBulkLimits(strength, bulkLimitBonus);
+  valuesToSet[`data.bulk`] = bulkLimits.encumberedAt;
+  valuesToSet[`data.maxBulk`] = bulkLimits.max;
+  valuesToSet[`data.investedCount`] = getInvestedCount(record);
 
   // AC = 10 + your Dexterity modifier. Wearing armor changes your AC and adds proficency bonus if proficient
   let dexValue = parseInt(
@@ -9813,7 +9860,10 @@ function rollSkillCheck(skill, dc, options = {}) {
   });
 }
 
-function updateTotalBulk(record, setValue = true) {
+// announce: post the encumbrance card when the new total crosses a limit.
+// Only for changes the user made (adding, removing or using an item, coins),
+// never when a sheet or tab loads
+function updateTotalBulk(record, setValue = true, announce = false) {
   // Update total weight
   const items = record?.data?.inventory || [];
   let totalBulk = 0;
@@ -9863,10 +9913,16 @@ function updateTotalBulk(record, setValue = true) {
     totalBulk += Math.floor(totalCoins / 1000);
   }
 
-  totalBulk = Math.round(totalBulk * 100) / 100;
+  // Fractions of Bulk are dropped (inventory-tools.js)
+  totalBulk = dropBulkFractions(totalBulk);
 
   if (setValue) {
     api.setValuesOnRecord(record, { "data.totalBulk": totalBulk });
+    // Crossing a Bulk limit: a chat card (Apply Encumbered)
+    const encumbrance = announce && getEncumbranceMessage(record, record?.data?.totalBulk, totalBulk);
+    if (encumbrance) {
+      api.sendMessage(encumbrance);
+    }
   } else {
     return totalBulk;
   }
