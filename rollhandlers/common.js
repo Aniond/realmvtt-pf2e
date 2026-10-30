@@ -10812,7 +10812,7 @@ function useAction(action, actionDataPath = null) {
 ${usesLine ? `${usesLine}\n` : ""}
 ---
 ${actionDescription}
-${effectMacros}${getActionHealingMacros(action)}${getFirstAidActionMacro(action)}${getSkillActionMacros(action)}
+${effectMacros}${getActionHealingMacros(action)}${getFirstAidActionMacro(action)}${getSkillActionMacros(action)}${getRechargeButton(action)}
 `;
 
   // Send the message
@@ -13254,6 +13254,10 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber) {
         precisionModifierIndices: precisionModifierIndices, // Track which modifiers are precision damage
         // Where the damage comes from, for resistances that depend on it
         damageSource: getDamageSource(record, weapon),
+        // A monster Strike's riders (Grab, Knockdown, Push) and Debilitating
+        // Strike's debilitations (combat-riders.js)
+        strikeRiders: getStrikeRiders(weapon),
+        debilitation: getDebilitationCount(record),
         degreeOfSuccessAdjustments: degreeOfSuccessAdjustments,
         // Notes shown with the result
         notes: getRollNotes(
@@ -13341,6 +13345,8 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber) {
       precisionModifierIndices: precisionModifierIndices, // Track which modifiers are precision damage
       // Where the damage comes from, for resistances that depend on it
       damageSource: getDamageSource(record, weapon),
+      // A monster Strike's riders (combat-riders.js)
+      strikeRiders: getStrikeRiders(weapon),
       degreeOfSuccessAdjustments: degreeOfSuccessAdjustments,
       // Notes shown with the result
       notes: getRollNotes(

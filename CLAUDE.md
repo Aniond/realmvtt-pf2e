@@ -240,6 +240,14 @@ Animal companions are characters, as Foundry's PF2e Companion Compendia builds t
 - Sickened: `retch()` rolls Fortitude against a typed DC (`metadata.retch`), and `save.js` adds a Reduce Sickened button on a success (2 on a critical success). `useInventoryItem` warns about a potion, elixir or ingested item while sickened.
 - Confused: `applyDamage` adds a DC 11 recovery flat check button, not for persistent damage. `flatCheck.js` removes `metadata.endsCondition` from the token on a success.
 
+### Combat riders (monster Strike riders, recharges, Debilitating Strike)
+
+`rollhandlers/combat-riders.js` (global script `CombatRiders`):
+- Effect durations: "until the end of <applier>'s next turn", applied on the applier's turn, is `api.addEffect(name, token, { value: 2, unit: "end_applier_turn" }, { value, _id, name })`. The value counts the applier's turn ends (checked live: 1 ends with the current turn). The 4th argument records the applier.
+- Strike riders: `performAttackRoll` puts `strikeRiders` (`getStrikeRiders`: the module's `attackEffects` names, or the editor's slugs) in the metadata. On a hit (or with no DC), `attack.js` adds each rider's text and a button: Grab and Improved Grab add Grabbed until the end of the monster's next turn, Knockdown and Trip add Prone (`applyManeuverCondition`), and Push is a reminder. Constrict is its own NPC action, with its buttons in the module data.
+- Recharges: `useAction` adds a Start Recharge button when the text says "can't use ... again for 1d4 rounds" (`getRechargeFormula`, which reads a button's label). `startRecharge` rolls with `api.rollInstant` and, in combat, keeps `{ name, readyRound }` in `data.recharges`. `onTurnStart` tells the GM (`[gm]`) when the round comes, and removes the entry.
+- Debilitating Strike: `debilitation` in the metadata (`getDebilitationCount`: the "debilitation" toggle, 2 with Double Debilitation). A hit on an off-guard target lists the debilitations, with an Enfeebled 1 button until the end of the rogue's next turn. The Speed penalty has no module effect yet, so it's listed only.
+
 ### Data Structure
 
 - Character data is nested under `record.data`

@@ -68,6 +68,12 @@ if (token && token.recordType === "npcs") {
   }
 }
 
+// Recharging abilities ready again this round: the GM is told
+// (combat-riders.js)
+if (token && Array.isArray(token.data?.recharges) && token.data.recharges.length > 0) {
+  getCombatRound((round) => runTurnStartRecharges(token, round));
+}
+
 // Whose turn it is, for the attack log: the multiple attack penalty and the
 // momentum weapon traits count this turn's attacks (attack-log.js). The round
 // keeps the turn's log when Next after Previous starts the same turn again.
