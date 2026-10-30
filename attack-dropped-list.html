@@ -5,8 +5,11 @@
     const weapon = api.getValue(dataPathToWeapon);
     const valuesToSet = {
       [`${dataPathToWeapon}.data.carried`]: "equipped",
+      // Hands in use, and a note past 2 (weapon-traits.js)
+      ...getHandsValues(record, { [weapon?._id]: { carried: "equipped" } }),
     };
     api.setValues(valuesToSet);
+    noteHandsInUse(record, { [weapon?._id]: { carried: "equipped" } });
     api.sendMessage(
       `**:one-action: Picking Up Weapon: ${weapon.name}**`,
       undefined,

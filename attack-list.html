@@ -30,15 +30,39 @@
   }
 
   function loadAmmo() {
-    // Mark the reload checkbox as true, and send chat message
+    // Load one shot (a capacity or double barrel weapon holds more), and
+    // send chat message (weapon-traits.js)
+    const weaponDataPath = getNearestParentDataPath(dataPath);
+    reloadWeapon(api.getValue(weaponDataPath), weaponDataPath);
+  }
+
+  // The loaded shots typed in: loaded while any are left
+  function onLoadedCountChange(value) {
+    const weaponDataPath = getNearestParentDataPath(dataPath);
+    api.setValues({
+      [`${weaponDataPath}.data.loadedAmmo`]: (parseInt(value, 10) || 0) > 0,
+    });
+  }
+
+  function handleParry() {
+    const weaponDataPath = getNearestParentDataPath(dataPath);
+    parryWithWeapon(record, api.getValue(weaponDataPath));
+  }
+
+  // Versatile with another damage type: the weapon's types
+  function versatileTypeOptions() {
+    const weaponDataPath = getNearestParentDataPath(dataPath);
+    return getVersatileOptions(api.getValue(weaponDataPath));
+  }
+
+  // One or two hands: the hands in use (weapon-traits.js)
+  function onHandChange(value) {
     const weaponDataPath = getNearestParentDataPath(dataPath);
     const weapon = api.getValue(weaponDataPath);
-
-    api.setValues({
-      [`${weaponDataPath}.data.loadedAmmo`]: true,
-    });
-
-    api.sendMessage(`**[center]Reloading ${weapon.name}[/center]**`);
+    const change = { [weapon?._id]: { handBtn: value } };
+    const values = getHandsValues(record, change);
+    if (Object.keys(values).length > 0) api.setValues(values);
+    if (value === "two") noteHandsInUse(record, change);
   }
 
   function onAmmoSelectChange(value) {
@@ -146,6 +170,7 @@
     const weapon = api.getValue(dataPathToWeapon);
     const valuesToSet = {
       [`${dataPathToWeapon}.data.carried`]: "carried",
+      ...getHandsValues(record, { [weapon?._id]: { carried: "carried" } }),
     };
     api.setValues(valuesToSet);
     const ourToken = api.getToken();
@@ -164,6 +189,7 @@
     const weapon = api.getValue(dataPathToWeapon);
     const valuesToSet = {
       [`${dataPathToWeapon}.data.carried`]: "dropped",
+      ...getHandsValues(record, { [weapon?._id]: { carried: "dropped" } }),
     };
     api.setValues(valuesToSet);
     const ourToken = api.getToken();
@@ -222,6 +248,7 @@
     <iconbutton
       size="md"
       field="handBtn"
+      onchange="onHandChange(value)"
       variant="default"
       options='[{"icon": "IconCircleNumber1Filled", "label": "One Hand", "value": "one"}, {"icon": "IconCircleNumber2Filled", "label": "Two-Hands", "value": "two"}]'
     >
@@ -308,6 +335,24 @@
       hidden="true"
       onchange="untoggleOtherDamage('slashing')"
     ></checkbox>
+    <!-- Versatile with another damage type (versatile fire...) -->
+    <dropdown
+      field="versatileType"
+      width="120px"
+      size="xs"
+      hidden="true"
+      placeholder="Damage type..."
+      optionsFunction="return versatileTypeOptions();"
+    ></dropdown>
+    <button
+      size="xs"
+      field="parryBtn"
+      label="Parry"
+      icon="one-action"
+      variant="default"
+      hidden="true"
+      onclick="handleParry()"
+    ></button>
     <button
       size="xs"
       field="stowBtn"
@@ -357,6 +402,25 @@
       ></button>
       <checkbox field="loadedAmmo" label="Loaded:" size="xs" hidden="true">
       </checkbox>
+      <!-- Capacity and double barrel: the loaded shots -->
+      <counter
+        field="loadedCount"
+        hidden="true"
+        maxvaluefield="loadedMax"
+        label="Loaded"
+        size="xs"
+        textalign="center"
+        color="cyan"
+        editable="true"
+        onchange="onLoadedCountChange(value)"
+      ></counter>
+      <checkbox
+        field="doubleBarrel"
+        editable="true"
+        label="Both barrels"
+        size="xs"
+        hidden="true"
+      ></checkbox>
       <counter
         field="uses.value"
         hidden="true"
