@@ -9580,7 +9580,9 @@ function rollSkill(
     return;
   }
   const skillRank = isLore ? loreSkillTraining : parseInt(record.data?.[skill] || "0", 10);
-  offerAssurance(record, isLore ? toSlug(skillName) : skill, skillRank, roll, metadata);
+  offerAssurance(record, isLore ? toSlug(skillName) : skill, skillRank, roll, metadata, {
+    label: capitalize(skillName),
+  });
 }
 
 // Generate a clickable skill check macro for PF2e
@@ -16015,10 +16017,10 @@ function applyDamage(
         }
       }
 
-      // Confused: a DC 11 flat check to recover after taking damage
-      // (check-tools.js)
+      // Confused: a DC 11 flat check to recover after an attack or spell
+      // damages it, not persistent damage (check-tools.js)
       if (damage > 0 && !instantDeath && !isTokenDead(target)) {
-        const confusedButton = getConfusedRecoveryButton(target);
+        const confusedButton = getConfusedRecoveryButton(target, roll);
         if (confusedButton) dyingButtons.push(confusedButton);
       }
 

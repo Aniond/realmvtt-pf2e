@@ -71,10 +71,10 @@ const promptPick = (index, value) => prompts[index].cb(value);
 section("Assurance (Q7)");
 {
   const pc = (feats, data = {}) => token({ level: 3, athletics: 1, medicine: 2, feats, ...data });
-  assert("named for its skill", ctx.getAssuranceSkills(pc([{ name: "Assurance (Athletics)" }])), { skills: ["athletics"], any: false });
+  assert("named for its skill", ctx.getAssuranceSkills(pc([{ name: "Assurance (Athletics)" }])), { skills: ["athletics"], unassigned: [] });
   const chosen = { name: "Assurance", data: { choices: [{ data: { choices: [JSON.stringify({ name: "Medicine", slug: "medicine" })] } }] } };
   assert("or by the feat's choice", ctx.getAssuranceSkills(pc([chosen])).skills, ["medicine"]);
-  assert("no skill recorded: any trained skill", ctx.getAssuranceSkills(pc([{ name: "Assurance" }])), { skills: [], any: true });
+  assert("no skill recorded: unassigned, with its row", ctx.getAssuranceSkills(pc([{ name: "Power Attack" }, { name: "Assurance" }])).unassigned.map((u) => u.path), ["data.feats.1"]);
   assert("taken twice", ctx.getAssuranceSkills(pc([{ name: "Assurance (Athletics)" }, chosen])).skills, ["athletics", "medicine"]);
   assert("an empty feat slot doesn't count", ctx.getAssuranceSkills(pc([{ name: "Assurance (Athletics)", data: { type: "slot" } }])).skills, []);
   assert("not untrained", ctx.hasAssurance(pc([{ name: "Assurance" }]), "stealth", 0), false);
@@ -100,6 +100,27 @@ section("Assurance (Q7)");
   ctx.rollSkill(athlete, "Athletics", 15, false, 0, 1, "int", false, true);
   assert("initiative: no prompt", prompts.length, 0);
 
+  // An Assurance with no skill: asked once, kept in the feat's choice
+  reset();
+  const unsure = pc([{ name: "Assurance", data: {} }]);
+  ctx.rollSkill(unsure, "Medicine", 15);
+  assert("asks which skill, this one first, then the other trained ones", [prompts[0].text, prompts[0].options.map((o) => o.value)], ["Which skill is your Assurance for? You're asked once.", ["medicine", "athletics", "later"]]);
+  promptPick(0, "medicine");
+  assert("kept as the feat's choice", calls[0], ["setRecord", { "data.feats.0.data.choices": [{ name: "Assurance Skill", data: { choices: ['{"name":"Medicine","slug":"medicine"}'] } }] }]);
+  assert("... then this check offers it", prompts[1].title, "Assurance");
+  const kept = pc([{ name: "Assurance", data: { choices: [{ data: { choices: ['{"name":"Medicine","slug":"medicine"}'] } }] } }]);
+  assert("read back: Medicine", ctx.getAssuranceSkills(kept), { skills: ["medicine"], unassigned: [] });
+  reset();
+  ctx.rollSkill(unsure, "Athletics", 15);
+  promptPick(0, "medicine");
+  assert("another skill chosen: this check just rolls", [prompts.length, calls[1][0]], [1, "promptRoll"]);
+  reset();
+  ctx.rollSkill(unsure, "Athletics", 15);
+  promptPick(0, "later");
+  assert("Not now: rolls, nothing kept", calls.map((c) => c[0]), ["promptRoll"]);
+  const unpicked = { feat: { data: { choices: [{ name: "Skill", data: { choices: [] } }] } }, path: "data.feats.2" };
+  assert("a feat with its own empty choice: picked there", ctx.getAssuranceSkillValues(unpicked, "medicine", "Medicine"), { "data.feats.2.data.choices.0.data.choices": ['{"name":"Medicine","slug":"medicine"}'] });
+
   // The skill handler grades the fixed result: no die, so no natural 20 or 1
   const card = runHandler("skill.js", { roll: { dice: [], total: 15, metadata: { rollName: "Athletics (Assurance)", skillName: "athletics", dc: 15, assurance: true } } });
   assertIncludes("graded against the DC", card, "SUCCESS");
@@ -124,6 +145,9 @@ section("Incapacitation (Q11)");
   assertIncludes("a failure becomes a success", save(10, 15, { incapacitation: true }), "SUCCESS [Incapacitation]");
   assertIncludes("a success a critical success", save(10, 22, { incapacitation: true }), "CRITICAL SUCCESS [Incapacitation]");
   assertIncludes("without it: a failure", save(10, 15), "FAILURE");
+  assert("a spell attack: one degree worse", [ctx.applyIncapacitationToAttack(1, { incapacitation: true }).degree, ctx.applyIncapacitationToAttack(-1, { incapacitation: true }).degree], [0, -1]);
+  const attack = runHandler("attack.js", { roll: { dice: [{ type: 20, value: 10 }], total: 25, metadata: { rollName: "Spell Attack", dc: 20, incapacitation: true, traits: [] } } });
+  assertIncludes("... the card: a hit becomes a miss", attack, "MISS [Incapacitation]");
 }
 
 section("Signature spells (Q14)");
@@ -148,6 +172,33 @@ section("Signature spells (Q14)");
   promptPick(0, "4");
   const written = calls.find((c) => c[0] === "setRecord")?.[1] || {};
   assert("cast at rank 4: a rank 4 slot spent", [written["data.spells.0.data.usedSpells4"], "data.spells.0.data.usedSpells2" in written], [1, false]);
+  // Only another rank left: still asked, so it isn't cast at the empty one
+  const rank1 = { _id: "s2", name: "Command", data: { level: 1, traits: [], description: "", signature: true } };
+  const low = { _id: "o", name: "Kyra", recordType: "characters", data: { level: 3, spells: [{ data: { type: "spontaneous", mod: 9, usedSpells1: 0, usedSpells2: 1, spells1: [rank1] } }] }, fields: {} };
+  reset();
+  ctx.castSpell(low, rank1, "data.spells.0.data.spells1.0");
+  assert("rank 1 used up, rank 2 left: the prompt offers rank 2", prompts[0]?.options.map((o) => o.value), ["2"]);
+  reset();
+  const one = { ...low, data: { ...low.data, spells: [{ data: { ...low.data.spells[0].data, usedSpells1: 2, usedSpells2: 0 } }] } };
+  ctx.castSpell(one, rank1, "data.spells.0.data.spells1.0");
+  assert("only its own rank: no prompt", prompts.length, 0);
+
+  // The box: only spontaneous rows, not cantrips, only what differs
+  const sheet = {
+    data: {
+      spells: [
+        { data: { type: "spontaneous", spells2: [spell(), { data: { type: "slot" } }], cantrips: [{ data: { type: "spell", traits: ["Cantrip"] } }] } },
+        { data: { type: "prepared", spells1: [{ data: { type: "spell" }, fields: { signatureBox: { hidden: true } } }, { data: { type: "spell" } }] } },
+      ],
+    },
+  };
+  sheet.data.spells[0].data.spells2[0] = { ...spell(), data: { ...spell().data, type: "spell" } };
+  assert("the Signature box: shown on spontaneous rows, hidden on the rest, unchanged ones left", ctx.getSignatureBoxValues(sheet), {
+    "data.spells.0.data.spells2.0.fields.signatureBox.hidden": false,
+    "data.spells.0.data.cantrips.0.fields.signatureBox.hidden": true,
+    "data.spells.1.data.spells1.1.fields.signatureBox.hidden": true,
+  });
+
   reset();
   ctx.castSpell(caster(), spell(), path);
   assert("not a signature spell: cast right away", [prompts.length, (calls.find((c) => c[0] === "setRecord")?.[1] || {})["data.spells.0.data.usedSpells2"]], [0, 0]);
@@ -179,7 +230,12 @@ section("Counteract checks (Q26)");
   const prepared = { _id: "wiz", name: "Ezren", recordType: "characters", data: { level: 5, spells: [{ data: { type: "prepared", mod: 11, spells2: [dispel] } }] }, fields: {} };
   reset();
   ctx.castSpell(prepared, dispel, "data.spells.0.data.spells2.0");
-  assertIncludes("a spell that counteracts gets the button", state.messages[0], "counteract(\"Dispel Magic\", 2, 11);");
+  assertIncludes("a spell that counteracts gets the button", state.messages[0], 'counteract("Dispel Magic", 2, 11, {"recordType":"characters","recordId":"wiz","dataPath":"data.spells.0.data.spells2.0","attribute":"int"});');
+  const mods = ctx.getCounteractModifiers(null, null, "int", 11);
+  assert("without the caster: the base modifier", mods.map((m) => m.value), [11]);
+  ctx.getEffectsAndModifiersForToken = ((original) => (record, types, field) =>
+    types.includes("allPenalty") && field === "cha" ? [{ name: "Frightened", type: "status", value: -2, active: true }] : original(record, types, field))(ctx.getEffectsAndModifiersForToken);
+  assert("with it: checks of the casting attribute too (frightened)", ctx.getCounteractModifiers(token(), null, "cha", 11).map((m) => [m.name, m.value]), [["Spell Attack Modifier", 11], ["Frightened", -2]]);
 }
 
 section("Stupefied, grabbed, deafened (Q25)");
@@ -242,6 +298,7 @@ section("Sickened and confused (Q25)");
   reset();
   ctx.applyDamage(confused, { types: [{ die: 6, value: 5, type: "slashing" }], dice: [{ type: 6, value: 5 }], total: 5, metadata: { traits: [], damageCategories: [], damageType: "slashing" } }, false, null, false);
   assertIncludes("confused and damaged: the recovery button", state.messages[state.messages.length - 1], "Recover_from_Confused_(DC_11)");
+  assert("not for persistent damage", ctx.getConfusedRecoveryButton(confused, { metadata: { isPersistant: true } }), "");
   ctx.api.getToken = () => confused;
   reset();
   const recovered = runHandler("flatCheck.js", { roll: { dice: [{ type: 20, value: 14 }], total: 14, metadata: { dc: 11, tokenId: "orc", endsCondition: "confused" } } });

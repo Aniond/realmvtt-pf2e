@@ -194,6 +194,7 @@ function updateSpellcastingEntry(
 
           // Update field visibility
           spell.fields.innateBox = { hidden: !isInnate || isCantrip };
+          spell.fields.signatureBox = { hidden: !isSpontaneous || isCantrip };
           spell.fields.used = {
             hidden: isCantrip || isSpontaneousOrFocus || isInnate,
           };
@@ -242,6 +243,7 @@ function updateSpellcastingEntry(
 
           // Update field visibility
           spell.fields.innateBox = { hidden: !isInnate || isCantrip };
+          spell.fields.signatureBox = { hidden: !isSpontaneous || isCantrip };
           spell.fields.used = {
             hidden: isCantrip || isSpontaneousOrFocus || isInnate,
           };
@@ -1168,6 +1170,9 @@ function getSpellAttackMacro(
 
   const traits = spell?.data?.traits || [];
   const isVitalityDual = isVitalityDualKindSpell(spell);
+  // Incapacitation: one degree worse against a target above twice the rank
+  // (check-tools.js)
+  const castingRank = getCastingRank(record, spell, dataPathToSpell);
 
   return `\`\`\`Roll_Attack
 // Lookup the record and then prompt the roll
@@ -1385,6 +1390,7 @@ api.getRecord('${record.recordType}', '${record._id}', (record) => {
         concealment: getConcealmentFlatCheck(ourToken, targetToken),
         // Fortification on the target's armor (property-runes.js)
         fortification: ${isAC} ? getFortification(targetToken) : null,
+        incapacitation: isIncapacitationResisted(targetToken, { traits: ${JSON.stringify(traits)}, rank: ${castingRank} }),
         damage: "${spellDamage.damageString}",
         damageType: "${primaryDamageType}",
         persistentDamage: "${spellDamage.persistentDamage}",
@@ -1747,9 +1753,12 @@ function castSpell(record, spell, dataPathToSpell, isOverlay = false) {
   if (mentionsCounteract(spell)) {
     macros.push(
       getCounteractButton(
+        record,
         spellName,
         castingRank,
-        (spellCastingEntry?.data?.mod || 0) + getNpcProficiencyWithoutLevelAdjustment(record)
+        (spellCastingEntry?.data?.mod || 0) + getNpcProficiencyWithoutLevelAdjustment(record),
+        dataPathToSpell,
+        spellCastingEntry?.data?.attribute || "int"
       )
     );
   }

@@ -242,6 +242,7 @@
             nameBox: { hidden: false },
             nameUsedBox: { hidden: true },
             innateBox: { hidden: true },
+            signatureBox: { hidden: true },
             deleteBtn: { hidden: !isSpontaneous && !isFocus && !isInnate },
             used: { hidden: isSpontaneous || isFocus || isInnate || isCantrip },
           },
@@ -617,7 +618,7 @@
           gap: 8px;
         "
       >
-        <box field="signatureBox">
+        <box field="signatureBox" hidden="true">
           <checkbox
             size="xs"
             field="signature"

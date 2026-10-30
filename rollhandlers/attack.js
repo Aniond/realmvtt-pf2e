@@ -163,6 +163,10 @@ if (dc > 0) {
     { natural: naturalRoll, total, dc }
   );
   degreeOfSuccess = adjustmentResult.degree;
+  // Incapacitation: a spell attack one degree worse against a target above
+  // twice the rank (check-tools.js)
+  const incapacitation = applyIncapacitationToAttack(degreeOfSuccess, data?.roll?.metadata);
+  degreeOfSuccess = incapacitation.degree;
   // A critical hit becomes a normal hit on a successful fortification flat
   // check
   if (degreeOfSuccess === 2 && fortification?.dc) {
@@ -173,7 +177,8 @@ if (dc > 0) {
     }
   }
   noteDegree = degreeOfSuccess;
-  const adjustmentModifierName = adjustmentResult.modifierName;
+  const adjustmentModifierName =
+    [adjustmentResult.modifierName, incapacitation.name].filter(Boolean).join(", ") || null;
 
   // Calculate margin of success/failure
   const margin = total - dc;

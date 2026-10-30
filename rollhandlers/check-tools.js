@@ -5,12 +5,14 @@
 //   - Assurance (Player Core pg. 252): instead of rolling a skill it's taken
 //     for, a result of 10 + the proficiency bonus. The skill comes from the
 //     feat's choice or its name ("Assurance (Athletics)"); an Assurance with
-//     neither is offered on every trained skill. Effects that change the
-//     degree of success still apply (Paizo's clarification). Untrained
-//     Improvisation needs no code: the module feat's skillBonus modifier
-//     (proficiency:untrained) already adds it to untrained rolls
+//     neither asks once which skill it's for and keeps it in the feat's
+//     choice. Effects that change the degree of success still apply (Paizo's
+//     clarification). Untrained Improvisation needs no code: the module
+//     feat's skillBonus modifier (proficiency:untrained) already adds it to
+//     untrained rolls
 //   - Incapacitation (Player Core pg. 457): a creature whose level is more
-//     than twice the spell's rank treats its save as one degree better
+//     than twice the spell's rank treats its save as one degree better, and
+//     a spell attack against it as one degree worse
 //   - Signature spells (Player Core pg. 300): a spontaneous caster casts one
 //     at any rank from its own up to the highest with a slot left
 //   - Counteracting (Player Core pg. 431): the counteract rank against the
@@ -21,27 +23,28 @@
 //     deafened). A failure is reported; nothing is undone, the GM decides
 //   - Sickened: Retch, a Fortitude save that lowers it by 1 (2 on a critical
 //     success), and a reminder on drinking a potion or elixir. Confused: a
-//     DC 11 flat check button when the creature takes damage
+//     DC 11 flat check button when an attack or spell damages the creature
 
 // ---------------------------------------------------------------- Assurance
 
-// The skills a character has Assurance in: { skills: [slugs], any } where
-// any is an Assurance whose skill isn't recorded
+// A character's Assurance rows: { skills: [slugs], unassigned: [{ path,
+// feat }] }, unassigned being the rows with no skill recorded yet
 function getAssuranceSkills(record) {
-  const result = { skills: [], any: false };
+  const result = { skills: [], unassigned: [] };
   if (record?.recordType === "npcs") return result;
-  const feats = [...(record?.data?.feats || []), ...(record?.data?.bonusFeats || [])];
-  for (const feat of feats) {
-    if (feat?.data?.type === "slot") continue;
-    const name = `${feat?.name || ""}`.trim();
-    if (!/^assurance\b/i.test(name)) continue;
-    const named = name.match(/\(([^)]+)\)\s*$/);
-    const chosen = named ? named[1] : getFeatChoiceName(feat);
-    if (chosen) {
-      result.skills.push(toSlug(chosen));
-    } else {
-      result.any = true;
-    }
+  for (const list of ["feats", "bonusFeats"]) {
+    (record?.data?.[list] || []).forEach((feat, index) => {
+      if (feat?.data?.type === "slot") return;
+      const name = `${feat?.name || ""}`.trim();
+      if (!/^assurance\b/i.test(name)) return;
+      const named = name.match(/\(([^)]+)\)\s*$/);
+      const chosen = named ? named[1] : getFeatChoiceName(feat);
+      if (chosen) {
+        result.skills.push(toSlug(chosen));
+      } else {
+        result.unassigned.push({ path: `data.${list}.${index}`, feat });
+      }
+    });
   }
   return result;
 }
@@ -63,11 +66,11 @@ function getFeatChoiceName(feat) {
   return "";
 }
 
-// Whether Assurance can be used for this skill at this rank (trained or better)
+// Whether Assurance is recorded for this skill and can be used at this rank
+// (trained or better)
 function hasAssurance(record, skillSlug, rank) {
   if (!(parseInt(rank, 10) >= 1)) return false;
-  const { skills, any } = getAssuranceSkills(record);
-  return any || skills.includes(toSlug(skillSlug));
+  return getAssuranceSkills(record).skills.includes(toSlug(skillSlug));
 }
 
 // Assurance's result: 10 + the proficiency bonus, nothing else
@@ -75,14 +78,29 @@ function getAssuranceResult(record, rank) {
   return 10 + getProficiencyBonusForRank(rank, record?.data?.level);
 }
 
-// Before a skill check: roll it, or take Assurance's result. callback(false)
-// rolls; with Assurance the fixed result goes to the skill handler, so the
-// DC, its notes and the degree adjustments still apply.
-function offerAssurance(record, skillSlug, rank, roll, metadata, rollType = "skill") {
-  if (!hasAssurance(record, skillSlug, rank)) {
+// Before a skill check: roll it, or take Assurance's result. With
+// Assurance the fixed result goes to the skill handler, so the DC, its notes
+// and the degree adjustments still apply. An Assurance with no skill yet
+// asks which one first (options.label: the skill's name).
+function offerAssurance(record, skillSlug, rank, roll, metadata, options = {}) {
+  const slug = toSlug(skillSlug);
+  if (!(parseInt(rank, 10) >= 1)) {
     roll();
     return;
   }
+  const { skills, unassigned } = getAssuranceSkills(record);
+  if (skills.includes(slug)) {
+    promptAssurance(record, rank, roll, metadata);
+  } else if (unassigned.length > 0) {
+    askAssuranceSkill(record, unassigned[0], slug, options.label, (chosen) =>
+      chosen === slug ? promptAssurance(record, rank, roll, metadata) : roll(),
+    );
+  } else {
+    roll();
+  }
+}
+
+function promptAssurance(record, rank, roll, metadata) {
   const result = getAssuranceResult(record, rank);
   api.showPrompt(
     "Assurance",
@@ -96,7 +114,7 @@ function offerAssurance(record, skillSlug, rank, roll, metadata, rollType = "ski
     (choice) => {
       const value = Array.isArray(choice) ? choice[0] : choice;
       if (value === "assurance") {
-        api.roll(`${result}`, getAssuranceMetadata(metadata, result), rollType);
+        api.roll(`${result}`, getAssuranceMetadata(metadata, result), "skill");
       } else if (value) {
         roll();
       }
@@ -116,11 +134,64 @@ function getAssuranceMetadata(metadata, result) {
   };
 }
 
+// The trained skills an unassigned Assurance can be for, this one first
+function getAssuranceSkillOptions(record, skillSlug, label) {
+  const assured = getAssuranceSkills(record).skills;
+  const options = [];
+  const add = (slug, name) => {
+    if (assured.includes(slug) || options.some((o) => o.value === slug)) return;
+    options.push({ label: name, value: slug });
+  };
+  add(skillSlug, label || capitalize(skillSlug));
+  Object.keys(getPathfinderSkills()).forEach((skill) => {
+    if ((parseInt(record?.data?.[skill], 10) || 0) >= 1) add(skill, capitalize(skill));
+  });
+  return options;
+}
+
+// The values that record the skill in the feat's choice, as the feat
+// choice prompt stores it
+function getAssuranceSkillValues(entry, slug, name) {
+  const picked = [JSON.stringify({ name, slug })];
+  if ((entry?.feat?.data?.choices || []).length > 0) {
+    return { [`${entry.path}.data.choices.0.data.choices`]: picked };
+  }
+  return { [`${entry.path}.data.choices`]: [{ name: "Assurance Skill", data: { choices: picked } }] };
+}
+
+// Asks once which skill an Assurance is for, keeps it, then callback(slug).
+// "Not now" rolls and asks again next time.
+function askAssuranceSkill(record, entry, skillSlug, label, callback) {
+  const options = getAssuranceSkillOptions(record, skillSlug, label);
+  api.showPrompt(
+    "Assurance",
+    "Which skill is your Assurance for? You're asked once.",
+    "Select...",
+    [...options, { label: "Not now", value: "later" }],
+    null,
+    (choice) => {
+      const value = Array.isArray(choice) ? choice[0] : choice;
+      if (!value) return;
+      if (value === "later") {
+        callback(null);
+        return;
+      }
+      const name = options.find((o) => o.value === value)?.label || value;
+      api.setValuesOnRecord(record, getAssuranceSkillValues(entry, value, name));
+      api.showNotification(`Assurance is now for ${name}.`, "green", "Assurance");
+      callback(value);
+    },
+    "OK",
+    "Cancel",
+    1,
+  );
+}
+
 // ---------------------------------------------------------------- Incapacitation
 
-// Whether the saver's level makes an incapacitation effect one degree
-// better: more than twice the spell's rank, or (not a spell) higher than the
-// effect's level
+// Whether the creature's level makes an incapacitation effect weaker
+// against it: more than twice the spell's rank, or (not a spell) higher
+// than the effect's level
 function isIncapacitationResisted(record, options = {}) {
   const traits = (Array.isArray(options.traits) ? options.traits : []).map((t) => `${t}`.toLowerCase());
   if (!traits.includes("incapacitation")) return false;
@@ -132,10 +203,16 @@ function isIncapacitationResisted(record, options = {}) {
   return !isNaN(effectLevel) && level > effectLevel;
 }
 
-// The save handler's degree after incapacitation
+// The save handler's degree after incapacitation: one better
 function applyIncapacitation(degree, metadata) {
   if (!metadata?.incapacitation) return { degree, name: null };
   return { degree: Math.min(2, degree + 1), name: "Incapacitation" };
+}
+
+// The attack handler's: a spell attack one degree worse
+function applyIncapacitationToAttack(degree, metadata) {
+  if (!metadata?.incapacitation) return { degree, name: null };
+  return { degree: Math.max(-1, degree - 1), name: "Incapacitation" };
 }
 
 // ---------------------------------------------------------------- Signature spells
@@ -157,12 +234,13 @@ function getSignatureRanks(record, spell, dataPathToSpell) {
 }
 
 // Asks which rank to cast a signature spell at, the list's own rank first,
-// then casts it there. Returns false when there's no choice to make.
+// then casts it there. Also when the only rank left isn't the list's own.
+// Returns false when there's no choice to make.
 function promptSignatureRank(record, spell, dataPathToSpell, isOverlay) {
   if (isOverlay || spell?.castRank) return false;
   const ranks = getSignatureRanks(record, spell, dataPathToSpell);
-  if (ranks.length < 2) return false;
   const listRank = getCastingRank(record, spell, dataPathToSpell);
+  if (ranks.length === 0 || (ranks.length === 1 && ranks[0] === listRank)) return false;
   const ordered = ranks.includes(listRank) ? [listRank, ...ranks.filter((r) => r !== listRank)] : ranks;
   api.showPrompt(
     "Signature Spell",
@@ -179,6 +257,30 @@ function promptSignatureRank(record, spell, dataPathToSpell, isOverlay) {
     1,
   );
   return true;
+}
+
+// The Signature box: shown only on spontaneous entries' spell rows, not
+// cantrips. The values that differ, for the spells list's onload.
+function getSignatureBoxValues(record) {
+  const valuesToSet = {};
+  (record?.data?.spells || []).forEach((entry, entryIndex) => {
+    const spontaneous = entry?.data?.type === "spontaneous";
+    Object.keys(entry?.data || {}).forEach((key) => {
+      if (key !== "cantrips" && !/^spells\d+$/.test(key)) return;
+      const rows = entry.data[key];
+      if (!Array.isArray(rows)) return;
+      rows.forEach((row, rowIndex) => {
+        if (row?.data?.type !== "spell") return;
+        const isCantrip =
+          key === "cantrips" || (row.data.traits || []).some((t) => `${t}`.toLowerCase() === "cantrip");
+        const hidden = !spontaneous || isCantrip;
+        if (row?.fields?.signatureBox?.hidden !== hidden) {
+          valuesToSet[`data.spells.${entryIndex}.data.${key}.${rowIndex}.fields.signatureBox.hidden`] = hidden;
+        }
+      });
+    });
+  });
+  return valuesToSet;
 }
 
 // ---------------------------------------------------------------- Counteract
@@ -205,14 +307,27 @@ function getCounteractOutcome(degree, counteractRank, targetRank) {
   return false;
 }
 
-function getCounteractButton(spellName, counteractRank, mod) {
+// The button: the caster and the spell, read again when it's clicked
+function getCounteractButton(record, spellName, counteractRank, mod, dataPathToSpell, attribute) {
+  const caster = { recordType: record?.recordType, recordId: record?._id, dataPath: dataPathToSpell, attribute };
   const fence = "```";
-  return `${fence}Counteract\ncounteract(${JSON.stringify(spellName)}, ${parseInt(counteractRank, 10) || 0}, ${parseInt(mod, 10) || 0});\n${fence}`;
+  return `${fence}Counteract\ncounteract(${JSON.stringify(spellName)}, ${parseInt(counteractRank, 10) || 0}, ${parseInt(mod, 10) || 0}, ${JSON.stringify(caster)});\n${fence}`;
+}
+
+// The check's modifiers: the spell attack modifier, then the caster's spell
+// attack bonuses and penalties and those to checks of the casting attribute
+// (frightened, stupefied). Not attack roll bonuses: it isn't an attack.
+function getCounteractModifiers(record, spell, attribute, mod) {
+  const base = mod ? [{ name: "Spell Attack Modifier", type: "", value: mod, active: true }] : [];
+  if (!record) return base;
+  const spellAttack = getEffectsAndModifiersForToken(record, ["spellAttackBonus", "spellAttackPenalty"], "", undefined, undefined, { spell });
+  const checks = getEffectsAndModifiersForToken(record, ["allBonus", "allPenalty"], attribute || "int", undefined, undefined, { spell });
+  return [...base, ...mergeModifierLists(spellAttack, checks)];
 }
 
 // The Counteract button: the DC of the effect to counteract, then its rank
 // (a targeted creature's half level first), then the check
-function counteract(spellName, counteractRank, mod) {
+function counteract(spellName, counteractRank, mod, caster = null) {
   api.showValuePrompt("Counteract", "The DC of the effect you're trying to counteract", (value) => {
     const dc = parseInt(value, 10);
     if (!(dc > 0)) return;
@@ -225,6 +340,22 @@ function counteract(spellName, counteractRank, mod) {
     for (let rank = 0; rank <= 10; rank++) {
       options.push({ label: `Rank ${rank}`, value: `${rank}` });
     }
+    const roll = (targetRank, record) => {
+      const spell = record && caster?.dataPath ? api.getValueOnRecord(record, caster.dataPath) : null;
+      api.promptRoll(
+        `${spellName}: Counteract`,
+        "1d20",
+        getCounteractModifiers(record, spell, caster?.attribute, mod),
+        {
+          rollName: `${spellName}: Counteract`,
+          tooltip: "Counteract Check",
+          dc,
+          counteractRank,
+          targetRank,
+        },
+        "counteract",
+      );
+    };
     api.showPrompt(
       "Counteract",
       "The rank of the effect you're trying to counteract (a creature: half its level, rounded up)",
@@ -234,20 +365,11 @@ function counteract(spellName, counteractRank, mod) {
       (choice) => {
         const targetRank = parseInt(Array.isArray(choice) ? choice[0] : choice, 10);
         if (isNaN(targetRank)) return;
-        const modifiers = mod ? [{ name: "Spell Attack Modifier", type: "", value: mod, active: true }] : [];
-        api.promptRoll(
-          `${spellName}: Counteract`,
-          "1d20",
-          modifiers,
-          {
-            rollName: `${spellName}: Counteract`,
-            tooltip: "Counteract Check",
-            dc,
-            counteractRank,
-            targetRank,
-          },
-          "counteract",
-        );
+        if (caster?.recordType && caster?.recordId) {
+          api.getRecord(caster.recordType, caster.recordId, (record) => roll(targetRank, record));
+        } else {
+          roll(targetRank, null);
+        }
       },
       "Roll",
       "Cancel",
@@ -342,10 +464,13 @@ function getSickenedDrinkWarning(creature, item) {
   return `${getCreatureName(creature)} is sickened and can't willingly drink ${item?.name || "this"}.`;
 }
 
-// When a confused creature takes damage: the DC 11 flat check to recover
-function getConfusedRecoveryButton(target) {
+// When an attack or spell damages a confused creature: the DC 11 flat check
+// to recover. Not for persistent damage.
+function getConfusedRecoveryButton(target, roll = null) {
+  const metadata = roll?.metadata || {};
+  if (metadata.isPersistant === true || metadata.isPersistent === true) return "";
   if (!getTokenCondition(target, "confused")) return "";
-  const metadata = {
+  const check = {
     dc: 11,
     rollName: "Confused: Recovery Flat Check",
     tooltip: "DC 11 flat check to end confused after taking damage",
@@ -353,7 +478,7 @@ function getConfusedRecoveryButton(target) {
     endsCondition: "confused",
   };
   const fence = "```";
-  return `${fence}Recover_from_Confused_(DC_11)\napi.promptRoll("Recover from Confused", "1d20", [], ${JSON.stringify(metadata)}, "flatCheck");\n${fence}`;
+  return `${fence}Recover_from_Confused_(DC_11)\napi.promptRoll("Recover from Confused", "1d20", [], ${JSON.stringify(check)}, "flatCheck");\n${fence}`;
 }
 
 // A successful recovery flat check ends the condition on its token
