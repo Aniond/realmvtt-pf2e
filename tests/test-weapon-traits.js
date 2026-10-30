@@ -259,4 +259,37 @@ section("Repeating (Q35)");
   assert("shots left in it: no note", result.metadata.reloadNote, "");
 }
 
+section("Switching off magazine ammo (attack-list.html)");
+{
+  // The row's ammo dropdown handler, run as Realm runs it on the sheet
+  const fs = require("fs");
+  const vm = require("vm");
+  const html = fs.readFileSync(`${__dirname}/../attack-list.html`, "utf8");
+  const handler = html.match(/  function onAmmoSelectChange\(value\) \{[\s\S]*?\n  \}\n/);
+  new vm.Script(handler[0], { filename: "attack-list.html" }).runInContext(ctx);
+  const magazine = { _id: "mag", name: "Magazine", recordType: "items", data: { type: "consumable", itemCategory: "ammo", count: 2, uses: { max: 5, value: 5 } } };
+  const select = (item, ammoId) => {
+    const record = pc([item, rounds, magazine]);
+    const saved = { getValue: ctx.api.getValue, setValues: ctx.api.setValues };
+    let written = {};
+    ctx.record = record;
+    ctx.dataPath = "data.inventory.0.data.ammoSelect";
+    ctx.api.getValue = (path) => (path === "data.inventory.0" ? record.data.inventory[0] : undefined);
+    ctx.api.setValues = (values) => Object.assign(written, values);
+    try {
+      ctx.onAmmoSelectChange(ammoId);
+    } finally {
+      Object.assign(ctx.api, saved);
+    }
+    return written;
+  };
+  const pepperbox = gun("Pepperbox", ["Capacity-3"]);
+  const onMagazine = gun("Pepperbox", ["Capacity-3"], { uses: { max: 5, value: 5 } });
+  assert("a magazine: the weapon mirrors its size", select(pepperbox, "mag")["data.inventory.0.data.uses.max"], 5);
+  const back = select(onMagazine, "rounds");
+  assert("back to single rounds: the mirrored size is dropped", back["data.inventory.0.data.uses.max"], 0);
+  assert("... so the capacity counts again", ctx.getLoadCapacity(gun("Pepperbox", ["Capacity-3"], { uses: { max: back["data.inventory.0.data.uses.max"], value: 5 } })), 3);
+  assert("never on a magazine: nothing extra written", "data.inventory.0.data.uses.max" in select(pepperbox, "rounds"), false);
+}
+
 summary();

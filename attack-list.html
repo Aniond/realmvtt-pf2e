@@ -87,6 +87,11 @@
     } else {
       // Hide uses counter
       valuesToSet[`${weaponDataPath}.fields.uses.value.hidden`] = true;
+      // No magazine any more: drop the mirrored size, so getLoadCapacity
+      // counts the weapon's own capacity again (weapon-traits.js)
+      if ((parseInt(api.getValue(weaponDataPath)?.data?.uses?.max, 10) || 0) > 0) {
+        valuesToSet[`${weaponDataPath}.data.uses.max`] = 0;
+      }
     }
 
     api.setValues(valuesToSet);
