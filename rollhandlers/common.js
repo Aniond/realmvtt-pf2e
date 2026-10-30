@@ -9774,8 +9774,12 @@ function performSkillAction(record, skill, actionName, isMacro = false, options 
     administerFirstAid();
     return;
   }
+  // options.targetId: a given creature (a monster's Strike rider, against
+  // the Strike's target), else the one targeted
   const targets = (typeof api.getTargets === "function" && api.getTargets()) || [];
-  const target = targets.length === 1 ? targets[0]?.token || targets[0] : null;
+  const target = options.targetId
+    ? findSceneToken(options.targetId)
+    : targets.length === 1 ? targets[0]?.token || targets[0] : null;
   // Escape from a grabber that lists Escape DCs asks which hold it is first
   // (maneuvers.js)
   if (action.defense === "escape" && target && !options.escape) {
@@ -9789,15 +9793,18 @@ function performSkillAction(record, skill, actionName, isMacro = false, options 
     : null;
   // The penalty for the attack the creature's log counts this turn is ticked
   // (attack-log.js); without a log, both are left to the player
+  // options.noMultipleAttackPenalty: an attempt that neither applies nor
+  // counts toward it (Monster Core's Grab, Knockdown and Push riders)
   const attackerToken = record.recordId ? record : api.getToken();
-  const attackNumber = action.attack ? getNextAttackNumber(record, attackerToken) : null;
-  const extraModifiers = action.attack
+  const countsAsAttack = action.attack && !options.noMultipleAttackPenalty;
+  const attackNumber = countsAsAttack ? getNextAttackNumber(record, attackerToken) : null;
+  const extraModifiers = countsAsAttack
     ? [
         { name: "Multiple Attack Penalty (2nd attack)", type: "", value: -5, active: attackNumber === 2, isPenalty: true },
         { name: "Multiple Attack Penalty (3rd attack)", type: "", value: -10, active: attackNumber === 3, isPenalty: true },
       ]
     : [];
-  const turnAttack = action.attack
+  const turnAttack = countsAsAttack
     ? getTurnAttackMetadata(attackerToken, record, {
         kind: "maneuver",
         name: action.name,
@@ -13258,6 +13265,8 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber) {
         // Strike's debilitations (combat-riders.js)
         strikeRiders: getStrikeRiders(weapon),
         debilitation: getDebilitationCount(record),
+        debilitationDuration: getEndOfNextTurnValue(ourToken, record),
+        debilitationFeats: hasDebilitationFeats(record),
         degreeOfSuccessAdjustments: degreeOfSuccessAdjustments,
         // Notes shown with the result
         notes: getRollNotes(

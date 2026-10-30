@@ -1,3 +1,7 @@
+// Recharging abilities don't carry into the next encounter
+// (combat-riders.js)
+clearEncounterRecharges(data?.tokens);
+
 // On Encounter End, calculate XP based on PF2e rules
 // Find all non-enemy character tokens in the combat
 const partyTokens = (data?.tokens || []).filter(

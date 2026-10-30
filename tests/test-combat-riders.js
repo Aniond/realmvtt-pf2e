@@ -53,25 +53,46 @@ section("Monster Strike riders (Q8)");
 
   const meta = { strikeRiders: ["grab", "push"], targetId: "pc", targetName: "Valeros", tokenId: "m", tokenName: "Giant Anaconda" };
   const hit = ctx.getStrikeRiderLines(meta, 1).join("\n");
-  assertIncludes("a hit: Grab's text", hit, "**Grab:** 1 action: the target is grabbed until the end of the monster's next turn.");
-  assertIncludes("... and its button, for the target", hit, '```Apply_Grabbed\nwithManeuverToken("pc", "Valeros"');
-  assertIncludes("Push: the distance", hit, "pushed 5 feet away from the monster (10 feet on a critical hit)");
-  assertNotIncludes("... no button (the GM moves the token)", hit, "Apply_Push");
+  assertIncludes("a hit: Grab is a Grapple (Monster Core)", hit, "**Grab:** 1 action: the monster Grapples the target with the body part it attacked with.");
+  assertIncludes("... a roll button for the monster, against the Strike's target, no multiple attack penalty", hit, '```Roll_Grapple_(Grab)\nrollStrikeRider("m", "pc", "Grapple", true);');
+  assertIncludes("Push is a Shove", hit, '```Roll_Shove_(Push)\nrollStrikeRider("m", "pc", "Shove", true);');
+  assertIncludes("a listed Trip: the monster's own Trip, with the penalty", ctx.getStrikeRiderLines({ ...meta, strikeRiders: ["trip"] }, 1).join("\n"), 'rollStrikeRider("m", "pc", "Trip", false);');
+  assertIncludes("Improved Knockdown: free, a Trip", ctx.getStrikeRiderLines({ ...meta, strikeRiders: ["improved-knockdown"] }, 1).join("\n"), "**Improved Knockdown:** Free action: the monster Trips the target.");
   assert("a miss: nothing", ctx.getStrikeRiderLines(meta, 0), []);
   assert("no DC to grade against: shown", ctx.getStrikeRiderLines({ ...meta, targetId: undefined }, null).length > 0, true);
-  assertIncludes("... the button acts on the selected token", ctx.getStrikeRiderLines({ ...meta, targetId: undefined }, null).join("\n"), "api.getSelectedOrDroppedToken()");
 
-  reset();
-  ctx.applyStrikeRider(token({}, { id: "pc", name: "Valeros", recordType: "characters" }), "Grabbed", { id: "m", name: "Giant Anaconda" });
-  assert("grabbed until the end of the monster's next turn, the monster as applier", calls[0], ["add", "Grabbed", "pc", { value: 2, unit: "end_applier_turn" }, { value: 1, _id: "m", name: "Giant Anaconda" }]);
-  reset();
-  ctx.applyStrikeRider(token({}, { id: "pc", recordType: "characters" }), "Prone", {});
-  assert("prone, as the maneuvers add it", calls[0], ["adds", ["Prone"], "pc"]);
+  // The button: the monster's Athletics, through performSkillAction
+  let skillCalls = [];
+  const originalAction = ctx.performSkillAction;
+  ctx.performSkillAction = (...args) => skillCalls.push(args);
+  const anaconda = token({}, { id: "m", name: "Giant Anaconda" });
+  ctx.api.getOtherTokens = () => [{ token: anaconda }];
+  ctx.rollStrikeRider("m", "pc", "Grapple", true);
+  assert("rolls for the monster, with the Strike's target and no penalty", [skillCalls[0][0]._id, skillCalls[0][1], skillCalls[0][2], skillCalls[0][3], skillCalls[0][4]], ["m", "athletics", "Grapple", true, { targetId: "pc", noMultipleAttackPenalty: true }]);
+  skillCalls = [];
+  ctx.rollStrikeRider("m", "pc", "Trip", false);
+  assert("a listed Trip: no option, so the penalty applies", skillCalls[0][4], { targetId: "pc" });
+  ctx.performSkillAction = originalAction;
+
+  // performSkillAction: the given target, and no penalty or attack logged
+  const valeros = token({ fortitudeMod: 9, level: 5 }, { id: "pc", name: "Valeros", recordType: "characters" });
+  ctx.api.getOtherTokens = () => [{ token: anaconda }, { token: valeros }];
+  ctx.api.getTargets = () => [];
+  let rolled = null;
+  ctx.api.promptRollForToken = (who, name, formula, modifiers, metadata) => (rolled = { modifiers, metadata });
+  ctx.performSkillAction(anaconda, "athletics", "Grapple", true, { targetId: "pc", noMultipleAttackPenalty: true });
+  assert("against the given target's Fortitude DC", [rolled?.metadata?.dc, rolled?.metadata?.maneuver?.targetId], [19, "pc"]);
+  assert("... no multiple attack penalty options", rolled.modifiers.some((m) => /Multiple Attack Penalty/.test(m.name)), false);
+  assert("... and not logged as an attack", rolled.metadata.turnAttack, undefined);
+  ctx.performSkillAction(anaconda, "athletics", "Trip", true, { targetId: "pc" });
+  assert("without the option: the penalty options are there", rolled.modifiers.some((m) => /Multiple Attack Penalty/.test(m.name)), true);
+  ctx.api.getOtherTokens = () => [];
+  ctx.api.promptRollForToken = () => {};
 
   const attack = (total, metadata) =>
     runHandler("attack.js", { roll: { dice: [{ type: 20, value: 10 }], total, metadata: { attack: "Jaws", rollName: "Attack", dc: 20, damage: "2d10+7 piercing", traits: [], ...metadata } } });
-  assertIncludes("the attack card: a hit has the rider", attack(25, meta), "Apply_Grabbed");
-  assertNotIncludes("... a miss doesn't", attack(12, meta), "Grab");
+  assertIncludes("the attack card: a hit has the rider", attack(25, meta), "Roll_Grapple_(Grab)");
+  assertNotIncludes("... a miss doesn't", attack(12, meta), "Grapple");
 }
 
 section("Recharges (Q9)");
@@ -80,6 +101,11 @@ section("Recharges (Q9)");
   assert("the module's text, with its 1d4 Rounds button", ctx.getRechargeFormula(breath), "1d4");
   assert("plain text", ctx.getRechargeFormula({ data: { description: "It can't use Frost Breath again for 1d6 rounds." } }), "1d6");
   assert("a fixed number", ctx.getRechargeFormula({ data: { description: "can't use this again for 2 rounds" } }), "2");
+  assert("\"can't Burble\"", ctx.getRechargeFormula({ data: { description: "The jabberwock can't Burble again for 1d4 rounds." } }), "1d4");
+  assert("\"cannot\"", ctx.getRechargeFormula({ data: { description: "The hateful hermit cannot Focus Hatred again for 1d4 rounds." } }), "1d4");
+  assert("\"can't be used\"", ctx.getRechargeFormula({ data: { description: "Blazing Rush can't be used again for 1d4 rounds." } }), "1d4");
+  assert("a modifier", ctx.getRechargeFormula({ data: { description: "It can't use Forest Step again for 1d6 + 1 rounds." } }), "1d6+1");
+  assert("not hours", ctx.getRechargeFormula({ data: { description: "It can't use this again for 24 hours." } }), "");
   assert("no recharge", ctx.getRechargeFormula({ data: { description: "The monster bites." } }), "");
 
   ctx.api.getToken = () => token({}, { id: "hh", name: "Hell Hound" });
@@ -112,6 +138,10 @@ section("Recharges (Q9)");
   reset();
   ctx.runTurnStartRecharges(token({ recharges: [] }, { id: "hh" }), 6);
   assert("nothing waiting: no write", calls, []);
+
+  reset();
+  ctx.clearEncounterRecharges([waiting, token({ recharges: [] }, { id: "gob" }), token({}, { id: "pc" })]);
+  assert("the encounter ends: recharges cleared, only where there are some", calls, [["set", "hh", { "data.recharges": [] }]]);
 }
 
 section("Debilitating Strike (Q24)");
@@ -133,8 +163,26 @@ section("Debilitating Strike (Q24)");
   assert("toggle off: nothing", ctx.getDebilitationLines({ ...meta, debilitation: 0 }, 1), []);
 
   reset();
-  ctx.applyDebilitation(token({}, { id: "orc", name: "Orc" }), "Enfeebled", { id: "rogue", name: "Merisiel" });
+  ctx.applyDebilitation(token({}, { id: "orc", name: "Orc" }), "Enfeebled", { id: "rogue", name: "Merisiel" }, 2);
   assert("enfeebled until the end of the rogue's next turn", calls[0], ["add", "Enfeebled", "orc", { value: 2, unit: "end_applier_turn" }, { value: 1, _id: "rogue", name: "Merisiel" }]);
+  reset();
+  ctx.applyDebilitation(token({}, { id: "orc", name: "Orc" }), "Enfeebled", { id: "rogue", name: "Merisiel" }, 1);
+  assert("... on a reaction: its very next turn end", calls[0][3], { value: 1, unit: "end_applier_turn" });
+  assertIncludes("the button carries the duration", ctx.getDebilitationLines({ ...meta, debilitationDuration: 1 }, 1).join("\n"), '{"id":"rogue","name":"Merisiel"}, 1)');
+
+  // Whose turn: 2 on the rogue's own, 1 on someone else's, 2 out of combat
+  const merisiel = token({}, { id: "rogue", name: "Merisiel", recordType: "characters" });
+  let turn = null;
+  ctx.getCurrentTurn = () => turn;
+  assert("out of combat: 2", ctx.getEndOfNextTurnValue(merisiel), 2);
+  turn = { key: "k", tokenId: "rogue" };
+  assert("its own turn: 2", ctx.getEndOfNextTurnValue(merisiel), 2);
+  turn = { key: "k", tokenId: "orc" };
+  assert("someone else's turn (a reaction): 1", ctx.getEndOfNextTurnValue(merisiel), 1);
+
+  assert("a debilitation feat: listed", ctx.getDebilitationLines({ ...meta, debilitationFeats: true }, 1).join("\n").includes("or one from your debilitation feats"), true);
+  assert("... none: not listed", ctx.getDebilitationLines(meta, 1).join("\n").includes("debilitation feats"), false);
+  assert("Vicious Debilitations counts", ctx.hasDebilitationFeats({ data: { feats: [{ name: "Vicious Debilitations" }] } }), true);
 }
 
 summary();
