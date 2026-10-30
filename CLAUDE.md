@@ -249,6 +249,14 @@ Animal companions are characters, as Foundry's PF2e Companion Compendia builds t
 - Recharges: `useAction` adds a Start Recharge button when the text says the ability can't be used again for N rounds (`RECHARGE_PATTERN`: "can't use", "can't <Ability>", "cannot", "can't be used", and formulas like 1d6+1; `getRechargeFormula` reads a button's label). `startRecharge` rolls with `api.rollInstant` and, in combat, keeps `{ name, readyRound }` in `data.recharges`. `onTurnStart` tells the GM (`[gm]`) when the round comes and removes the entry. `onEncounterEnd` clears them (`clearEncounterRecharges`).
 - Debilitating Strike: `debilitation` in the metadata (`getDebilitationCount`: the "debilitation" toggle, 2 with Double Debilitation), with `debilitationDuration` (1 off the rogue's turn) and `debilitationFeats`. A hit on an off-guard target lists the debilitations, with an Enfeebled 1 button until the end of the rogue's next turn. The Speed penalty has no module effect yet, so it's listed only.
 
+### Class extras (Hero Points, Rage temporary HP, panache, cursebound)
+
+`rollhandlers/class-extras.js` (global script `ClassExtras`).
+- Hero Points: GM chat macros `startHeroPointSession()` (each Party Sheet character to 1) and `awardHeroPoint()` (+1 to the selected characters, at most 3). `onReroll.js` spends the master's Hero Point for a familiar (NPC `data.master`) or animal companion (`data.companionMaster`) with none, when the master's token is on the scene (`findMasterToken`).
+- Rage: `applyActionTemporaryHitPoints` writes `data.tempHp` and `data.tempHpSource` `{ name, amount }` in one write (`getActionTempHpValues`). `onEncounterEnd` (which ends Rage) clears what's left of Rage's (`clearRageTempHp`, `getRageEndTempHpValues`: only while the source is Rage and the amount isn't above what it gave).
+- Panache: `rollSkill` puts `bravado` `{ tokenId, tokenName }` in the metadata when the check has the bravado trait (`isBravadoCheck`: the action's own trait or the module's `item:trait:bravado` roll option). `skill.js` shows Gain Panache on a success and Panache until the end of your next turn (`end_applier_turn`, `getEndOfNextTurnValue`) on a failure; both without a DC. A finisher's card has Lose Panache (`getFinisherButton`). No finisher or concentrate warnings (#27).
+- Cursebound: `useAction` and `castSpell` (not overlays) add a Cursebound instance for the cursebound trait (`applyCursebound`), up to `getCurseboundMax` (2, 3 at 11th, 4 at 17th); at the maximum, a GM-only line and no change. Refocus (`shortRest`) removes every instance (`removeCursebound`).
+
 ### Data Structure
 
 - Character data is nested under `record.data`

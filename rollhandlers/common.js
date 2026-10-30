@@ -4411,9 +4411,9 @@ function getActionApplyTargets() {
 // Temporary Hit Points from an action (Rage): they replace lower ones
 function applyActionTemporaryHitPoints(amount, sourceName = "") {
   getActionApplyTargets().forEach((target) => {
-    const oldTempHp = parseInt(target?.data?.tempHp || "0", 10) || 0;
-    const newTempHp = Math.max(amount, oldTempHp);
-    api.setValueOnToken(target, "data.tempHp", newTempHp);
+    // Kept with where they came from, so Rage's go when it ends
+    // (class-extras.js)
+    api.setValuesOnTokenById(target._id, target.recordType, getActionTempHpValues(target, amount, sourceName));
     const from = sourceName ? ` from ${sourceName}` : "";
     api.sendMessage(
       `${getTokenDisplayName(target)} gains ${amount} temporary Hit Points${from}.`,
@@ -9537,6 +9537,16 @@ function rollSkill(
         ? additionalMetadata.targetNotes
         : []),
     ],
+    // A check with the bravado trait: panache buttons with the result
+    // (class-extras.js)
+    ...(isBravadoCheck(record, context) && (record?.recordId ? record : api.getToken())?._id
+      ? {
+          bravado: {
+            tokenId: (record?.recordId ? record : api.getToken())._id,
+            tokenName: getCreatureName(record?.recordId ? record : api.getToken()),
+          },
+        }
+      : {}),
     ...metadataExtras,
   };
 
@@ -10819,7 +10829,7 @@ function useAction(action, actionDataPath = null) {
 ${usesLine ? `${usesLine}\n` : ""}
 ---
 ${actionDescription}
-${effectMacros}${getActionHealingMacros(action)}${getFirstAidActionMacro(action)}${getSkillActionMacros(action)}${getRechargeButton(action)}
+${effectMacros}${getActionHealingMacros(action)}${getFirstAidActionMacro(action)}${getSkillActionMacros(action)}${getRechargeButton(action)}${getFinisherButton(action)}${applyCursebound(action)}
 `;
 
   // Send the message
