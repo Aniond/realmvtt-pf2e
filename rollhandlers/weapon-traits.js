@@ -131,14 +131,19 @@ function getVersatileDamageType(weapon) {
 
 // ---------------------------------------------------------------- Hands
 
-// The hands an equipped item is held in: 2 for two hands (or a 1+ weapon
-// held in two), 1 for one, 0 when worn, carried or unarmed
+// The hands an equipped weapon or shield is held in: 2 for two hands (or a
+// 1+ weapon held in two), 1 for one, 0 when worn, carried, unarmed or a bomb
 function getHandsHeld(item) {
   if (item?.data?.carried !== "equipped") return 0;
+  // Only weapons and shields: on other gear (ammunition, a torch, a toolkit)
+  // Equipped means ready on the character, not in hand
+  if (!["weapon", "shield"].includes(item.data?.type)) return 0;
   if (String(item.data?.itemCategory || "").toLowerCase() === "unarmed") return 0;
+  // A stack of bombs is carried ready, not held
+  if (String(item.data?.group || "").toLowerCase() === "bomb") return 0;
+  // Worn weapons (handwraps, a gauntlet bow) take no hand
   const usage = String(item.data?.usage || "").toLowerCase();
-  const isWielded = ["weapon", "shield"].includes(item.data?.type);
-  if (!usage.startsWith("held-in") && !(isWielded && !usage)) return 0;
+  if (usage && !usage.startsWith("held-in")) return 0;
   if (usage.includes("two-hands")) return 2;
   return item.data?.handBtn === "two" ? 2 : 1;
 }

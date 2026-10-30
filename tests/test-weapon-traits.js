@@ -178,6 +178,17 @@ section("Hands in use (Q34)");
 
   assert("a sword and shield: 2 held, 1 free (the shield doesn't count)", ctx.getHandsInUse(pc([longsword, shield, armor, fist, stowed])), { held: 2, free: 1, reallyFree: 0 });
   assert("a greatsword: 2", ctx.getHandsInUse(pc([greatsword])).held, 2);
+  // TestRogue: a longsword and a shield, with the pepperbox's rounds Equipped
+  const roundsEquipped = { _id: "rounds", name: "Rounds (Pepperbox)", data: { type: "consumable", itemCategory: "Ammo", carried: "equipped", usage: "held-in-one-hand" } };
+  const torch = { _id: "torch", name: "Torch", data: { type: "equipment", carried: "equipped", usage: "held-in-one-hand" } };
+  const rope = { _id: "rope", name: "Rope", data: { type: "equipment", carried: "equipped", usage: "held-in-two-hands" } };
+  const bombs = weapon("Alchemist's Fire (Lesser)", ["Bomb", "Splash"], { group: "bomb", usage: "held-in-one-hand" });
+  const shieldNoUsage = { _id: "shield2", name: "Steel Shield", data: { type: "shield", carried: "equipped" } };
+  assert("Equipped gear (ammunition, a torch, rope) isn't held", ctx.getHandsInUse(pc([longsword, shieldNoUsage, roundsEquipped, torch, rope])).held, 2);
+  assert("... so drawing the sword next to a shield shows no label", ctx.getHandsValues(pc([longsword, shieldNoUsage, roundsEquipped])), {});
+  assert("Equipped bombs aren't held", ctx.getHandsInUse(pc([longsword, bombs])).held, 1);
+  assert("a worn weapon (handwraps) isn't held", ctx.getHandsInUse(pc([weapon("Handwraps", [], { usage: "worngloves" })])).held, 0);
+
   assert("a bastard sword in one hand: 1", ctx.getHandsInUse(pc([bastard])).held, 1);
   assert("... in two (its hand button): 2", ctx.getHandsInUse(pc([{ ...bastard, data: { ...bastard.data, handBtn: "two" } }])).held, 2);
   assert("a free-hand weapon: held, but the hand counts as free", ctx.getHandsInUse(pc([gauntlet])), { held: 1, free: 2, reallyFree: 1 });
