@@ -168,11 +168,17 @@ function getHandsFreeAtoms(record) {
   return [`hands-free:${hands.free}`, `hands-free:but-really:${hands.reallyFree}`];
 }
 
-// The Actions tab's label, written only when it changes
+// The Actions tab's label, shown only past 2 hands; written only when it
+// changes
 function getHandsValues(record, changes = {}) {
   if (record?.recordType !== "characters") return {};
-  const label = `Hands ${getHandsInUse(record, changes).held}/2`;
-  return record.data?.handsLabel === label ? {} : { "data.handsLabel": label };
+  const { held } = getHandsInUse(record, changes);
+  const hidden = held <= 2;
+  const label = `Hands ${held}/2`;
+  const values = {};
+  if (!hidden && record.data?.handsLabel !== label) values["data.handsLabel"] = label;
+  if ((record.fields?.handsLabel?.hidden ?? true) !== hidden) values["fields.handsLabel.hidden"] = hidden;
+  return values;
 }
 
 // After equipping or drawing: a note when more than 2 hands are in use
@@ -185,10 +191,13 @@ function noteHandsInUse(record, changes = {}) {
 
 // ---------------------------------------------------------------- Loading
 
-// How many shots the weapon holds loaded: capacity N, 2 for double barrel,
-// else 1
+// How many loads the weapon holds, as Foundry's ammo.capacity: 1 for a
+// weapon fed by a magazine (repeating, or ammo with uses: a magazine, or in
+// Starfinder a battery or chem tank, whose rounds are its uses), else
+// capacity N, 2 for double barrel, else 1. The one place that says it.
 function getLoadCapacity(weapon) {
   const traits = getTraitNameList(weapon?.data?.traits);
+  if (traits.includes("repeating") || (parseInt(weapon?.data?.uses?.max, 10) || 0) > 1) return 1;
   const capacity = traits.map((name) => name.match(/^capacity[\s-]*(\d+)$/)).find(Boolean);
   if (capacity) return parseInt(capacity[1], 10) || 1;
   return hasDoubleBarrelTrait(weapon) ? 2 : 1;

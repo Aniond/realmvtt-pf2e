@@ -185,8 +185,11 @@ section("Hands in use (Q34)");
   assert("the roll options, as Foundry's", ctx.getHandsFreeAtoms(pc([longsword, shield])), ["hands-free:1", "hands-free:but-really:0"]);
   assert("an NPC: none", ctx.getHandsFreeAtoms({ ...pc([longsword]), recordType: "npcs" }), []);
 
-  assert("the Actions tab's label", ctx.getHandsValues(pc([greatsword])), { "data.handsLabel": "Hands 2/2" });
-  assert("... unchanged: no write", ctx.getHandsValues(pc([greatsword], { handsLabel: "Hands 2/2" })), {});
+  assert("2 hands: the label stays hidden, no write", ctx.getHandsValues(pc([greatsword])), {});
+  assert("3: the Actions tab's label shows", ctx.getHandsValues(pc([greatsword, shield])), { "data.handsLabel": "Hands 3/2", "fields.handsLabel.hidden": false });
+  const showing = { ...pc([greatsword, shield], { handsLabel: "Hands 3/2" }), fields: { handsLabel: { hidden: false } } };
+  assert("... unchanged: no write", ctx.getHandsValues(showing), {});
+  assert("back to 2: hidden again", ctx.getHandsValues({ ...showing, data: { ...showing.data, inventory: [greatsword] } }), { "fields.handsLabel.hidden": true });
   notifications = [];
   ctx.noteHandsInUse(pc([greatsword, shield]));
   assert("more than 2: a note, nothing blocked", notifications, ["3 hands in use: a creature normally has 2."]);
@@ -201,6 +204,8 @@ section("Capacity and double barrel (Q35)");
   assert("capacity 3", ctx.getLoadCapacity(pepperbox), 3);
   assert("double barrel: 2", ctx.getLoadCapacity(gun("Double-Barreled Musket", ["Concussive", "Double-Barrel"])), 2);
   assert("a musket: 1", ctx.getLoadCapacity(gun("Arquebus", ["Kickback"])), 1);
+  assert("repeating: 1 (the magazine)", ctx.getLoadCapacity(gun("Repeating Crossbow", ["Repeating", "Capacity-3"])), 1);
+  assert("ammo with uses (a magazine, a battery): 1", ctx.getLoadCapacity(gun("Pepperbox", ["Capacity-3"], { uses: { max: 5, value: 5 } })), 1);
   assert("not counted yet but loaded: 1", ctx.getLoadedCount({ ...pepperbox, data: { ...pepperbox.data, loadedAmmo: true } }), 1);
 
   // Reload: one shot at a time, up to the capacity
@@ -233,6 +238,9 @@ section("Capacity and double barrel (Q35)");
   assert("d12 stays d12", ctx.stepUpDie("d12"), "d12");
   result = strike(pc([musket, rounds]), musket);
   assert("both fired: 2 rounds and 2 loaded shots used", [result.written["data.inventory.1.data.count"], result.written["data.inventory.0.data.loadedCount"]], [8, 0]);
+  const heavy = { ...musket, data: { ...musket.data, expend: 3 } };
+  result = strike(pc([heavy, rounds]), heavy);
+  assert("expend 3 with both barrels: 3, not 6 (Foundry's max)", result.written["data.inventory.1.data.count"], 7);
   notifications = [];
   result = strike(pc([{ ...musket, data: { ...musket.data, loadedCount: 1 } }, rounds]), { ...musket, data: { ...musket.data, loadedCount: 1 } });
   assert("one loaded: a note, one barrel fires", [notifications, result.written["data.inventory.1.data.count"], result.written["data.inventory.0.data.loadedCount"]], [["Only one barrel is loaded: firing one."], 9, 0]);

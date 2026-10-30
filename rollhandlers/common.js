@@ -12321,8 +12321,9 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber) {
       ammoSelected = weapon._id;
     }
 
-    // Default to 1 if 0 or undefined; twice for both barrels
-    const expend = (parseInt(weapon.data?.expend || "1", 10) || 1) * shotsFired;
+    // Default to 1 if 0 or undefined; at least 2 for both barrels (Foundry's
+    // max(doubleBarrel ? 2 : 1, expend))
+    const expend = Math.max(shotsFired, parseInt(weapon.data?.expend || "1", 10) || 1);
 
     // Get the ammo item to check for uses system
     let ammoItem = null;
