@@ -138,6 +138,8 @@ function getHandsHeld(item) {
   // Only weapons and shields: on other gear (ammunition, a torch, a toolkit)
   // Equipped means ready on the character, not in hand
   if (!["weapon", "shield"].includes(item.data?.type)) return 0;
+  // Ammunition is never held, whatever its type or usage says
+  if (String(item.data?.itemCategory || "").toLowerCase() === "ammo") return 0;
   if (String(item.data?.itemCategory || "").toLowerCase() === "unarmed") return 0;
   // A stack of bombs is carried ready, not held
   if (String(item.data?.group || "").toLowerCase() === "bomb") return 0;

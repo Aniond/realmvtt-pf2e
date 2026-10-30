@@ -186,6 +186,7 @@ section("Hands in use (Q34)");
   const shieldNoUsage = { _id: "shield2", name: "Steel Shield", data: { type: "shield", carried: "equipped" } };
   assert("Equipped gear (ammunition, a torch, rope) isn't held", ctx.getHandsInUse(pc([longsword, shieldNoUsage, roundsEquipped, torch, rope])).held, 2);
   assert("... so drawing the sword next to a shield shows no label", ctx.getHandsValues(pc([longsword, shieldNoUsage, roundsEquipped])), {});
+  assert("ammunition typed as a weapon isn't held either", ctx.getHandsInUse(pc([longsword, weapon("Bolts", [], { itemCategory: "Ammo", usage: "held-in-one-hand" })])).held, 1);
   assert("Equipped bombs aren't held", ctx.getHandsInUse(pc([longsword, bombs])).held, 1);
   assert("a worn weapon (handwraps) isn't held", ctx.getHandsInUse(pc([weapon("Handwraps", [], { usage: "worngloves" })])).held, 0);
 
