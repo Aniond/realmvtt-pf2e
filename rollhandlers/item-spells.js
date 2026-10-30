@@ -228,6 +228,7 @@ function buildItemSpellRow(item, index, kind, spell) {
       nameBox: { hidden: false },
       nameUsedBox: { hidden: true },
       innateBox: { hidden: false },
+      signatureBox: { hidden: true },
       used: { hidden: true },
       // A row goes when its item does, so it has no delete of its own
       deleteBtn: { hidden: true },

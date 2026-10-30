@@ -15,10 +15,10 @@
 //     GM's call), sleeping in armor without the comfort trait wakes you
 //     fatigued, and each full day of long-term rest heals double. Watches
 //     (GM Core pg. 43): the night takes 8 hours x n / (n - 1)
-//   - Fast healing and regeneration (Monster Core): Hit Points back at the
-//     start of the creature's turn. Damage of a listed type turns
-//     regeneration off until the end of the creature's next turn, and while
-//     it's on the creature's dying value stops at 3 (not dead at 0 HP).
+//   - Fast healing and regeneration (Monster Core): at the start of the
+//     creature's turn, a card with an Apply Healing button; only the GM knows
+//     whether regeneration was deactivated. At 0 HP a regenerating monster
+//     is dead, with a Regeneration button (dying, at most 3, instead).
 //     Ferocity: a reaction that keeps a monster at 1 HP, wounded + 1
 
 // ------------------------------------------------------- Treat Wounds and Battle Medicine

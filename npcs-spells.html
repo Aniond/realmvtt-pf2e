@@ -1,4 +1,13 @@
 <script>
+  // The Signature box shows on spontaneous entries' spell rows only: the
+  // rows that differ, in one write (check-tools.js)
+  function onSpellsLoad() {
+    const values = getSignatureBoxValues(record);
+    if (Object.keys(values).length > 0) {
+      api.setValuesOnRecord(record, values);
+    }
+  }
+
   function onAddSpellcastingEntry() {
     addSpellcastingEntry(record);
     api.closeOpenedPopovers();
@@ -10,7 +19,7 @@
 </div>
 
 <div style="width: 100%">
-  <list listtype="npc_spellcasting_entry_list" field="spells"></list>
+  <list listtype="npc_spellcasting_entry_list" field="spells" onload="onSpellsLoad()"></list>
   <popover>
     <popover.target>
       <div style="margin-top: 4px">

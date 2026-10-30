@@ -60,8 +60,14 @@ if (dc <= 1) {
         }
       }
     }
+    // A recovery check that ends a condition (confused; check-tools.js)
+    message += endConditionOnSuccess(data?.roll?.metadata);
   } else {
     message = `**[center][color=pink]FAILURE[/color] [gm]vs DC ${dc}[/gm][/center]**`;
+    // What a failure means (a disrupted spell; check-tools.js)
+    if (data?.roll?.metadata?.failureNote) {
+      message += `\n\n${data.roll.metadata.failureNote}`;
+    }
   }
 }
 

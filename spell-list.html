@@ -113,6 +113,8 @@
       spellCastingEntry?.data?.type === "focus";
 
     const isInnate = spellCastingEntry?.data?.type === "innate";
+    // Signature spells: spontaneous casters only (check-tools.js)
+    const isSpontaneous = spellCastingEntry?.data?.type === "spontaneous";
 
     if (value === "spells") {
       // If this is a spell slot, we set it
@@ -172,6 +174,7 @@
             spellSlot: { hidden: true },
             innateBox: { hidden: !isInnate || isCantrip },
             used: { hidden: isCantrip || isSpontaneousOrFocus },
+            signatureBox: { hidden: !isSpontaneous || isCantrip },
           },
         };
         api.setValues(valuesToSet);
@@ -239,6 +242,7 @@
             nameBox: { hidden: false },
             nameUsedBox: { hidden: true },
             innateBox: { hidden: true },
+            signatureBox: { hidden: true },
             deleteBtn: { hidden: !isSpontaneous && !isFocus && !isInnate },
             used: { hidden: isSpontaneous || isFocus || isInnate || isCantrip },
           },
@@ -614,6 +618,15 @@
           gap: 8px;
         "
       >
+        <box field="signatureBox" hidden="true">
+          <checkbox
+            size="xs"
+            field="signature"
+            label="Signature"
+            color="primary"
+            description="Cast it at any rank you have a slot for, from its own rank up"
+          ></checkbox>
+        </box>
         <button
           size="xxs"
           variant="subtle"

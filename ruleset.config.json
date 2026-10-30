@@ -2643,6 +2643,10 @@
       {
         "name": "craftingEvent",
         "file": "rollhandlers/craftingEvent.js"
+      },
+      {
+        "name": "counteract",
+        "file": "rollhandlers/counteract.js"
       }
     ],
     "partySheet": {
@@ -5423,6 +5427,9 @@
         },
         "HealingTools": {
           "file": "rollhandlers/healing-tools.js"
+        },
+        "CheckTools": {
+          "file": "rollhandlers/check-tools.js"
         }
       },
       "defaultDice": "default",

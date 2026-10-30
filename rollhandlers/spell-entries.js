@@ -1123,6 +1123,7 @@ function buildSpellRow(kind, rank, order) {
     fields: {
       spellDetails: { hidden: true },
       innateBox: { hidden: true },
+      signatureBox: { hidden: true },
       spellSlot: { hidden: false },
       used: { hidden: !isPrepared || isCantrip },
       deleteBtn: { hidden: isPrepared },
