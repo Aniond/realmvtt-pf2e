@@ -575,6 +575,8 @@ allMacros.push(
   ...getStrikeRiderLines(data?.roll?.metadata, noteDegree),
   ...getDebilitationLines(data?.roll?.metadata, noteDegree),
 );
+// Loaded shots left, an empty magazine (weapon-traits.js)
+if (data?.roll?.metadata?.reloadNote) allMacros.push(data.roll.metadata.reloadNote);
 
 const effectMacros = effects.filter((macro) => macro).join("\n");
 const macros = allMacros.filter((macro) => macro).join("\n");
