@@ -240,6 +240,15 @@ Animal companions are characters, as Foundry's PF2e Companion Compendia builds t
 - Sickened: `retch()` rolls Fortitude against a typed DC (`metadata.retch`), and `save.js` adds a Reduce Sickened button on a success (2 on a critical success). `useInventoryItem` warns about a potion, elixir or ingested item while sickened.
 - Confused: `applyDamage` adds a DC 11 recovery flat check button, not for persistent damage. `flatCheck.js` removes `metadata.endsCondition` from the token on a success.
 
+### Combat riders (monster Strike riders, recharges, Debilitating Strike)
+
+`rollhandlers/combat-riders.js` (global script `CombatRiders`):
+- Effect durations: "until the end of <applier>'s next turn" is `api.addEffect(name, token, { value, unit: "end_applier_turn" }, { value, _id, name })`. The value counts the applier's turn ends (checked live): 2 on the applier's own turn, 1 on someone else's (a reaction; `getEndOfNextTurnValue` reads the attack log's current turn). The 4th argument records the applier.
+- Strike riders (Monster Core): `performAttackRoll` puts `strikeRiders` (`getStrikeRiders`: the module's `attackEffects` names, or the editor's slugs) in the metadata. On a hit (or with no DC), `attack.js` adds each rider's text and a roll button (`rollStrikeRider`). It runs the monster's `performSkillAction(monster, "athletics", "Grapple" | "Trip" | "Shove", true, { targetId, noMultipleAttackPenalty })` against the Strike's target, so the maneuver card's outcomes and Apply buttons follow. Grab, Knockdown and Push (and their Improved versions) neither apply nor count toward the multiple attack penalty. A listed Trip is the monster's own Trip, with the penalty. Constrict is its own NPC action, with its buttons in the module data.
+- `performSkillAction` options: `targetId` (a given creature instead of the targeted one) and `noMultipleAttackPenalty` (no penalty options, and not logged as an attack).
+- Recharges: `useAction` adds a Start Recharge button when the text says the ability can't be used again for N rounds (`RECHARGE_PATTERN`: "can't use", "can't <Ability>", "cannot", "can't be used", and formulas like 1d6+1; `getRechargeFormula` reads a button's label). `startRecharge` rolls with `api.rollInstant` and, in combat, keeps `{ name, readyRound }` in `data.recharges`. `onTurnStart` tells the GM (`[gm]`) when the round comes and removes the entry. `onEncounterEnd` clears them (`clearEncounterRecharges`).
+- Debilitating Strike: `debilitation` in the metadata (`getDebilitationCount`: the "debilitation" toggle, 2 with Double Debilitation), with `debilitationDuration` (1 off the rogue's turn) and `debilitationFeats`. A hit on an off-guard target lists the debilitations, with an Enfeebled 1 button until the end of the rogue's next turn. The Speed penalty has no module effect yet, so it's listed only.
+
 ### Data Structure
 
 - Character data is nested under `record.data`

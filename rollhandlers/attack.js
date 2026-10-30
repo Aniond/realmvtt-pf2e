@@ -569,6 +569,13 @@ if (propertyRuneDetails.length > 0) {
   });
 }
 
+// A monster Strike's riders and Debilitating Strike, on a hit
+// (combat-riders.js)
+allMacros.push(
+  ...getStrikeRiderLines(data?.roll?.metadata, noteDegree),
+  ...getDebilitationLines(data?.roll?.metadata, noteDegree),
+);
+
 const effectMacros = effects.filter((macro) => macro).join("\n");
 const macros = allMacros.filter((macro) => macro).join("\n");
 
