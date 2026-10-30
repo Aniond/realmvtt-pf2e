@@ -229,13 +229,40 @@ section("Counteract checks (Q26)");
   const dispel = { _id: "d", name: "Dispel Magic", data: { level: 2, traits: [], description: "You attempt to counteract a spell." } };
   const prepared = { _id: "wiz", name: "Ezren", recordType: "characters", data: { level: 5, spells: [{ data: { type: "prepared", mod: 11, spells2: [dispel] } }] }, fields: {} };
   reset();
+  ctx.api.getToken = () => ({ _id: "wiz-token", name: "Ezren", effects: [], effectIds: [], data: {} });
   ctx.castSpell(prepared, dispel, "data.spells.0.data.spells2.0");
-  assertIncludes("a spell that counteracts gets the button", state.messages[0], 'counteract("Dispel Magic", 2, 11, {"recordType":"characters","recordId":"wiz","dataPath":"data.spells.0.data.spells2.0","attribute":"int"});');
+  ctx.api.getToken = () => null;
+  assertIncludes("a spell that counteracts gets the button", state.messages[0], 'counteract("Dispel Magic", 2, 11, {"tokenId":"wiz-token","recordType":"characters","recordId":"wiz","dataPath":"data.spells.0.data.spells2.0","attribute":"int"});');
   const mods = ctx.getCounteractModifiers(null, null, "int", 11);
   assert("without the caster: the base modifier", mods.map((m) => m.value), [11]);
-  ctx.getEffectsAndModifiersForToken = ((original) => (record, types, field) =>
-    types.includes("allPenalty") && field === "cha" ? [{ name: "Frightened", type: "status", value: -2, active: true }] : original(record, types, field))(ctx.getEffectsAndModifiersForToken);
-  assert("with it: checks of the casting attribute too (frightened)", ctx.getCounteractModifiers(token(), null, "cha", 11).map((m) => [m.name, m.value]), [["Spell Attack Modifier", 11], ["Frightened", -2]]);
+  const lookups = [];
+  const original = ctx.getEffectsAndModifiersForToken;
+  ctx.getEffectsAndModifiersForToken = (creature, types, field, ...rest) => {
+    lookups.push([creature?._id, types, field]);
+    return types.includes("allPenalty") && creature?.effects?.length ? [{ name: "Frightened", type: "status", value: -2, active: true }] : [];
+  };
+  const frightenedNpc = token({}, { id: "npc-tok", recordType: "npcs", effects: [[condition("Frightened"), 2]] });
+  assert("with it: checks of the casting attribute and counteract checks (frightened)", ctx.getCounteractModifiers(frightenedNpc, null, "cha", 11).map((m) => [m.name, m.value]), [["Spell Attack Modifier", 11], ["Frightened", -2]]);
+  assert("... no spell attack roll lookup", lookups.map((l) => [l[1], l[2]]), [[["allBonus", "allPenalty"], ["cha", "counteract"]]]);
+
+  // On click: the caster's token (an unlinked NPC's conditions), else the record
+  reset();
+  lookups.length = 0;
+  ctx.api.getOtherTokens = () => [{ token: frightenedNpc }];
+  let fetched = 0;
+  ctx.api.getRecord = () => fetched++;
+  ctx.counteract("Dispel Magic", 3, 12, { tokenId: "npc-tok", recordType: "npcs", recordId: "npc", attribute: "cha" });
+  valuePrompts[0].cb("20");
+  promptPick(0, "3");
+  assert("the token is read, not the record", [lookups[0][0], fetched, calls[0][4].map((m) => m.value)], ["npc-tok", 0, [12, -2]]);
+  reset();
+  ctx.api.getOtherTokens = () => [];
+  ctx.counteract("Dispel Magic", 3, 12, { tokenId: "gone", recordType: "npcs", recordId: "npc", attribute: "cha" });
+  valuePrompts[0].cb("20");
+  promptPick(0, "3");
+  assert("no token on the scene: the record", fetched, 1);
+  ctx.getEffectsAndModifiersForToken = original;
+  ctx.api.getRecord = () => {};
 }
 
 section("Stupefied, grabbed, deafened (Q25)");

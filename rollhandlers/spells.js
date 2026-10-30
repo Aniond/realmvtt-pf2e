@@ -1754,6 +1754,7 @@ function castSpell(record, spell, dataPathToSpell, isOverlay = false) {
     macros.push(
       getCounteractButton(
         record,
+        ourToken,
         spellName,
         castingRank,
         (spellCastingEntry?.data?.mod || 0) + getNpcProficiencyWithoutLevelAdjustment(record),

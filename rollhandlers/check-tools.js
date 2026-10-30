@@ -307,22 +307,45 @@ function getCounteractOutcome(degree, counteractRank, targetRank) {
   return false;
 }
 
-// The button: the caster and the spell, read again when it's clicked
-function getCounteractButton(record, spellName, counteractRank, mod, dataPathToSpell, attribute) {
-  const caster = { recordType: record?.recordType, recordId: record?._id, dataPath: dataPathToSpell, attribute };
+// The button: the caster (its token, else its record) and the spell, read
+// again when it's clicked
+function getCounteractButton(record, token, spellName, counteractRank, mod, dataPathToSpell, attribute) {
+  const caster = {
+    ...(token?._id ? { tokenId: token._id } : {}),
+    recordType: record?.recordType,
+    recordId: record?._id,
+    dataPath: dataPathToSpell,
+    attribute,
+  };
   const fence = "```";
   return `${fence}Counteract\ncounteract(${JSON.stringify(spellName)}, ${parseInt(counteractRank, 10) || 0}, ${parseInt(mod, 10) || 0}, ${JSON.stringify(caster)});\n${fence}`;
 }
 
-// The check's modifiers: the spell attack modifier, then the caster's spell
-// attack bonuses and penalties and those to checks of the casting attribute
-// (frightened, stupefied). Not attack roll bonuses: it isn't an attack.
-function getCounteractModifiers(record, spell, attribute, mod) {
+// The check's modifiers, as Foundry's counteract statistic: the casting
+// attribute and proficiency (the entry's modifier), then bonuses and
+// penalties to checks of that attribute (frightened, stupefied) and to
+// counteract checks (field "counteract"). Nothing that applies only to
+// spell attack rolls: it's a check, not an attack.
+function getCounteractModifiers(caster, spell, attribute, mod) {
   const base = mod ? [{ name: "Spell Attack Modifier", type: "", value: mod, active: true }] : [];
-  if (!record) return base;
-  const spellAttack = getEffectsAndModifiersForToken(record, ["spellAttackBonus", "spellAttackPenalty"], "", undefined, undefined, { spell });
-  const checks = getEffectsAndModifiersForToken(record, ["allBonus", "allPenalty"], attribute || "int", undefined, undefined, { spell });
-  return [...base, ...mergeModifierLists(spellAttack, checks)];
+  if (!caster) return base;
+  const checks = getEffectsAndModifiersForToken(
+    caster,
+    ["allBonus", "allPenalty"],
+    [attribute || "int", "counteract"],
+    undefined,
+    undefined,
+    { spell },
+  );
+  return [...base, ...keepStrongestPerType(checks)];
+}
+
+// The caster's token by id, when it's on the scene
+function findCasterToken(tokenId) {
+  if (!tokenId) return null;
+  const current = api.getToken();
+  if (current?._id === tokenId) return current;
+  return (api.getOtherTokens() || []).map((t) => t?.token || t).find((t) => t?._id === tokenId) || null;
 }
 
 // The Counteract button: the DC of the effect to counteract, then its rank
@@ -340,12 +363,14 @@ function counteract(spellName, counteractRank, mod, caster = null) {
     for (let rank = 0; rank <= 10; rank++) {
       options.push({ label: `Rank ${rank}`, value: `${rank}` });
     }
-    const roll = (targetRank, record) => {
-      const spell = record && caster?.dataPath ? api.getValueOnRecord(record, caster.dataPath) : null;
+    // The token carries an unlinked NPC's conditions; the record is the
+    // fallback when the token isn't on the scene
+    const roll = (targetRank, creature) => {
+      const spell = creature && caster?.dataPath ? api.getValueOnRecord(creature, caster.dataPath) : null;
       api.promptRoll(
         `${spellName}: Counteract`,
         "1d20",
-        getCounteractModifiers(record, spell, caster?.attribute, mod),
+        getCounteractModifiers(creature, spell, caster?.attribute, mod),
         {
           rollName: `${spellName}: Counteract`,
           tooltip: "Counteract Check",
@@ -365,7 +390,10 @@ function counteract(spellName, counteractRank, mod, caster = null) {
       (choice) => {
         const targetRank = parseInt(Array.isArray(choice) ? choice[0] : choice, 10);
         if (isNaN(targetRank)) return;
-        if (caster?.recordType && caster?.recordId) {
+        const token = findCasterToken(caster?.tokenId);
+        if (token) {
+          roll(targetRank, token);
+        } else if (caster?.recordType && caster?.recordId) {
           api.getRecord(caster.recordType, caster.recordId, (record) => roll(targetRank, record));
         } else {
           roll(targetRank, null);
