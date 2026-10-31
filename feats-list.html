@@ -115,6 +115,8 @@
 
       api.setValuesOnRecord(updatedRecord, valuesToSet, (updatedRecord2) => {
         onAddEditFeature(updatedRecord2);
+        // Multilingual's languages (character-growth.js)
+        promptFeatLanguages(updatedRecord2 || updatedRecord, feat);
       });
     }
   }
@@ -167,6 +169,14 @@
       "No",
       onDeleteFeat
     );
+  }
+
+  // Retraining swaps this feat for another of the slot (character-growth.js)
+  function retrainFeat() {
+    const dataPathToFeat = getNearestParentDataPath(dataPath);
+    api.getRecord(record.recordType, record._id, (updatedRecord) => {
+      retrainFeatAt(updatedRecord, dataPathToFeat);
+    });
   }
 
   function showFeatSlotOptions() {
@@ -304,6 +314,14 @@
             color="primary"
             onclick="useFeat()"
             options='[{"label": "Send to Chat", "icon": "IconSend", "value": "send"}]'
+          ></iconbutton>
+          <iconbutton
+            size="sm"
+            variant="default"
+            color="default"
+            hideonlocked="true"
+            onclick="retrainFeat()"
+            options='[{"label": "Retrain Feat", "icon": "IconRefresh", "value": "retrainFeat"}]'
           ></iconbutton>
           <iconbutton
             size="sm"

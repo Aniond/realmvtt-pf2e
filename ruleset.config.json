@@ -5439,6 +5439,9 @@
         },
         "WeaponTraits": {
           "file": "rollhandlers/weapon-traits.js"
+        },
+        "CharacterGrowth": {
+          "file": "rollhandlers/character-growth.js"
         }
       },
       "defaultDice": "default",

@@ -787,8 +787,10 @@ ${getLevelUpSummary(gains)}`,
               next();
               return;
             }
-            api.setValues({ [`data.${field}`]: [...existing, boost] }, () =>
-              next(),
+            // A higher Intelligence modifier: a skill and a language
+            // (character-growth.js)
+            api.setValues({ [`data.${field}`]: [...existing, boost] }, (updated) =>
+              promptIntIncreaseGains(latestRecord, updated || latestRecord, next),
             );
           },
           "OK",
@@ -810,7 +812,9 @@ ${getLevelUpSummary(gains)}`,
             next();
             return;
           }
-          api.setValues({ [`data.${field}`]: boosts }, () => next());
+          api.setValues({ [`data.${field}`]: boosts }, (updated) =>
+            promptIntIncreaseGains(latestRecord, updated || latestRecord, next),
+          );
         },
         "OK",
         "Skip",
@@ -886,7 +890,8 @@ ${getLevelUpSummary(gains)}`,
                 feat,
               ),
             },
-            () => next(),
+            // Multilingual's languages (character-growth.js)
+            (updated) => promptFeatLanguages(updated || latestRecord, feat, next),
           );
         },
         "OK",
