@@ -277,7 +277,7 @@ section("Switching off magazine ammo (attack-list.html)");
   const fs = require("fs");
   const vm = require("vm");
   const html = fs.readFileSync(`${__dirname}/../attack-list.html`, "utf8");
-  const handler = html.match(/  function onAmmoSelectChange\(value\) \{[\s\S]*?\n  \}\n/);
+  const handler = html.match(/  function onAmmoSelectChange\(value\) \{[\s\S]*?\n  \}\r?\n/);
   new vm.Script(handler[0], { filename: "attack-list.html" }).runInContext(ctx);
   const magazine = { _id: "mag", name: "Magazine", recordType: "items", data: { type: "consumable", itemCategory: "ammo", count: 2, uses: { max: 5, value: 5 } } };
   const select = (item, ammoId) => {
