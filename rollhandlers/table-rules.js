@@ -515,14 +515,19 @@ function getUnderwaterAttackModifiers(token, weapon) {
   if (!token || !weapon || !getTokenCondition(token, "Underwater")) return [];
   const traits = getTraitNameList(weapon.data?.traits);
   if (traits.includes("underwater")) return [];
+  // A weapon's damage type, an NPC attack's damage rolls, or its damage text
+  // ("1d6 slashing")
   const damage = Array.isArray(weapon.data?.damage) ? weapon.data.damage : [weapon.data?.damage];
   const types = [
     weapon.data?.damageType,
-    ...damage.map((dmg) => dmg?.type || dmg?.data?.type || dmg?.damageType || dmg?.data?.damageType),
+    ...(weapon.data?.damageRolls || []).map((roll) => roll?.data?.type),
+    ...damage.map((dmg) =>
+      typeof dmg === "string" ? dmg : dmg?.type || dmg?.data?.type || dmg?.damageType || dmg?.data?.damageType,
+    ),
   ]
     .filter(Boolean)
     .map((type) => String(type).toLowerCase());
-  if (!types.some((type) => type === "bludgeoning" || type === "slashing")) return [];
+  if (!types.some((type) => /\b(bludgeoning|slashing)\b/.test(type))) return [];
   const unarmed = traits.includes("unarmed") || weapon.data?.category === "unarmed";
   if (unarmed && isAquaticCreature(token)) return [];
   return [{ name: "Underwater (bludgeoning or slashing)", type: "circumstance", value: -2, isPenalty: true, active: true }];
@@ -612,22 +617,20 @@ function loseAir(token, rounds = 1) {
   const held = getTokenCondition(token, "Holding Breath");
   if (!held) return;
   const left = Math.max(0, held.value - rounds);
-  const remove = (count, done) => {
-    if (count <= 0) {
+  // The last instances, one at a time. The token passed in isn't updated
+  // by the removals, so the indexes are worked out first.
+  const indexes = [];
+  for (let index = held.value - 1; index >= left; index--) indexes.push(index);
+  const remove = (done) => {
+    if (indexes.length === 0) {
       done();
       return;
     }
-    const effect = getTokenCondition(token, "Holding Breath")?.effect;
-    if (!effect) {
-      done();
-      return;
-    }
-    const instances = getEffectInstances(token, effect).length;
-    api.removeEffectById(effect._id, token, () => remove(count - 1, done), {
-      instanceIndex: Math.max(instances - 1, 0),
+    api.removeEffectById(held.effect._id, token, () => remove(done), {
+      instanceIndex: indexes.shift(),
     });
   };
-  remove(held.value - left, () => {
+  remove(() => {
     const name = getTokenDisplayName(token);
     if (left > 0) {
       api.sendMessage(`${name}: ${left} round${left > 1 ? "s" : ""} of air left.`, undefined, [], [], token);
@@ -655,10 +658,14 @@ function rollSuffocationSave(token) {
 // Able to breathe again: no longer holding breath or suffocating. Unconscious
 // stays at 0 Hit Points.
 function breatheAgain(token) {
-  const names = ["Holding Breath", "Suffocating"];
+  // Every instance of each goes at once. The ids are read first: the token
+  // passed in isn't updated by the removals.
+  const ids = ["Holding Breath", "Suffocating"]
+    .map((name) => getTokenCondition(token, name)?.effect?._id)
+    .filter(Boolean);
   const next = () => {
-    const name = names.find((n) => getTokenCondition(token, n));
-    if (!name) {
+    const id = ids.shift();
+    if (!id) {
       api.sendMessage(
         `**${getTokenDisplayName(token)} can breathe again.** No longer unconscious from suffocating, unless at 0 Hit Points.`,
         undefined,
@@ -668,7 +675,7 @@ function breatheAgain(token) {
       );
       return;
     }
-    api.removeEffectById(getTokenCondition(token, name).effect._id, token, next);
+    api.removeEffectById(id, token, next);
   };
   next();
 }

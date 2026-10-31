@@ -224,7 +224,9 @@ section("Aquatic combat and drowning (Q39)");
   assert("... an aquatic creature's unarmed attack: none", ctx.getUnderwaterAttackModifiers(token("merfolk", "Merfolk", { traits: ["aquatic"] }, { Underwater: 1 }), fist), []);
   assert("... but a land creature's: -2", ctx.getUnderwaterAttackModifiers(diver, fist).length, 1);
   assert("not underwater: none", ctx.getUnderwaterAttackModifiers(token("dry", "Dry"), sword), []);
-  assert("an NPC's damage list", ctx.getUnderwaterAttackModifiers(diver, { data: { damage: [{ data: { type: "bludgeoning" } }] } }).length, 1);
+  assert("an NPC attack's damage rolls", ctx.getUnderwaterAttackModifiers(diver, { data: { damage: "1d6 slashing", damageRolls: [{ data: { formula: "1d6", type: "slashing" } }] } }).length, 1);
+  assert("... or its damage text", ctx.getUnderwaterAttackModifiers(diver, { data: { damage: "2d8+4 bludgeoning" } }).length, 1);
+  assert("... piercing text: none", ctx.getUnderwaterAttackModifiers(diver, { data: { damage: "1d6 piercing" } }), []);
 
   const walker = token("walker", "Walker", { speed: "25 feet" });
   const swimmer = token("swimmer", "Swimmer", { speed: "25 feet, swim 20 feet" });
@@ -254,6 +256,16 @@ section("Aquatic combat and drowning (Q39)");
   assert("out of air: both stacks spent, then unconscious and suffocating", calls.map((call) => call[0]), ["remove", "remove", "adds"]);
   assert("... one instance at a time", calls[0][3], { instanceIndex: 1 });
   assert("... adds the conditions", calls[2], ["adds", "h", ["Unconscious", "Suffocating"]]);
+
+  // The removals don't update the token passed in (as live)
+  reset();
+  ctx.breatheAgain(token("b", "Bo", {}, { "Holding Breath": 2, Suffocating: 1 }));
+  assert(
+    "Breathes Again: each effect removed once",
+    calls.map((call) => call[2]),
+    ["e-Holding Breath", "e-Suffocating"],
+  );
+  assertIncludes("... then the card", state.messages[0], "**Bo can breathe again.**");
 
   saves = [];
   reset();
