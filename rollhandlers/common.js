@@ -1358,6 +1358,9 @@ function collectTraitsAndProperties(
   // self:participant:initiative:stat:<statistic>
   getEncounterAtoms(token).forEach((atom) => traits.add(atom));
 
+  // Hands: hands-free:<n> and hands-free:but-really:<n> (weapon-traits.js)
+  getHandsFreeAtoms(token).forEach((atom) => traits.add(atom));
+
   // Add item:proficiency:rank:{value} for items in context
   const item = context.item || context.weapon || context.spell;
   if (item && token) {
@@ -4784,9 +4787,22 @@ function getItemFields(item) {
     ammoFields: { hidden: isMelee && !isThrown },
     ammo: { hidden: isMelee && !isThrown },
     reloadBtn: { hidden: !requiresReload },
-    loadedAmmo: { hidden: !requiresReload },
+    // Capacity and double barrel weapons count their loaded shots, and a
+    // double barrel weapon can fire both; parry and versatile with another
+    // damage type have their own controls (weapon-traits.js)
+    loadedAmmo: { hidden: !requiresReload || getLoadCapacity(item) > 1 },
+    loadedCount: { hidden: !requiresReload || getLoadCapacity(item) <= 1 },
+    doubleBarrel: { hidden: !requiresReload || !hasDoubleBarrelTrait(item) },
+    parryBtn: { hidden: !hasParryTrait(item) },
     ammoSelect: { hidden: isMelee || isThrown || isBomb },
-    ...versatileFields,
+    ...(hasOtherVersatileType(item)
+      ? {
+          versatilePiercing: { hidden: true },
+          versatileBludgeoning: { hidden: true },
+          versatileSlashing: { hidden: true },
+          versatileType: { hidden: false },
+        }
+      : { ...versatileFields, versatileType: { hidden: true } }),
   };
 }
 
@@ -4890,8 +4906,28 @@ function setItemFields(item, itemDataPath, valuesToSet) {
   if (requiresReload && itemFields?.reloadBtn?.hidden !== false) {
     valuesToSet[`${itemDataPath}.fields.reloadBtn.hidden`] = false;
   }
-  if (requiresReload && itemFields?.loadedAmmo?.hidden !== false) {
+  // A capacity or double barrel weapon counts its loaded shots instead
+  // (weapon-traits.js)
+  const loadCapacity = getLoadCapacity(item);
+  if (requiresReload && loadCapacity <= 1 && itemFields?.loadedAmmo?.hidden !== false) {
     valuesToSet[`${itemDataPath}.fields.loadedAmmo.hidden`] = false;
+  }
+  if (requiresReload && loadCapacity > 1) {
+    if (itemFields?.loadedAmmo?.hidden !== true) {
+      valuesToSet[`${itemDataPath}.fields.loadedAmmo.hidden`] = true;
+    }
+    if (itemFields?.loadedCount?.hidden !== false) {
+      valuesToSet[`${itemDataPath}.fields.loadedCount.hidden`] = false;
+    }
+    if (item.data?.loadedMax !== loadCapacity) {
+      valuesToSet[`${itemDataPath}.data.loadedMax`] = loadCapacity;
+    }
+    if (hasDoubleBarrelTrait(item) && itemFields?.doubleBarrel?.hidden !== false) {
+      valuesToSet[`${itemDataPath}.fields.doubleBarrel.hidden`] = false;
+    }
+  }
+  if (hasParryTrait(item) && itemFields?.parryBtn?.hidden !== false) {
+    valuesToSet[`${itemDataPath}.fields.parryBtn.hidden`] = false;
   }
   if (
     !isMelee &&
@@ -4951,6 +4987,19 @@ function setItemFields(item, itemDataPath, valuesToSet) {
       valuesToSet[`${itemDataPath}.fields.versatileSlashing.hidden`] = false;
     }
   }
+
+  // Versatile with another damage type (versatile fire...): the dropdown
+  // instead of the checkboxes (weapon-traits.js)
+  if (hasOtherVersatileType(item)) {
+    ["versatilePiercing", "versatileBludgeoning", "versatileSlashing"].forEach((field) => {
+      if (itemFields?.[field]?.hidden !== true) {
+        valuesToSet[`${itemDataPath}.fields.${field}.hidden`] = true;
+      }
+    });
+    if (itemFields?.versatileType?.hidden !== false) {
+      valuesToSet[`${itemDataPath}.fields.versatileType.hidden`] = false;
+    }
+  }
 }
 
 function onItemEquipped() {
@@ -4990,6 +5039,11 @@ function onItemEquippedFor(itemDataPath, newValue) {
   // Update the fields to show/hide the correct buttons on attack list
   // based on type incase it changed
   setItemFields(item, itemDataPath, valuesToSet);
+
+  // Hands in use, and a note past 2 (weapon-traits.js)
+  const handsChange = item?._id ? { [item._id]: { carried: newValue } } : {};
+  Object.assign(valuesToSet, getHandsValues(record, handsChange));
+  if (newValue === "equipped") noteHandsInUse(record, handsChange);
 
   // A scroll or wand (its spell maybe just set) gets its row in the Scrolls
   // and Wands entry first (item-spells.js)
@@ -8413,6 +8467,9 @@ function onAddEditFeature(
     valuesToSet["fields.companionProperties.hidden"] = hideCompanionBox;
   }
 
+  // The Actions tab's hands in use (weapon-traits.js)
+  Object.assign(valuesToSet, getHandsValues(record));
+
   // Initialize total modifier values for each ability
   const attributes = ["str", "dex", "con", "int", "wis", "cha"];
 
@@ -11157,7 +11214,11 @@ function getWeaponDamageInfo(record, weapon) {
   let splashDamage = weapon.data?.splashDamage || 0;
 
   // If this is a versatile weapon and we have a different type, use that
-  if (weapon.data?.versatilePiercing) {
+  // (versatile fire and the like: the dropdown, weapon-traits.js)
+  const versatileDamageType = getVersatileDamageType(weapon);
+  if (versatileDamageType) {
+    damageType = versatileDamageType;
+  } else if (weapon.data?.versatilePiercing) {
     damageType = "piercing";
   } else if (weapon.data?.versatileBludgeoning) {
     damageType = "bludgeoning";
@@ -11218,6 +11279,13 @@ function getWeaponDamageInfo(record, weapon) {
   let damageDie = weapon.data?.damage.die;
   if (twoHandDie && weapon.data?.handBtn === "two") {
     damageDie = twoHandDie;
+  }
+  // Both barrels of a double barrel weapon: the damage and fatal dice one
+  // step up (weapon-traits.js)
+  if (isFiringBothBarrels(weapon)) {
+    damageDie = stepUpDie(damageDie);
+    if (fatalDie) fatalDie = stepUpDie(fatalDie);
+    if (strikingRuneMod) strikingRuneMod.value = `${strikingRune}${damageDie}`;
   }
   let numDice = weapon.data?.damage.dice;
 
@@ -12211,10 +12279,19 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber) {
   const requiresReload =
     !isNPCAttack && (weapon.data?.reload || 0) > 0 && !isMelee;
 
-  if (requiresReload && !weapon.data?.loadedAmmo) {
+  // Capacity and double barrel weapons hold more than one loaded shot, and
+  // both barrels can fire at once (weapon-traits.js)
+  const loadedShots = requiresReload ? getLoadedCount(weapon) : 0;
+  if (requiresReload && loadedShots <= 0) {
     api.showNotification("You need to reload first!", "red", "Out of Ammo");
     return;
   }
+  if (requiresReload && isFiringBothBarrels(weapon) && loadedShots < 2) {
+    api.showNotification("Only one barrel is loaded: firing one.", "yellow", "Double Barrel");
+    weapon = { ...weapon, data: { ...weapon.data, doubleBarrel: false } };
+  }
+  const shotsFired = requiresReload && isFiringBothBarrels(weapon) ? 2 : 1;
+  const reloadNotes = [];
 
   let abilityScore = "str";
   let damageScore = "";
@@ -12251,7 +12328,9 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber) {
       ammoSelected = weapon._id;
     }
 
-    const expend = parseInt(weapon.data?.expend || "1", 10) || 1; // Default to 1 if 0 or undefined
+    // Default to 1 if 0 or undefined; at least 2 for both barrels (Foundry's
+    // max(doubleBarrel ? 2 : 1, expend))
+    const expend = Math.max(shotsFired, parseInt(weapon.data?.expend || "1", 10) || 1);
 
     // Get the ammo item to check for uses system
     let ammoItem = null;
@@ -12351,6 +12430,17 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber) {
     if (requiresReload && needsReload) {
       valuesToSet[`${weaponDataPath}.data.loadedAmmo`] = false;
     }
+
+    // The loaded shots left in a capacity or double barrel weapon, and a
+    // repeating weapon's empty magazine (weapon-traits.js)
+    if (requiresReload) {
+      const shot = getShotValues(weapon, weaponDataPath, shotsFired);
+      Object.assign(valuesToSet, shot.values);
+      reloadNotes.push(shot.note);
+    }
+    reloadNotes.push(
+      getMagazineNote(weapon, needsReload && (parseInt(ammoItem?.data?.uses?.max || "0", 10) || 0) > 1),
+    );
   } else if (
     hasFinesseTrait &&
     (record.data?.dex || 0) > (record.data?.str || 0)
@@ -12799,6 +12889,14 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber) {
           : 0,
       });
   modifiers.push(...momentum.attack);
+  // Kickback and jousting (weapon-traits.js)
+  const traitModifiers =
+    isSpell || isNPCAttack
+      ? { attack: [], damage: [] }
+      : getWeaponTraitModifiers(record, weapon, {
+          damageDice: countWeaponDamageDice(weapon, getStrikingRuneForRecord(record, weapon)),
+        });
+  modifiers.push(...traitModifiers.attack);
   const getSweepModifiers = (targetId) =>
     isSpell
       ? []
@@ -12908,7 +13006,7 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber) {
   // Only the strongest damage bonus and penalty of each type apply across the
   // lookups (dice always stack). This must come before the map below, which
   // turns type into the damage type.
-  damageModifiers.push(...momentum.damage);
+  damageModifiers.push(...momentum.damage, ...traitModifiers.damage);
   damageModifiers = keepStrongestPerType(damageModifiers);
   damageModifiers.push(...criticalOnlyDamageModifiers);
 
@@ -13271,6 +13369,8 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber) {
         // A monster Strike's riders (Grab, Knockdown, Push) and Debilitating
         // Strike's debilitations (combat-riders.js)
         strikeRiders: getStrikeRiders(weapon),
+        // Loaded shots left, an empty magazine (weapon-traits.js)
+        reloadNote: reloadNotes.filter(Boolean).join(" "),
         debilitation: getDebilitationCount(record),
         debilitationDuration: getEndOfNextTurnValue(ourToken, record),
         debilitationFeats: hasDebilitationFeats(record),
@@ -13363,6 +13463,8 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber) {
       damageSource: getDamageSource(record, weapon),
       // A monster Strike's riders (combat-riders.js)
       strikeRiders: getStrikeRiders(weapon),
+      // Loaded shots left, an empty magazine (weapon-traits.js)
+      reloadNote: reloadNotes.filter(Boolean).join(" "),
       degreeOfSuccessAdjustments: degreeOfSuccessAdjustments,
       // Notes shown with the result
       notes: getRollNotes(
@@ -13702,6 +13804,13 @@ function performDamageRoll(record, weapon, weaponDataPath, isCritical) {
   // Only the strongest damage bonus and penalty of each type apply across the
   // lookups (dice always stack). This must come before the map below, which
   // turns type into the damage type.
+  // Kickback and jousting (weapon-traits.js)
+  damageModifiers.push(
+    ...getWeaponTraitModifiers(record, weapon, {
+      isNPCAttack: isNPCAttack || weaponDamageInfo.isSpell || weaponDamageInfo.isItem,
+      damageDice: countWeaponDamageDice(weapon, getStrikingRuneForRecord(record, weapon)),
+    }).damage,
+  );
   damageModifiers = keepStrongestPerType(damageModifiers);
 
   damageModifiers = damageModifiers.map((mod) => {
@@ -15497,13 +15606,15 @@ function applyDamage(
       Object.keys(damageByTypeAfterHalf).forEach((type) => {
         const lowerType = type.toLowerCase();
         let damageOfThisType = damageByTypeAfterHalf[type];
+        const protectionType = getConcussiveProtectionType(IWR, lowerType, traits);
 
         // Check Immunities first (all damage of this type is negated)
         if (!damageIgnoresImmunities.includes(lowerType)) {
           let isImmune = false;
 
-          // Check for specific type immunity
-          const immunity = IWR.immunities[lowerType];
+          // Check for specific type immunity (concussive: the weaker of
+          // piercing or bludgeoning, weapon-traits.js)
+          const immunity = IWR.immunities[protectionType];
           // Check for "all damage" immunity
           const allDamageImmunity =
             IWR.immunities["all damage"] || IWR.immunities["all-damage"];
@@ -15616,8 +15727,8 @@ function applyDamage(
             return resistanceValue - ignored;
           };
 
-          // Check for specific type resistance
-          const resistance = IWR.resistances[lowerType];
+          // Check for specific type resistance (concussive: as above)
+          const resistance = IWR.resistances[protectionType];
           // Check for "all damage" resistance
           const allDamageResistance =
             IWR.resistances["all damage"] || IWR.resistances["all-damage"];

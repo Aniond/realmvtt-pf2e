@@ -5436,6 +5436,9 @@
         },
         "ClassExtras": {
           "file": "rollhandlers/class-extras.js"
+        },
+        "WeaponTraits": {
+          "file": "rollhandlers/weapon-traits.js"
         }
       },
       "defaultDice": "default",
