@@ -38,6 +38,9 @@ ctx.api.setValuesOnRecord = (record, values, cb) => {
 };
 ctx.api.getValueOnRecord = (record, path) => path.split(".").reduce((value, key) => value?.[key], record);
 ctx.onAddEditFeature = () => calls.push(["recalculate"]);
+// The fresh read returns the record the test passes, by id
+let stored = {};
+ctx.api.getRecord = (type, id, cb) => cb(stored[id]);
 
 const character = (data = {}, { id = "pc", name = "Ezren" } = {}) => ({
   _id: id,
@@ -120,6 +123,7 @@ section("Retraining a feat (Q29)");
   assert("a lineage feat: a note", ctx.getRetrainFeatNotes(character(), feat("Draconic Sycophant", { traits: ["Lineage"] })), ["Lineage feats can't be retrained into or out of."]);
   assert("... into one too", ctx.getRetrainFeatNotes(character(), feat("Toughness"), feat("Draconic Sycophant", { traits: ["Lineage"] })), ["Lineage feats can't be retrained into or out of."]);
   assert("nothing to check: no notes", ctx.getRetrainFeatNotes(character(), feat("Toughness")), []);
+  assert("Multilingual: its languages stay, a note", ctx.getRetrainFeatNotes(character(), feat("Multilingual")), ["Remove the languages Multilingual gave from the Languages list."]);
   assert("the card", ctx.getRetrainCard("Ezren", "A into B", ["Note."]), "**Ezren retrains:** A into B (1 week of downtime).\n[gm]Note.[/gm]");
 
   const newFeat = feat("Fleet", { level: 1 });
@@ -160,16 +164,19 @@ section("Retraining a skill increase (Q29)");
   assert("an untrained skill can't go down", ctx.getRetrainSkillValues(ezren, "stealth", "arcana"), null);
 
   const scholar = character({ level: 5, arcana: "2", society: "1", feats: [feat("Multilingual", { prerequisites: "trained in Society" })] });
+  // The sheet's record can be stale: the prompts use the fresh read
+  stored = { pc: scholar };
   reset([["society"], ["arcana"]]);
-  ctx.retrainSkillIncrease(scholar);
+  ctx.retrainSkillIncrease(character({ level: 5 }));
   assert("asks for the skill to lower, then the one to raise", prompts.map((prompt) => prompt.text.slice(0, 22)), ["Choose the skill that ", "Choose the skill that "]);
   assert("... the raise list leaves out the lowered skill", prompts[1].options.some((option) => option.value === "society"), false);
   reset([["society"], ["nature"]]);
   ctx.retrainSkillIncrease(scholar);
-  assert("one write", calls, [["set", "pc", { "data.society": "0", "data.nature": "1" }]]);
+  assert("one write, then the recalculation", calls, [["set", "pc", { "data.society": "0", "data.nature": "1" }], ["recalculate"]]);
   assertIncludes("... the card", state.messages[0], "**Ezren retrains:** Society to Untrained, Nature to Trained (1 week of downtime).");
   assertIncludes("... with the GM note", state.messages[0], "[gm]Multilingual lists Society as a prerequisite.[/gm]");
 
+  stored = { pc: character() };
   reset();
   ctx.retrainSkillIncrease(character());
   assert("no trained skills: a notice", notifications, ["No trained skills to retrain."]);
@@ -178,10 +185,12 @@ section("Retraining a skill increase (Q29)");
 section("Sheet hooks");
 {
   const main = fs.readFileSync(`${__dirname}/../characters-main.html`, "utf8");
+  const skills = fs.readFileSync(`${__dirname}/../characters-skills.html`, "utf8");
   const feats = fs.readFileSync(`${__dirname}/../feats-list.html`, "utf8");
   assert("the boost steps check Intelligence", (main.match(/promptIntIncreaseGains\(latestRecord/g) || []).length, 2);
   assertIncludes("the level up's feat step: Multilingual", main, "promptFeatLanguages(updated || latestRecord, feat, next)");
-  assertIncludes("Retrain a Skill Increase next to Level Up", main, 'onclick="retrainSkillIncrease(record)"');
+  assert("Retrain a Skill Increase: on the Skills tab, not the header", [skills.includes('onclick="retrainSkillIncrease(record)"'), main.includes("retrainSkillIncrease")], [true, false]);
+  assertIncludes("... hidden when locked", skills.slice(skills.indexOf('label="Retrain a Skill Increase"')), 'hideonlocked="true"');
   assertIncludes("a feat placed in a slot: Multilingual", feats, "promptFeatLanguages(updatedRecord2 || updatedRecord, feat)");
   assertIncludes("the feat row's Retrain button", feats, 'onclick="retrainFeat()"');
 }

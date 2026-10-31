@@ -8,8 +8,8 @@
 //     at master in Society and one more at legendary
 //   - Retraining (Player Core, Downtime): a feat or a skill increase is
 //     swapped over a week of downtime. A feat row's Retrain button re-picks the
-//     slot; the sheet's Retrain Skill Increase lowers one skill and raises
-//     another, up to the level's rank cap. The card notes what the GM may want
+//     slot; the Skills tab's Retrain a Skill Increase lowers one skill and
+//     raises another, up to the level's rank cap. The card notes what the GM may want
 //     to check (lineage feats, feats that list the old one or the skill as a
 //     prerequisite); nothing is blocked
 //
@@ -193,6 +193,10 @@ function getRetrainFeatNotes(record, oldFeat, newFeat = null) {
   if (hasFeatTrait(oldFeat, "dedication") && dependents.length > 0) {
     notes.push("A dedication feat can't be retrained while you have other feats from its archetype.");
   }
+  // The languages it gave stay on the sheet
+  if (`${oldFeat?.name || ""}`.trim().toLowerCase() === "multilingual") {
+    notes.push("Remove the languages Multilingual gave from the Languages list.");
+  }
   return notes;
 }
 
@@ -265,9 +269,13 @@ function getSkillRetrainNotes(record, skill) {
     : [];
 }
 
-// The sheet's Retrain Skill Increase (characters-main.html): the skill to
-// lower, then the one to raise
-function retrainSkillIncrease(record) {
+// The Skills tab's Retrain a Skill Increase (characters-skills.html): the
+// skill to lower, then the one to raise, on a fresh read of the character
+function retrainSkillIncrease(sheetRecord) {
+  api.getRecord(sheetRecord.recordType || "characters", sheetRecord._id, (record) => promptSkillRetraining(record || sheetRecord));
+}
+
+function promptSkillRetraining(record) {
   const lowerOptions = getRetrainSkillLowerOptions(record);
   if (lowerOptions.length === 0) {
     api.showNotification("No trained skills to retrain.", "yellow", "Retraining");
@@ -294,7 +302,9 @@ function retrainSkillIncrease(record) {
           const raise = getPromptSelections(selectedRaise)[0];
           const values = getRetrainSkillValues(record, lower, raise);
           if (!values) return;
-          api.setValuesOnRecord(record, values, () => {
+          api.setValuesOnRecord(record, values, (updated) => {
+            // The skill modifiers follow the ranks
+            onAddEditFeature(updated || record);
             const rank = (skill) => PROFICIENCY_RANK_NAMES[parseInt(values[`data.${skill}`], 10)];
             const change = `${capitalize(lower)} to ${rank(lower)}, ${capitalize(raise)} to ${rank(raise)}`;
             api.sendMessage(getRetrainCard(getCreatureName(record), change, getSkillRetrainNotes(record, lower)), undefined, [], [], record);
