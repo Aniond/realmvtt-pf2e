@@ -463,8 +463,9 @@ function useOrcFerocity(token, before = {}) {
   if (hasFeatNamed(token, "Undying Ferocity")) {
     const level = parseInt(token.data?.level || "0", 10) || 0;
     const tempHp = parseInt(token.data?.tempHp || "0", 10) || 0;
+    // With where they came from, so Rage's aren't taken for these (class-extras.js)
     if (level > tempHp) {
-      valuesToSet["data.tempHp"] = level;
+      Object.assign(valuesToSet, getActionTempHpValues(token, level, "Undying Ferocity"));
     }
     lines.push(`${level} temporary HP from Undying Ferocity`);
   }

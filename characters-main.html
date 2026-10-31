@@ -1031,7 +1031,9 @@ ${getLevelUpSummary(gains)}`,
         ? `Recovered ${focusPointsRecovered} Focus Point${focusPointsRecovered !== 1 ? "s" : ""}.`
         : "No Focus Points to recover.";
     const woundedText = woundedChanges["data.wounded"] === 0 ? " No longer wounded." : "";
-    const text = `Refocusing (10 minutes). ${focusText}${woundedText}${describeLimitedUseRecharges(record, recharges)}`;
+    // Refocusing reduces an oracle's cursebound by 1 (class-extras.js)
+    const curseboundText = removeCursebound(api.getToken() || record);
+    const text = `Refocusing (10 minutes). ${focusText}${woundedText}${curseboundText}${describeLimitedUseRecharges(record, recharges)}`;
     if (Object.keys(valuesToSet).length > 0) {
       api.setValues(valuesToSet, () => {
         api.sendMessage(text, undefined, [], []);

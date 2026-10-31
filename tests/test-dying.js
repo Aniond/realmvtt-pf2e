@@ -249,6 +249,7 @@ section("Orc Ferocity");
   reset();
   ctx.useOrcFerocity(pc({ curhp: 0, dying: 1, tempHp: 2 }, { feats: ["Orc Ferocity", "Undying Ferocity"] }), { dying: 0 });
   assert("Undying Ferocity: temporary HP equal to level", calls[0][2]["data.tempHp"], 5);
+  assert("... noted as their source", calls[0][2]["data.tempHpSource"], { name: "Undying Ferocity", amount: 5 });
   reset();
   ctx.useOrcFerocity(pc({ curhp: 0, dying: 1, orcFerocityUsed: true }, { feats: ["Orc Ferocity"] }), { dying: 0 });
   assert("once a day", [calls, notices.length], [[], 1]);

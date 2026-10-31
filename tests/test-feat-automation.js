@@ -1561,7 +1561,8 @@ section("Rage temporary HP and Superstition Instinct");
   ctx.api.addEffects = (names) => calls.push(["effects", names]);
   ctx.api.addEffectById = (id) => calls.push(["effectById", id]);
   ctx.applyActionTemporaryHitPoints(8, "Rage");
-  assert("Apply temporary HP", calls[0], ["data.tempHp", 8]);
+  // One write, with where they came from (class-extras.js)
+  assert("Apply temporary HP", ctx.__state.lastSet, { "data.tempHp": 8, "data.tempHpSource": { name: "Rage", amount: 8 } });
   ctx.__state.lastSet = null;
   calls.length = 0;
   ctx.applyActionHealing(8, "Superstition Instinct", ["Superstitious Resilience (Used)"]);

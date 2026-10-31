@@ -4414,9 +4414,9 @@ function getActionApplyTargets() {
 // Temporary Hit Points from an action (Rage): they replace lower ones
 function applyActionTemporaryHitPoints(amount, sourceName = "") {
   getActionApplyTargets().forEach((target) => {
-    const oldTempHp = parseInt(target?.data?.tempHp || "0", 10) || 0;
-    const newTempHp = Math.max(amount, oldTempHp);
-    api.setValueOnToken(target, "data.tempHp", newTempHp);
+    // Kept with where they came from, so Rage's go when it ends
+    // (class-extras.js)
+    api.setValuesOnTokenById(target._id, target.recordType, getActionTempHpValues(target, amount, sourceName));
     const from = sourceName ? ` from ${sourceName}` : "";
     api.sendMessage(
       `${getTokenDisplayName(target)} gains ${amount} temporary Hit Points${from}.`,
@@ -9574,6 +9574,8 @@ function rollSkill(
     targetNotes: _targetNotes,
     ...metadataExtras
   } = additionalMetadata;
+  // Who gains panache from a bravado check (class-extras.js)
+  const bravadoToken = record?.recordId ? record : api.getToken();
   const metadata = {
     rollName: actionName
       ? `${capitalize(skillName)}: ${actionName}`
@@ -9594,6 +9596,11 @@ function rollSkill(
         ? additionalMetadata.targetNotes
         : []),
     ],
+    // A check with the bravado trait: panache buttons with the result
+    // (class-extras.js)
+    ...(isBravadoCheck(record, context) && bravadoToken?._id
+      ? { bravado: { tokenId: bravadoToken._id, tokenName: getCreatureName(bravadoToken) } }
+      : {}),
     ...metadataExtras,
   };
 
@@ -10876,7 +10883,7 @@ function useAction(action, actionDataPath = null) {
 ${usesLine ? `${usesLine}\n` : ""}
 ---
 ${actionDescription}
-${effectMacros}${getActionHealingMacros(action)}${getFirstAidActionMacro(action)}${getSkillActionMacros(action)}${getRechargeButton(action)}
+${effectMacros}${getActionHealingMacros(action)}${getFirstAidActionMacro(action)}${getSkillActionMacros(action)}${getRechargeButton(action)}${getFinisherButton(action)}${applyCursebound(action)}
 `;
 
   // Send the message
@@ -15930,6 +15937,7 @@ function applyDamage(
       const oldHp = curhp;
       oldValues["data.curhp"] = oldHp;
       oldValues["data.tempHp"] = oldTempHp;
+      if (target.data?.tempHpSource) oldValues["data.tempHpSource"] = target.data.tempHpSource;
 
       // Float text for damage or healing
       if (damage !== 0) {
@@ -15956,6 +15964,8 @@ function applyDamage(
         damage = Math.max(damage - oldTempHp, 0);
         if (newTempHp !== oldTempHp) {
           valuesToSet["data.tempHp"] = newTempHp;
+          // Used up: nothing is left from where they came from (class-extras.js)
+          if (newTempHp === 0 && target.data?.tempHpSource) valuesToSet["data.tempHpSource"] = null;
           usedTempHp = true;
         }
         // Then deduct from Current HP

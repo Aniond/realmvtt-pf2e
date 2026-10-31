@@ -119,6 +119,13 @@ ${macro}`
   }
 }
 
+// Rage ends with the encounter, and the temporary Hit Points left from it go
+// (class-extras.js)
+{
+  const rageLines = clearRageTempHp(data?.tokens);
+  if (rageLines.length > 0) api.sendMessage(rageLines.join("\n"));
+}
+
 // End the effects that last one encounter (stances, Panache, Rage and the
 // like), as Foundry does when an encounter ends. Realm doesn't end them
 // itself: ending an encounter only resets the combat tracker.

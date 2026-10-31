@@ -1823,7 +1823,7 @@ api.getRecord('${record.recordType}', '${record._id}', (updatedRecord) => {
 
   ---
   ${itemSpellCast?.lines.length ? `${itemSpellCast.lines.join("\n")}\n\n` : ""}${spellDescription}
-  ${macros && macros.length > 0 ? `${macros.join("\n")}\n` : ""}
+  ${macros && macros.length > 0 ? `${macros.join("\n")}\n` : ""}${isOverlay ? "" : applyCursebound(spell)}
   ${overlayMacros.length > 0 ? `\n---\n${overlayMacros.join("\n")}\n` : ""}
   `;
 
