@@ -267,6 +267,14 @@ Animal companions are characters, as Foundry's PF2e Companion Compendia builds t
 - Panache: `rollSkill` puts `bravado` `{ tokenId, tokenName }` in the metadata when the check has the bravado trait (`isBravadoCheck`: the action's own trait or the module's `item:trait:bravado` roll option). `skill.js` shows Gain Panache on a success and Panache until the end of your next turn (`end_applier_turn`, `getEndOfNextTurnValue`) on a failure; both without a DC. A finisher's card has Lose Panache (`getFinisherButton`). No finisher or concentrate warnings (#27).
 - Cursebound: `useAction` and `castSpell` (not overlays) add a Cursebound instance for the cursebound trait (`applyCursebound`), up to `getCurseboundMax` (2, 3 with the Major Curse feature, 4 with Extreme Curse; from features, not level, so Oracle Dedication stays at 2); at the maximum, a GM-only line and no change. Refocus (`shortRest`) reduces it by 1, one instance (`removeCursebound`; Oracular Curse class feature).
 
+### Character growth (Intelligence increase, Multilingual, retraining)
+
+`rollhandlers/character-growth.js` (global script `CharacterGrowth`).
+- Intelligence: the level up's boost step (`promptLevelUpBoosts`, both the 4-boost and the Gradual Ability Boosts prompt) compares the Int modifier before and after (`getIntModGain`, through `getWizardIntMod`, so a partial boost above +4 counts right). For each point gained, `promptIntIncreaseGains` trains one untrained skill and adds one language, then the level up goes on.
+- Languages are `data.languagesList` rows built with `buildLanguagesList`; `getNewLanguageOptions` offers the ancestry's choices and every common language not known, and `getAddLanguagesValues` appends in one write.
+- Multilingual: placing it (a feat slot's `onDropFeat`, the level up's feat step, a retrain) asks for its languages (`promptFeatLanguages`, `getMultilingualCount`: 2, +1 at master Society, +1 at legendary). The module feat has no modifiers.
+- Retraining (a week of downtime, `RETRAIN_DOWNTIME`): a feat row's Retrain Feat button (`retrainFeatAt`) re-picks from the slot's own query (`getFeatSlotQuery`) and writes `buildFilledFeatSlot` in one write; the sheet's Retrain a Skill Increase button by Level Up (`retrainSkillIncrease`) lowers one skill a rank and raises another up to the level's cap (`getRetrainSkillValues`, `getMaxSkillIncreaseRank`). The chat card has GM-only notes (`getRetrainFeatNotes`, `getSkillRetrainNotes`): lineage feats, feats listing the old feat or the skill in their prerequisites, the dedication rule. Nothing is blocked. Class feature choices (a month) aren't covered.
+
 ### Data Structure
 
 - Character data is nested under `record.data`
