@@ -24,8 +24,8 @@ ctx.api.setValuesOnTokenById = (id, recordType, values, cb) => {
 };
 ctx.api.setValuesOnRecord = (record, values) => calls.push(["record", record?._id, values]);
 ctx.api.addEffect = (name, token, duration, applier) => calls.push(["add", name, token?._id, duration, applier]);
-ctx.api.removeEffectById = (id, token, cb) => {
-  calls.push(["remove", id, token?._id]);
+ctx.api.removeEffectById = (id, token, cb, options) => {
+  calls.push(["remove", id, token?._id, ...(options ? [options] : [])]);
   if (cb) cb();
 };
 
@@ -71,21 +71,11 @@ section("Hero Points (Q5)");
   assertIncludes("... Ezren is at the most", state.messages.join("\n"), "Ezren already has 3 Hero Points");
   ctx.api.getSelectedTokens = () => [];
 
-  // A familiar's reroll spends its master's Hero Point
-  const master = character({ heroPoints: 2 }, { id: "master-tok", name: "Ezren", extra: { recordId: "ezren" } });
-  ctx.api.getOtherTokens = () => [{ token: master }];
+  // A familiar's reroll needs its own Hero Point (Foundry: characters only)
   const familiar = { _id: "fam", recordType: "npcs", name: "Familiar", data: { heroPoints: 0, master: JSON.stringify({ _id: "ezren", name: "Ezren" }) } };
-  assert("the familiar's master", ctx.getHeroPointMasterId(familiar), "ezren");
-  assert("an animal companion's master", ctx.getHeroPointMasterId({ data: { companionMaster: JSON.stringify({ _id: "valeros" }) } }), "valeros");
   reset();
-  let result = runHandler("onReroll.js", { roll: { metadata: { recordId: "fam", recordType: "npcs" } }, record: familiar });
-  assert("the reroll goes ahead", result?.success, true);
-  assert("... spending the master's", calls, [["set", "master-tok", { "data.heroPoints": 1 }]]);
-  assertIncludes("... and says so", state.messages[0], "Familiar rerolls with Ezren's Hero Point.");
-  reset();
-  ctx.api.getOtherTokens = () => [];
-  result = runHandler("onReroll.js", { roll: { metadata: { recordId: "fam", recordType: "npcs" } }, record: familiar });
-  assert("master not on the scene: no Hero Points, as before", [result?.success, notifications], [false, ["You do not have any hero points."]]);
+  const result = runHandler("onReroll.js", { roll: { metadata: { recordId: "fam", recordType: "npcs" } }, record: familiar });
+  assert("a familiar with none: no reroll, as before", [result?.success, calls, notifications], [false, [], ["You do not have any hero points."]]);
 }
 
 section("Rage's temporary Hit Points (Q21)");
@@ -100,6 +90,22 @@ section("Rage's temporary Hit Points (Q21)");
   assert("more than Rage gave: from something else, kept", ctx.getRageEndTempHpValues(raging(12, { name: "Rage", amount: 8 })), null);
   assert("from something else: kept", ctx.getRageEndTempHpValues(raging(5, { name: "False Life", amount: 6 })), null);
   assert("none left: nothing", ctx.getRageEndTempHpValues(raging(0, { name: "Rage", amount: 8 })), null);
+  assert("a spell's after Rage's were used up: kept", ctx.getRageEndTempHpValues(raging(6, { name: "Healing", amount: 6 })), null);
+
+  // The healing card's Apply Temporary HP notes its source
+  runHandler("healing.js", { roll: { types: [{ type: "temp", value: 6 }], total: 6, metadata: { rollName: "False Life" } } });
+  const card = state.messages.join(String.fromCharCode(10));
+  const start = card.indexOf("```Apply_Temporary_HP");
+  const macro = card.slice(card.indexOf(String.fromCharCode(10), start) + 1, card.lastIndexOf("```"));
+  reset();
+  ctx.record = character({ tempHp: 0, tempHpSource: { name: "Rage", amount: 8 } }, { id: "amar", name: "Amiri" });
+  ctx.isGM = true;
+  ctx.api.getSelectedOrDroppedToken = () => [];
+  ctx.api.floatText = () => {};
+  new vm.Script(`(function () {${String.fromCharCode(10)}${macro}${String.fromCharCode(10)}})();`).runInContext(ctx);
+  assert("the healing macro: the spell's are the source now", calls[0], ["set", "amar", { "data.tempHp": 6, "data.tempHpSource": { name: "Healing", amount: 6 } }]);
+  assertIncludes("... its Undo clears the source", state.messages[0], "'data.tempHpSource': null");
+  ctx.record = undefined;
   reset();
   const lines = ctx.clearRageTempHp([raging(5, { name: "Rage", amount: 8 }), character({ tempHp: 5, tempHpSource: { name: "Rage", amount: 8 } }, { id: "calm" })]);
   assert("the encounter's end: only the raging one", calls, [["set", "amar", { "data.tempHp": 0, "data.tempHpSource": null }]]);
@@ -156,8 +162,9 @@ section("Panache from bravado (Q22)");
 section("Cursebound (Q23)");
 {
   assert("maximum 2", ctx.getCurseboundMax(character({ level: 5 })), 2);
-  assert("3 at 11th level", ctx.getCurseboundMax(character({ level: 11 })), 3);
-  assert("4 at 17th", ctx.getCurseboundMax(character({ level: 17 })), 4);
+  assert("17th level without the features (Oracle Dedication): still 2", ctx.getCurseboundMax(character({ level: 17 })), 2);
+  assert("Major Curse: 3", ctx.getCurseboundMax(character({ level: 11, feats: [{ name: "Major Curse" }] })), 3);
+  assert("Extreme Curse: 4", ctx.getCurseboundMax(character({ level: 17, feats: [{ name: "Major Curse" }, { name: "Extreme Curse" }] })), 4);
   const ability = { name: "Spray of Stars", data: { traits: ["Cursebound", "Oracle"] } };
   reset();
   let line = ctx.applyCursebound(ability, character({}, { id: "or", name: "Korakai" }));
@@ -171,8 +178,11 @@ section("Cursebound (Q23)");
   assert("at the maximum: no more, a GM note", [calls, line], [[], "\n[gm]Korakai is already at their maximum cursebound 2: a cursebound ability can't be used.[/gm]"]);
   assert("not cursebound: nothing", ctx.applyCursebound({ data: { traits: ["Concentrate"] } }, bound(1)), "");
   reset();
-  const text = ctx.removeCursebound(bound(2));
-  assert("Refocus removes every instance", [calls, text], [[["remove", "cb", "or"], ["remove", "cb", "or"]], " Cursebound removed."]);
+  let text = ctx.removeCursebound(bound(2));
+  assert("Refocus reduces it by 1: the last instance", [calls, text], [[["remove", "cb", "or", { instanceIndex: 1 }]], " Cursebound 1."]);
+  reset();
+  text = ctx.removeCursebound(bound(1));
+  assert("... from 1: gone", [calls, text], [[["remove", "cb", "or", { instanceIndex: 0 }]], " No longer cursebound."]);
   reset();
   assert("none: nothing", [ctx.removeCursebound(character()), calls], ["", []]);
 }

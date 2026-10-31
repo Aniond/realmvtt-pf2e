@@ -3,8 +3,7 @@
 //
 //   - Hero Points (Player Core pg. 413; GM Core): a GM chat macro starts a
 //     session (each party member has 1, unspent ones are lost) and another
-//     awards 1 to the selected characters, up to 3. A familiar's or animal
-//     companion's reroll spends its master's Hero Point (onReroll.js)
+//     awards 1 to the selected characters, up to 3
 //   - Rage (Player Core 2): its temporary Hit Points are noted where they came
 //     from, and when the encounter ends Rage, the ones left go with it
 //   - Panache (Player Core 2): a check with the bravado trait (Tumble Through,
@@ -12,9 +11,9 @@
 //     options) shows Gain Panache on a success, and Panache until the end of
 //     your next turn on a failure. A finisher's card has a Lose Panache button
 //   - Cursebound (Player Core 2): using an ability with the cursebound trait
-//     raises the condition by 1, up to the maximum (2, 3 at 11th level, 4 at
-//     17th); at the maximum the card says so and leaves it to the GM.
-//     Refocus removes the condition
+//     raises the condition by 1, up to the maximum (2, 3 with Major Curse, 4
+//     with Extreme Curse); at the maximum the card says so and leaves it to
+//     the GM. Refocus reduces it by 1
 //
 // The ruleset assists the GM and doesn't police the action economy (#27): no
 // warnings for concentrate actions while raging or attacks after a finisher.
@@ -66,31 +65,10 @@ function awardHeroPoint() {
   });
 }
 
-// A familiar's (NPC Master field) or animal companion's master's id, or null
-function getHeroPointMasterId(record) {
-  const companionMaster = getCompanionMasterId(record);
-  if (companionMaster) return companionMaster;
-  const master = record?.data?.master;
-  if (!master) return null;
-  if (typeof master === "object") return master._id || master.value?._id || null;
-  try {
-    const parsed = JSON.parse(master);
-    return parsed?._id || parsed?.value?._id || null;
-  } catch (error) {
-    return null;
-  }
-}
-
-// The master's token on the scene, for a reroll that spends its Hero Point
-function findMasterToken(masterId) {
-  if (!masterId) return null;
-  const tokens = [api.getToken(), ...(api.getOtherTokens() || []).map((t) => t?.token || t)];
-  return tokens.find((token) => token && (token.recordId === masterId || token._id === masterId)) || null;
-}
-
 // ---------------------------------------------------------------- Rage
 
-// What applyActionTemporaryHitPoints writes: the temporary Hit Points and,
+// What a temporary Hit Points writer sets (applyActionTemporaryHitPoints,
+// the healing card's macro, Undying Ferocity): the temporary Hit Points and,
 // when they're the ones kept, where they came from
 function getActionTempHpValues(target, amount, sourceName = "") {
   const oldTempHp = parseInt(target?.data?.tempHp || "0", 10) || 0;
@@ -188,11 +166,11 @@ function losePanache(token) {
 
 // ---------------------------------------------------------------- Cursebound
 
-// The highest cursebound an oracle can reach: 2, 3 at 11th level (major
-// curse), 4 at 17th (extreme curse)
+// The highest cursebound an oracle can reach: 2, 3 with Major Curse, 4 with
+// Extreme Curse (the class features, not the level: Oracle Dedication gets
+// neither)
 function getCurseboundMax(creature) {
-  const level = parseInt(creature?.data?.level || "0", 10) || 0;
-  return level >= 17 ? 4 : level >= 11 ? 3 : 2;
+  return hasFeatNamed(creature, "Extreme Curse") ? 4 : hasFeatNamed(creature, "Major Curse") ? 3 : 2;
 }
 
 function hasCurseboundTrait(item) {
@@ -212,14 +190,16 @@ function applyCursebound(item, token = api.getToken()) {
   return `\nCursebound ${current + 1} (maximum ${max}).`;
 }
 
-// Refocus removes cursebound (every instance of the stack)
+// Refocus reduces cursebound by 1 (Oracular Curse): one instance of the
+// stack
 function removeCursebound(token, callback) {
   const found = findTokenConditionBySlug(token, "cursebound");
   if (!found) {
     if (typeof callback === "function") callback();
     return "";
   }
-  const ids = (token.effectIds || []).filter((id) => id === found.effect._id);
-  removeEffectsInOrder(ids.length > 0 ? ids : [found.effect._id], token, callback);
-  return " Cursebound removed.";
+  const current = getTokenConditionValue(token, "cursebound");
+  // Without an instance index Realm removes every instance: the last one only
+  api.removeEffectById(found.effect._id, token, callback, { instanceIndex: Math.max(current - 1, 0) });
+  return current > 1 ? ` Cursebound ${current - 1}.` : " No longer cursebound.";
 }

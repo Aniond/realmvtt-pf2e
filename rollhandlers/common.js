@@ -9517,6 +9517,8 @@ function rollSkill(
     targetNotes: _targetNotes,
     ...metadataExtras
   } = additionalMetadata;
+  // Who gains panache from a bravado check (class-extras.js)
+  const bravadoToken = record?.recordId ? record : api.getToken();
   const metadata = {
     rollName: actionName
       ? `${capitalize(skillName)}: ${actionName}`
@@ -9539,13 +9541,8 @@ function rollSkill(
     ],
     // A check with the bravado trait: panache buttons with the result
     // (class-extras.js)
-    ...(isBravadoCheck(record, context) && (record?.recordId ? record : api.getToken())?._id
-      ? {
-          bravado: {
-            tokenId: (record?.recordId ? record : api.getToken())._id,
-            tokenName: getCreatureName(record?.recordId ? record : api.getToken()),
-          },
-        }
+    ...(isBravadoCheck(record, context) && bravadoToken?._id
+      ? { bravado: { tokenId: bravadoToken._id, tokenName: getCreatureName(bravadoToken) } }
       : {}),
     ...metadataExtras,
   };
@@ -15829,6 +15826,7 @@ function applyDamage(
       const oldHp = curhp;
       oldValues["data.curhp"] = oldHp;
       oldValues["data.tempHp"] = oldTempHp;
+      if (target.data?.tempHpSource) oldValues["data.tempHpSource"] = target.data.tempHpSource;
 
       // Float text for damage or healing
       if (damage !== 0) {
@@ -15855,6 +15853,8 @@ function applyDamage(
         damage = Math.max(damage - oldTempHp, 0);
         if (newTempHp !== oldTempHp) {
           valuesToSet["data.tempHp"] = newTempHp;
+          // Used up: nothing is left from where they came from (class-extras.js)
+          if (newTempHp === 0 && target.data?.tempHpSource) valuesToSet["data.tempHpSource"] = null;
           usedTempHp = true;
         }
         // Then deduct from Current HP

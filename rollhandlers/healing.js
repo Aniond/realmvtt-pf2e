@@ -58,14 +58,14 @@ const tempMacro = tempHealing
   
   targets.forEach(target => {
     const oldTempHp = parseInt(target.data?.tempHp || '0', 10);
-    // Temp HP always overrides existing temp HP, if it is higher
-    const newTempHp = Math.max(tempHp, oldTempHp);
-    api.setValueOnToken(target, "data.tempHp", newTempHp);
+    // Temp HP always overrides existing temp HP, if it is higher. The kept
+    // ones' source is noted, so Rage's aren't taken for these (class-extras.js)
+    api.setValuesOnTokenById(target._id, target.recordType, getActionTempHpValues(target, tempHp, "Healing"));
     const unIdentified = target.identified === false;
     let targetName = !unIdentified ? target.name || target.record.name : target.unidentifiedName || target.record.unidentifiedName;
     targetName = targetName.replace(/'/g, ''); // Just remove the single quotes
   
-    const macro = \`\\\`\\\`\\\`Undo\\n if (isGM) { api.setValueOnTokenById('\$\{target._id\}', '\$\{target.recordType\}', 'data.tempHp', '\$\{oldTempHp\}'); api.editMessage(null, '~\$\{targetName\} received \$\{tempHp\} Temporary Hit Points.~'); } else { api.showNotification('Only the GM can undo healing.', 'yellow', 'Notice'); } \\n\\\`\\\`\\\`\`;
+    const macro = \`\\\`\\\`\\\`Undo\\n if (isGM) { api.setValuesOnTokenById('\$\{target._id\}', '\$\{target.recordType\}', { 'data.tempHp': \$\{oldTempHp\}, 'data.tempHpSource': null }); api.editMessage(null, '~\$\{targetName\} received \$\{tempHp\} Temporary Hit Points.~'); } else { api.showNotification('Only the GM can undo healing.', 'yellow', 'Notice'); } \\n\\\`\\\`\\\`\`;
   
     api.sendMessage(\`\$\{targetName\} received \$\{tempHp\} Temporary Hit Points.\\n\$\{macro\}\`, undefined, undefined, undefined, target);
   
