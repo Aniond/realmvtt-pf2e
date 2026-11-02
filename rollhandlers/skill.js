@@ -298,9 +298,12 @@ const rollTags = [
     tooltip: tooltip || `${rollName || ""} Skill Check`,
   },
 ];
-// A secret check: no dice, and the result for the GM only (check-tools.js)
-if (data?.roll?.metadata?.secret) {
-  api.sendMessage(getSecretCheckMessage(message, roll, rollName), undefined, [], rollTags);
-} else {
-  api.sendMessage(message, roll, [], rollTags);
-}
+// A secret check: the card goes out private, like the roll, so the table sees
+// only "Privately Rolled Dice" (check-tools.js). Assurance's api.roll can't be
+// forced private, but this still is.
+api.sendMessage(
+  message,
+  data?.roll?.metadata?.secret ? { ...roll, audience: "private" } : roll,
+  [],
+  rollTags,
+);

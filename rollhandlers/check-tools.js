@@ -522,12 +522,12 @@ function endConditionOnSuccess(metadata) {
 // ---------------------------------------------------------------- Secret checks
 
 // Secret checks (the secret trait, Player Core pg. 460; roadmap H23): with
-// the campaign setting on, a check made as an action with that trait shows
-// the table only that it was made; the total, the degree and the notes go to
-// the GM. The roll prompt is forced to GM-only (metadata.forcedAudience
-// "private", rollSkill); api.roll can't be (Assurance), so the card also
-// leaves off the dice and keeps the result in [gm] tags. The actions are the
-// ones whose records carry the secret trait.
+// the campaign setting on, a check made as an action with that trait opens
+// its roll prompt as a Private GM Roll (metadata.forcedAudience "private",
+// rollSkill), and skill.js sends its card private too, so the table sees only
+// "Privately Rolled Dice". The player can still change the prompt's audience
+// (we assist, we don't police); the card stays private either way. The
+// actions are the ones whose records carry the secret trait.
 const SECRET_ACTIONS = new Set([
   "conceal an object",
   "create forgery",
@@ -546,35 +546,10 @@ const SECRET_ACTIONS = new Set([
 ]);
 
 function isSecretChecksOn() {
-  try {
-    return typeof api?.getSetting === "function" && api.getSetting("secretChecks") === "yes";
-  } catch (e) {
-    return false;
-  }
+  return api.getSetting("secretChecks") === "yes";
 }
 
 // Whether a check made as this action is rolled in secret
 function isSecretCheck(actionName) {
   return !!actionName && SECRET_ACTIONS.has(`${actionName}`.trim().toLowerCase()) && isSecretChecksOn();
-}
-
-// The secret check's card: a line for the table, then the roll and the
-// result card for the GM. Buttons (code blocks) stay as they are after it.
-function getSecretCheckMessage(message, roll, rollName) {
-  const fence = `${message}`.indexOf("```");
-  const text = fence >= 0 ? message.slice(0, fence) : `${message}`;
-  const buttons = fence >= 0 ? message.slice(fence) : "";
-  const d20 = (roll?.dice || []).find((d) => d.type === 20 && d.reason !== "dropped");
-  const gmLines = [
-    `Secret check: ${roll?.total ?? 0}${d20 ? ` (d20: ${d20.value})` : ""}`,
-    ...text
-      .split("\n")
-      .map((line) => line.replace(/\[\/?gm\]/g, "").trim())
-      .filter(Boolean),
-  ];
-  return [
-    `**${rollName || "A check"}** (secret check)`,
-    ...gmLines.map((line) => `[gm]${line}[/gm]`),
-    ...(buttons ? [buttons] : []),
-  ].join("\n");
 }

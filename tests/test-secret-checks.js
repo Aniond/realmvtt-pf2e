@@ -4,7 +4,7 @@
 const fs = require("fs");
 const vm = require("vm");
 const { createSandbox } = require("./sandbox");
-const { assert, assertIncludes, assertNotIncludes, section, summary } = require("./test-helpers");
+const { assert, section, summary } = require("./test-helpers");
 
 const ctx = createSandbox();
 
@@ -58,27 +58,15 @@ section("The roll: GM-only");
 section("The card");
 {
   const roll = (metadata, total = 19, d20 = 12) => ({ roll: { dice: [{ type: 20, value: d20 }], total, metadata } });
-  const [message, attached, , tags] = runHandler(
-    "skill.js",
-    roll({ dc: 15, rollName: "Religion: Recall Knowledge", secret: true, gmNote: "Skills: Religion (undead).", gmMacro: "```Identify_Item\nx\n```" }),
-  );
-  assert("no dice attached", attached, undefined);
-  assert("the tags stay", tags?.[0]?.name, "Religion: Recall Knowledge");
-  const lines = message.split("\n");
-  assert("the table's line: only that it was made", lines[0], "**Religion: Recall Knowledge** (secret check)");
-  assertIncludes("the GM: the total and the d20", message, "[gm]Secret check: 19 (d20: 12)[/gm]");
-  assertIncludes("... the degree", message, "SUCCESS");
-  assertIncludes("... the note", message, "[gm]Skills: Religion (undead).[/gm]");
-  const text = lines.slice(1, lines.findIndex((line) => line.startsWith("```")));
-  assert("every other line hidden, with no nested [gm] tags", text.every((line) => /^\[gm\][^\[]*(\[(?!\/?gm\])[^\]]*\][^\[]*)*\[\/gm\]$/.test(line)), true);
-  assertIncludes("buttons stay after it", message, "```Identify_Item\nx\n```");
-  assertNotIncludes("... and aren't wrapped", message, "[gm]```");
-
-  const [noDC] = runHandler("skill.js", roll({ rollName: "Perception: Seek", secret: true }, 21, 15));
-  assert("no DC: the line and the total", noDC.split("\n"), ["**Perception: Seek** (secret check)", "[gm]Secret check: 21 (d20: 15)[/gm]"]);
-
-  const [open, dice] = runHandler("skill.js", roll({ dc: 15, rollName: "Athletics: Climb" }));
-  assert("not secret: the dice and the card as before", [dice?.total, open.includes("(secret check)")], [19, false]);
+  const meta = { dc: 15, rollName: "Religion: Recall Knowledge", gmNote: "Skills: Religion (undead).", gmMacro: "```Identify_Item\nx\n```" };
+  const [secretCard, privateRoll, , tags] = runHandler("skill.js", roll({ ...meta, secret: true }));
+  assert("secret: the roll goes with it, private", [privateRoll?.total, privateRoll?.audience], [19, "private"]);
+  assert("... the tags stay", tags?.[0]?.name, "Religion: Recall Knowledge");
+  const [openCard, openRoll] = runHandler("skill.js", roll(meta));
+  assert("... the card is the usual one", secretCard, openCard);
+  assert("not secret: the roll as it came", openRoll?.audience, undefined);
+  const assured = runHandler("skill.js", roll({ ...meta, secret: true, assurance: true }));
+  assert("Assurance (api.roll): private too", assured[1]?.audience, "private");
 }
 
 process.exitCode = summary() > 0 ? 1 : 0;

@@ -5590,7 +5590,7 @@
       {
         "name": "Secret Checks",
         "key": "secretChecks",
-        "description": "Player Core pg. 460. A check made as an action with the secret trait (Recall Knowledge, Seek, Sense Motive, Hide, Sneak, Lie, Identify Magic and others) shows the table only that it was made: the total, the result and the notes go to the GM. Realm has no GM-only roll, so the card leaves off the dice.",
+        "description": "Player Core pg. 460. A check made as an action with the secret trait (Recall Knowledge, Seek, Sense Motive, Hide, Sneak, Lie, Identify Magic and others) is rolled in secret: the roll prompt opens as a Private GM Roll, and the result card is GM-only, so the table sees only that dice were rolled.",
         "values": [
           {
             "label": "No",
