@@ -1,17 +1,13 @@
 <script>
   // The GM Tools panel (View menu, GM only): the encounter builder (H21,
-  // gm-tools.js). Its fields are campaign variables; each action writes the
-  // party, the creatures and the meter in encounterSummary.
+  // gm-tools.js). Its fields are campaign variables; each action writes what
+  // it changed and the meter in encounterSummary.
   function onEncounterPartyLevel(value) {
     setEncounterBuilderParty("level", value);
   }
 
   function onEncounterPartySize(value) {
     setEncounterBuilderParty("size", value);
-  }
-
-  function onEncounterTemplateThreat(value) {
-    postEncounterTemplates(value);
   }
 </script>
 
@@ -39,7 +35,7 @@
         hidecontrols="true"
         width="44px"
         placeholder="1"
-        minvalue="-1"
+        minvalue="1"
         onchange="onEncounterPartyLevel(value)"
       ></numberfield>
       <span class="rvtt-sheet-mono-dim">SIZE</span>
@@ -79,9 +75,9 @@
       <button
         size="xs"
         variant="light"
-        icon="IconMessage"
-        label="Post to Chat"
-        onclick="postEncounterBuilder()"
+        icon="IconArrowBackUp"
+        label="Remove Last"
+        onclick="removeLastFromEncounterBuilder()"
       ></button>
       <button
         size="xs"
@@ -95,19 +91,14 @@
     <!-- The meter: XP, threat, the next threat's budget, each creature -->
     <label field="encounterSummary" size="xs" style="white-space: pre-line; margin-top: 4px"></label>
 
-    <div style="display: flex; gap: 6px; align-items: center; margin-top: 4px">
-      <span class="rvtt-sheet-mono-dim">TEMPLATES</span>
-      <dropdown
-        field="encounterTemplateThreat"
+    <div style="display: flex; gap: 4px; margin-top: 4px">
+      <button
         size="xs"
-        placeholder="Pick a threat"
-        onchange="onEncounterTemplateThreat(value)"
-        options='[{"label": "Trivial", "value": "Trivial"},
-        {"label": "Low", "value": "Low"},
-        {"label": "Moderate", "value": "Moderate"},
-        {"label": "Severe", "value": "Severe"},
-        {"label": "Extreme", "value": "Extreme"}]'
-      ></dropdown>
+        variant="light"
+        icon="IconLayoutList"
+        label="Templates"
+        onclick="promptEncounterTemplates()"
+      ></button>
     </div>
   </div>
 </div>

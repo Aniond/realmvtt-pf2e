@@ -3,8 +3,7 @@
 //   - Encounter XP, and under Proficiency without Level its
 //     own creature table from -7 to +7 levels (GM Core pg. 85);
 //     onEncounterEnd.js
-//   - Threat (GM Core, roadmap H21): the budgets by party size, a [gm] card
-//     of the threat when an encounter starts (onEncounterStart.js), and an
+//   - Threat (GM Core, roadmap H21): the budgets by party size, and an
 //     encounter builder on the GM Tools panel (gm-tools-panel.html) with a
 //     meter and templates that spend a threat's budget exactly
 //   - Advancement speed (GM Core): fast 800, standard 1,000 or slow
@@ -125,29 +124,17 @@ function getEncounterBudgetLine(budgets) {
   return budgets.map((b) => `${b.name} ${b.budget}`).join(", ");
 }
 
-// The GM's card when an encounter starts: its threat before the fight
-function getEncounterThreatCard(summary) {
-  if (!summary) return "";
-  const { partyLevel, partySize, breakdown, totalXp, threat, budgets } = summary;
-  return [
-    "[gm]**[center]Encounter Threat[/center]**[/gm]",
-    `[gm][center]**${threat}:** ${totalXp} XP for ${partySize} ${partySize === 1 ? "character" : "characters"} of level ${partyLevel}[/center][/gm]`,
-    `[gm]Budgets: ${getEncounterBudgetLine(budgets)}[/gm]`,
-    ...breakdown.map((e) => `[gm]- ${e.name} (Lvl ${e.level} ${e.type}): ${e.xp} XP[/gm]`),
-  ].join("\n");
-}
-
 // ---------------------------------------------------------------- Builder
 
 // The encounter builder (the GM Tools panel, gm-tools-panel.html) keeps its
 // party and creatures in campaign variables, so the panel shows them and
-// they're there next time
+// they're there next time. Campaign variables reach every client, so the
+// creatures are only { level, type, complex }: no names.
 const ENCOUNTER_BUILDER_VARS = {
   level: "encounterPartyLevel",
   size: "encounterPartySize",
   creatures: "encounterCreatures",
   summary: "encounterSummary",
-  threat: "encounterTemplateThreat",
 };
 
 function getEncounterBuilderState() {
@@ -160,8 +147,14 @@ function getEncounterBuilderState() {
   };
 }
 
-// The builder's meter: the XP so far, its threat, and the next threat's
-// budget
+// The level differences the creature table covers: -4 to +4, or -7 to +7
+// under Proficiency without Level
+function getEncounterLevelRange() {
+  return getVariantRules().proficiencyWithoutLevel ? 7 : 4;
+}
+
+// The builder's meter: the XP so far, its threat, the next threat's budget,
+// and a line for each creature
 function getEncounterBuilderSummary({ level, size, creatures }) {
   const breakdown = getEncounterBreakdown(creatures, level);
   const totalXp = breakdown.reduce((sum, e) => sum + e.xp, 0);
@@ -171,7 +164,7 @@ function getEncounterBuilderSummary({ level, size, creatures }) {
     `${totalXp} XP: ${threat}${next ? ` (${next.name} at ${next.budget})` : ""}`,
     `Party: ${size} of level ${level}. Budgets: ${getEncounterBudgetLine(getEncounterBudgets(size))}`,
   ];
-  breakdown.forEach((e) => lines.push(`${e.name} (Lvl ${e.level} ${e.type}): ${e.xp} XP`));
+  breakdown.forEach((e) => lines.push(`Lvl ${e.level} ${e.type}: ${e.xp} XP`));
   return lines.join("\n");
 }
 
@@ -180,8 +173,12 @@ function getEncounterBuilderSummary({ level, size, creatures }) {
 function getEncounterTemplates(partyLevel, partySize, threatName) {
   const budget = getEncounterBudgets(partySize).find((b) => b.name === threatName)?.budget;
   if (!budget) return [];
+  const range = getEncounterLevelRange();
   const xpFor = (diff) => getEncounterXp(diff);
-  const diffs = [4, 3, 2, 1, 0, -1, -2, -3, -4].filter((diff) => partyLevel + diff >= -1);
+  const diffs = [];
+  for (let diff = range; diff >= -range; diff--) {
+    if (partyLevel + diff >= -1) diffs.push(diff);
+  }
   const level = (diff) => partyLevel + diff;
   const templates = [];
   diffs.forEach((diff) => {
@@ -206,13 +203,15 @@ function getEncounterTemplates(partyLevel, partySize, threatName) {
   return templates;
 }
 
-// The builder's actions (run from the panel) write the new state and the
-// meter, so the panel shows them
-function saveEncounterBuilder(state) {
-  api.setCampaignVariable(ENCOUNTER_BUILDER_VARS.level, state.level);
-  api.setCampaignVariable(ENCOUNTER_BUILDER_VARS.size, state.size);
-  api.setCampaignVariable(ENCOUNTER_BUILDER_VARS.creatures, state.creatures);
+// The builder's writes: only what changed, and the meter. Each
+// setCampaignVariable sends the whole variables map to every client.
+function writeEncounterSummary(state) {
   api.setCampaignVariable(ENCOUNTER_BUILDER_VARS.summary, getEncounterBuilderSummary(state));
+}
+
+function writeEncounterCreatures(state) {
+  api.setCampaignVariable(ENCOUNTER_BUILDER_VARS.creatures, state.creatures);
+  writeEncounterSummary(state);
 }
 
 // The party's level and size from the Party Sheet
@@ -225,16 +224,19 @@ function setEncounterBuilderFromParty() {
     }
     const levels = members.map((member) => parseInt(member.data?.level, 10) || 1);
     const level = Math.round(levels.reduce((sum, l) => sum + l, 0) / levels.length);
-    saveEncounterBuilder({ ...getEncounterBuilderState(), level, size: members.length });
+    const state = { ...getEncounterBuilderState(), level, size: members.length };
+    api.setCampaignVariable(ENCOUNTER_BUILDER_VARS.level, state.level);
+    api.setCampaignVariable(ENCOUNTER_BUILDER_VARS.size, state.size);
+    writeEncounterSummary(state);
   });
 }
 
-// The party's level or size typed in the panel ("level" or "size", with the
-// value passed, as the variable may not have saved yet)
+// The party's level or size typed in the panel ("level" or "size"): the field
+// saved it, so only the meter, from the value passed
 function setEncounterBuilderParty(key, value) {
   const number = parseInt(value, 10);
   if (!Number.isFinite(number)) return;
-  saveEncounterBuilder({ ...getEncounterBuilderState(), [key]: number });
+  writeEncounterSummary({ ...getEncounterBuilderState(), [key]: number });
 }
 
 // The selected NPC and hazard tokens join the encounter
@@ -243,7 +245,6 @@ function addSelectedToEncounterBuilder() {
     .map((t) => t?.token || t)
     .filter((t) => t?.recordType === "npcs")
     .map((t) => ({
-      name: t.name || t.record?.name || "Creature",
       level: parseInt(t.data?.level, 10) || 0,
       type: t.data?.type || "",
       complex: !!t.data?.isComplex,
@@ -253,17 +254,21 @@ function addSelectedToEncounterBuilder() {
     return;
   }
   const state = getEncounterBuilderState();
-  saveEncounterBuilder({ ...state, creatures: [...state.creatures, ...added] });
+  writeEncounterCreatures({ ...state, creatures: [...state.creatures, ...added] });
 }
 
 // A creature by its level against the party's, for planning before the stat
 // blocks are picked
 function addLevelToEncounterBuilder() {
   const { level } = getEncounterBuilderState();
-  const options = [4, 3, 2, 1, 0, -1, -2, -3, -4].map((diff) => ({
-    label: `Level ${level + diff} (party ${diff >= 0 ? "+" : ""}${diff}): ${getEncounterXp(diff)} XP`,
-    value: String(diff),
-  }));
+  const range = getEncounterLevelRange();
+  const options = [];
+  for (let diff = range; diff >= -range; diff--) {
+    options.push({
+      label: `Level ${level + diff} (party ${diff >= 0 ? "+" : ""}${diff}): ${getEncounterXp(diff)} XP`,
+      value: String(diff),
+    });
+  }
   api.showPrompt(
     "Encounter Builder",
     "Add a creature of which level?",
@@ -274,8 +279,7 @@ function addLevelToEncounterBuilder() {
       const diff = parseInt(Array.isArray(choice) ? choice[0] : choice, 10);
       if (!Number.isFinite(diff)) return;
       const latest = getEncounterBuilderState();
-      const creatureLevel = latest.level + diff;
-      saveEncounterBuilder({ ...latest, creatures: [...latest.creatures, { name: `Level ${creatureLevel} creature`, level: creatureLevel }] });
+      writeEncounterCreatures({ ...latest, creatures: [...latest.creatures, { level: latest.level + diff, type: "", complex: false }] });
     },
     "Add",
     "Cancel",
@@ -283,29 +287,47 @@ function addLevelToEncounterBuilder() {
   );
 }
 
-function clearEncounterBuilder() {
-  saveEncounterBuilder({ ...getEncounterBuilderState(), creatures: [] });
+// The last creature added comes out, to fix a wrong pick
+function removeLastFromEncounterBuilder() {
+  const state = getEncounterBuilderState();
+  if (!state.creatures.length) return;
+  writeEncounterCreatures({ ...state, creatures: state.creatures.slice(0, -1) });
 }
 
-// Templates for a threat (the panel's dropdown passes it), posted for the GM
+function clearEncounterBuilder() {
+  writeEncounterCreatures({ ...getEncounterBuilderState(), creatures: [] });
+}
+
+// The Templates button: pick a threat, and its templates are posted for the GM
+function promptEncounterTemplates() {
+  api.showPrompt(
+    "Encounter Templates",
+    "Templates for which threat?",
+    "Select...",
+    ENCOUNTER_THREATS.map(({ name }) => ({ label: name, value: name })),
+    null,
+    (choice) => {
+      const name = Array.isArray(choice) ? choice[0] : choice;
+      if (name) postEncounterTemplates(name);
+    },
+    "Post",
+    "Cancel",
+    1,
+  );
+}
+
 function postEncounterTemplates(threatName) {
-  const name = threatName || "Moderate";
   const { level, size } = getEncounterBuilderState();
-  const budget = getEncounterBudgets(size).find((b) => b.name === name)?.budget;
-  const templates = getEncounterTemplates(level, size, name);
+  const budget = getEncounterBudgets(size).find((b) => b.name === threatName)?.budget;
+  if (budget === undefined) return;
+  const templates = getEncounterTemplates(level, size, threatName);
   api.sendMessage(
     [
-      `[gm]**[center]${name} Encounter Templates[/center]**[/gm]`,
+      `[gm]**[center]${threatName} Encounter Templates[/center]**[/gm]`,
       `[gm][center]${budget} XP for ${size} of level ${level}[/center][/gm]`,
       ...(templates.length ? templates.map((t) => `[gm]- ${t}[/gm]`) : ["[gm]No exact fit; mix levels to come close.[/gm]"]),
     ].join("\n"),
   );
-}
-
-// The builder's encounter as a card for the GM
-function postEncounterBuilder() {
-  const lines = getEncounterBuilderSummary(getEncounterBuilderState()).split("\n");
-  api.sendMessage(["[gm]**[center]Encounter Builder[/center]**[/gm]", ...lines.map((line) => `[gm]${line}[/gm]`)].join("\n"));
 }
 
 // ---------------------------------------------------------------- Advancement
