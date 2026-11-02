@@ -9924,7 +9924,21 @@ function performSkillAction(record, skill, actionName, isMacro = false, options 
     );
     if (asked) return;
   }
-  const dc = action.defense && target
+  // Recall Knowledge on a targeted creature, and Identify Magic or Identify
+  // Alchemy on a carried item (asked first): their DCs and the GM's note
+  // (knowledge.js)
+  if ((action.name === "Identify Magic" || action.name === "Identify Alchemy") && !options.identify) {
+    promptIdentifyItem(record, skill, action.name, (identifyDC, extras) =>
+      performSkillAction(record, skill, actionName, isMacro, { ...options, identify: { dc: identifyDC, ...extras } }),
+    );
+    return;
+  }
+  const knowledge = action.name === "Recall Knowledge"
+    ? getRecallKnowledgeCheck(target, skill)
+    : options.identify?.dc ? options.identify : null;
+  const dc = knowledge
+    ? knowledge.dc
+    : action.defense && target
     ? getDefenseDCForToken(target, action.defense, { action: { name: action.name }, escape: options.escape })
     : null;
   // The penalty for the attack the creature's log counts this turn is ticked
@@ -9951,13 +9965,15 @@ function performSkillAction(record, skill, actionName, isMacro = false, options 
   // a trip weapon), and against a target the result card shows what the
   // outcome does (maneuvers.js)
   extraModifiers.push(...getManeuverWeaponModifiers(record, action.name));
-  const maneuver = dc ? getManeuverMetadata(record, action.name, target) : null;
+  const maneuver = dc && !knowledge ? getManeuverMetadata(record, action.name, target) : null;
   rollSkill(record, skill, dc, false, 0, 1, "int", isMacro, false, undefined, {
     action: action.name,
     extraModifiers,
     ...(maneuver ? { maneuver } : {}),
     ...(turnAttack ? { turnAttack } : {}),
-    dcName: options.escape?.dcName || (action.defense && target ? `${capitalize(action.defense)} DC` : undefined),
+    ...(knowledge?.gmNote ? { gmNote: knowledge.gmNote } : {}),
+    ...(knowledge?.gmMacro ? { gmMacro: knowledge.gmMacro } : {}),
+    dcName: options.escape?.dcName || (knowledge ? `${action.name} DC` : action.defense && target ? `${capitalize(action.defense)} DC` : undefined),
     // Notes on the target for being forced to move (Rock Dwarf), shown with
     // a Shove or Reposition result
     targetNotes: FORCED_MOVEMENT_ACTIONS.has(toSlug(action.name))
