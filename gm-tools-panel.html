@@ -1,7 +1,7 @@
 <script>
   // The GM Tools panel (View menu, GM only): the encounter builder (H21,
   // gm-tools.js). Its fields are campaign variables; each action writes what
-  // it changed and the meter in encounterSummary.
+  // it changed and the meter in encounterMeter, which the labels below read.
   function onEncounterPartyLevel(value) {
     setEncounterBuilderParty("level", value);
   }
@@ -27,6 +27,7 @@
       >
     </div>
 
+    <!-- The party -->
     <div style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap">
       <span class="rvtt-sheet-mono-dim">PARTY LVL</span>
       <numberfield
@@ -48,6 +49,7 @@
         minvalue="1"
         onchange="onEncounterPartySize(value)"
       ></numberfield>
+      <div style="flex: 1"></div>
       <button
         size="xs"
         variant="light"
@@ -57,12 +59,121 @@
       ></button>
     </div>
 
-    <div style="display: flex; gap: 4px; flex-wrap: wrap; margin-top: 4px">
+    <!-- The meter: the XP against Extreme's budget, the threat, the next one -->
+    <div style="margin-top: 10px">
+      <div
+        style="
+          display: flex;
+          justify-content: space-between;
+          align-items: baseline;
+          margin-bottom: 4px;
+        "
+      >
+        <label field="encounterMeter.xpLabel" size="lg" variant="bold"></label>
+        <label
+          field="encounterMeter.threat"
+          size="lg"
+          variant="bold"
+          color="orange"
+        ></label>
+      </div>
+      <progressbar
+        field="encounterMeter"
+        currentvaluefield="encounterMeter.xp"
+        maxvaluefield="encounterMeter.max"
+        color="orange"
+        size="md"
+      ></progressbar>
+      <div style="display: flex; gap: 4px; margin-top: 4px">
+        <label field="encounterMeter.next" size="xs" color="dimmed" hideifempty="true"></label>
+      </div>
+    </div>
+
+    <!-- The budgets for the party's size -->
+    <div
+      style="
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        gap: 4px;
+        margin-top: 8px;
+        text-align: center;
+      "
+    >
+      <div>
+        <span class="rvtt-sheet-mono-dim">TRIVIAL</span>
+        <label field="encounterMeter.budgets.Trivial" size="sm" textalign="center"></label>
+      </div>
+      <div>
+        <span class="rvtt-sheet-mono-dim">LOW</span>
+        <label field="encounterMeter.budgets.Low" size="sm" textalign="center"></label>
+      </div>
+      <div>
+        <span class="rvtt-sheet-mono-dim">MODERATE</span>
+        <label field="encounterMeter.budgets.Moderate" size="sm" textalign="center"></label>
+      </div>
+      <div>
+        <span class="rvtt-sheet-mono-dim">SEVERE</span>
+        <label field="encounterMeter.budgets.Severe" size="sm" textalign="center"></label>
+      </div>
+      <div>
+        <span class="rvtt-sheet-mono-dim">EXTREME</span>
+        <label field="encounterMeter.budgets.Extreme" size="sm" textalign="center"></label>
+      </div>
+    </div>
+
+    <!-- The creatures: a row for each kind, empty rows hidden -->
+    <div class="rvtt-sheet-divider" style="margin-top: 10px">
+      <span class="rvtt-sheet-divider__label">&#10022; Creatures &#10022;</span>
+    </div>
+    <label field="encounterMeter.empty" size="sm" color="dimmed" hideifempty="true"></label>
+    <div style="display: flex; justify-content: space-between">
+      <label field="encounterMeter.rows.0.name" size="sm" hideifempty="true"></label>
+      <label field="encounterMeter.rows.0.xp" size="sm" hideifempty="true"></label>
+    </div>
+    <div style="display: flex; justify-content: space-between">
+      <label field="encounterMeter.rows.1.name" size="sm" hideifempty="true"></label>
+      <label field="encounterMeter.rows.1.xp" size="sm" hideifempty="true"></label>
+    </div>
+    <div style="display: flex; justify-content: space-between">
+      <label field="encounterMeter.rows.2.name" size="sm" hideifempty="true"></label>
+      <label field="encounterMeter.rows.2.xp" size="sm" hideifempty="true"></label>
+    </div>
+    <div style="display: flex; justify-content: space-between">
+      <label field="encounterMeter.rows.3.name" size="sm" hideifempty="true"></label>
+      <label field="encounterMeter.rows.3.xp" size="sm" hideifempty="true"></label>
+    </div>
+    <div style="display: flex; justify-content: space-between">
+      <label field="encounterMeter.rows.4.name" size="sm" hideifempty="true"></label>
+      <label field="encounterMeter.rows.4.xp" size="sm" hideifempty="true"></label>
+    </div>
+    <div style="display: flex; justify-content: space-between">
+      <label field="encounterMeter.rows.5.name" size="sm" hideifempty="true"></label>
+      <label field="encounterMeter.rows.5.xp" size="sm" hideifempty="true"></label>
+    </div>
+    <div style="display: flex; justify-content: space-between">
+      <label field="encounterMeter.rows.6.name" size="sm" hideifempty="true"></label>
+      <label field="encounterMeter.rows.6.xp" size="sm" hideifempty="true"></label>
+    </div>
+    <div style="display: flex; justify-content: space-between">
+      <label field="encounterMeter.rows.7.name" size="sm" hideifempty="true"></label>
+      <label field="encounterMeter.rows.7.xp" size="sm" hideifempty="true"></label>
+    </div>
+    <div style="display: flex; justify-content: space-between">
+      <label field="encounterMeter.rows.8.name" size="sm" hideifempty="true"></label>
+      <label field="encounterMeter.rows.8.xp" size="sm" hideifempty="true"></label>
+    </div>
+    <div style="display: flex; justify-content: space-between">
+      <label field="encounterMeter.rows.9.name" size="sm" hideifempty="true"></label>
+      <label field="encounterMeter.rows.9.xp" size="sm" hideifempty="true"></label>
+    </div>
+
+    <!-- The actions -->
+    <div style="display: flex; gap: 4px; flex-wrap: wrap; margin-top: 10px">
       <button
         size="xs"
         variant="light"
         icon="IconPlus"
-        label="Add Selected Tokens"
+        label="Add Selected"
         onclick="addSelectedToEncounterBuilder()"
       ></button>
       <button
@@ -86,12 +197,6 @@
         label="Clear"
         onclick="clearEncounterBuilder()"
       ></button>
-    </div>
-
-    <!-- The meter: XP, threat, the next threat's budget, each creature -->
-    <label field="encounterSummary" size="xs" style="white-space: pre-line; margin-top: 4px"></label>
-
-    <div style="display: flex; gap: 4px; margin-top: 4px">
       <button
         size="xs"
         variant="light"

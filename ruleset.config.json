@@ -5407,7 +5407,7 @@
         "file": "gm-tools-panel.html",
         "gmOnly": true,
         "width": 460,
-        "height": 360
+        "height": 560
       },
       "scripts": {
         "PF2e": {

@@ -225,29 +225,41 @@ section("Encounter builder (H21)");
     return [...written];
   };
   ctx.api.getParty = (cb) => cb([pc("a", 3), pc("b", 4), pc("c", 3), { _id: "pet", recordType: "npcs", data: { level: 1 } }]);
-  assert("Use the Party: the level, the size and the meter", writes(() => ctx.setEncounterBuilderFromParty()), ["encounterPartyLevel", "encounterPartySize", "encounterSummary"]);
+  assert("Use the Party: the level, the size and the meter", writes(() => ctx.setEncounterBuilderFromParty()), ["encounterPartyLevel", "encounterPartySize", "encounterMeter"]);
   assert("... level 3, 3 characters", [vars.encounterPartyLevel, vars.encounterPartySize], [3, 3]);
 
   ctx.api.getSelectedTokens = () => [foe("Ogre", 5), foe("Trap", 3, { type: "hazard" }), pc("e", 3)];
-  assert("Add Selected Tokens: the creatures and the meter", writes(() => ctx.addSelectedToEncounterBuilder()), ["encounterCreatures", "encounterSummary"]);
+  assert("Add Selected Tokens: the creatures and the meter", writes(() => ctx.addSelectedToEncounterBuilder()), ["encounterCreatures", "encounterMeter"]);
   assert("... NPCs and hazards, no names", vars.encounterCreatures, [{ level: 5, type: "", complex: false }, { level: 3, type: "hazard", complex: false }]);
-  assert("the meter: 80 + 8 XP is Moderate for 3 (Severe at 90)", vars.encounterSummary.split("\n")[0], "88 XP: Moderate (Severe at 90)");
-  assert("... a line each, no names", vars.encounterSummary.split("\n").slice(2), ["Lvl 5 Creature: 80 XP", "Lvl 3 Simple Hazard: 8 XP"]);
+  const meter = vars.encounterMeter;
+  assert("the meter: 80 + 8 XP is Moderate for 3, Severe at 90", [meter.xp, meter.xpLabel, meter.threat, meter.next, meter.max], [88, "88 XP", "Moderate", "Severe at 90 XP", 120]);
+  assert("... the budgets for 3", meter.budgets, { Trivial: 30, Low: 40, Moderate: 60, Severe: 90, Extreme: 120 });
+  assert("... a row each, no names", meter.rows, [{ name: "Lvl 5 Creature", xp: "80 XP" }, { name: "Lvl 3 Simple Hazard", xp: "8 XP" }]);
+  assert("... not empty", meter.empty, "");
 
   ctx.api.showPrompt = (title, text, placeholder, opts, query, callback) => callback(["-2"]);
-  assert("Add by Level: the creatures and the meter", writes(() => ctx.addLevelToEncounterBuilder()), ["encounterCreatures", "encounterSummary"]);
+  assert("Add by Level: the creatures and the meter", writes(() => ctx.addLevelToEncounterBuilder()), ["encounterCreatures", "encounterMeter"]);
   assert("... party -2", vars.encounterCreatures[2], { level: 1, type: "", complex: false });
 
   vars.encounterPartySize = 4; // the field saves itself
-  assert("a typed size: the meter only", writes(() => ctx.setEncounterBuilderParty("size", "4")), ["encounterSummary"]);
-  assert("... the meter again", vars.encounterSummary.split("\n")[0], "108 XP: Moderate (Severe at 120)");
+  assert("a typed size: the meter only", writes(() => ctx.setEncounterBuilderParty("size", "4")), ["encounterMeter"]);
+  assert("... the meter again", [vars.encounterMeter.xpLabel, vars.encounterMeter.threat, vars.encounterMeter.next], ["108 XP", "Moderate", "Severe at 120 XP"]);
 
-  assert("Remove Last: the creatures and the meter", writes(() => ctx.removeLastFromEncounterBuilder()), ["encounterCreatures", "encounterSummary"]);
+  assert("Remove Last: the creatures and the meter", writes(() => ctx.removeLastFromEncounterBuilder()), ["encounterCreatures", "encounterMeter"]);
   assert("... the level 1 creature is gone", vars.encounterCreatures.length, 2);
 
-  assert("Clear: the creatures and the meter", writes(() => ctx.clearEncounterBuilder()), ["encounterCreatures", "encounterSummary"]);
-  assert("... no creatures, the party stays", [vars.encounterCreatures, vars.encounterPartyLevel, vars.encounterSummary.split("\n")[0]], [[], 3, "0 XP: Trivial (Low at 60)"]);
+  assert("Clear: the creatures and the meter", writes(() => ctx.clearEncounterBuilder()), ["encounterCreatures", "encounterMeter"]);
+  assert("... no creatures, the party stays", [vars.encounterCreatures, vars.encounterPartyLevel, vars.encounterMeter.threat, vars.encounterMeter.next, vars.encounterMeter.empty], [[], 3, "Trivial", "Low at 60 XP", "No creatures yet"]);
   assert("Remove Last with none: no write", writes(() => ctx.removeLastFromEncounterBuilder()), []);
+
+  const meterFor = (creatures) => ctx.getEncounterBuilderMeter({ level: 3, size: 4, creatures });
+  const ogre = { level: 5, type: "", complex: false };
+  assert("the same creature groups", meterFor([ogre, ogre, { level: 3, type: "", complex: false }]).rows, [{ name: "2 × Lvl 5 Creature", xp: "160 XP" }, { name: "Lvl 3 Creature", xp: "40 XP" }]);
+  const many = Array.from({ length: 12 }, (_, i) => ({ level: i - 1, type: "hazard", complex: false }));
+  const crowded = meterFor(many).rows;
+  assert("past 10 kinds, the last row is the rest", [crowded.length, crowded[8].name, crowded[9].name], [10, "Lvl 7 Simple Hazard", "+3 more"]);
+  assert("... with their XP", crowded[9].xp, `${meterFor(many.slice(9)).xp} XP`);
+  assert("Beyond Extreme: no next threat", [meterFor([ogre, ogre, ogre]).threat, meterFor([ogre, ogre, ogre]).next], ["Beyond Extreme", ""]);
 
   let options = [];
   ctx.api.showPrompt = (title, text, placeholder, opts, query, callback) => {
