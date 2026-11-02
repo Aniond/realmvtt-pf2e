@@ -9,8 +9,9 @@
 //     item they carry; the DC is its level-based DC adjusted for rarity, very
 //     hard with a skill outside its tradition, incredibly hard if it's cursed
 //     (GM Core). The result has a GM button that identifies it.
-// These are secret checks; until H23 the dice show, and only the DCs and
-// notes are hidden.
+// These are secret checks: with the Secret Checks setting on, the roll and
+// its card are GM-only (check-tools.js); otherwise the dice show, and only
+// the DCs and notes are hidden.
 
 // GM Core's Creature Identification table: the skills for each trait
 const CREATURE_IDENTIFICATION_SKILLS = {
