@@ -47,7 +47,14 @@ section("Recall Knowledge: the GM's note");
   assertIncludes("the DC", note, "**Recall Knowledge, Ghoul** (level 1): DC 15.");
   assertIncludes("the skills that fit", note, "Skills: Religion (undead).");
   assertIncludes("Lore: easy and very easy", note, "Lore: DC 13 (specific) or 10 (very specific).");
-  assertIncludes("later attempts: hard, very hard, incredibly hard", note, "Later attempts: DC 17, 20, 25; none after a failure.");
+  assertIncludes("later attempts, common: hard, very hard, incredibly hard", note, "Later attempts: DC 17, 20, 25; none after a failure or the incredibly hard one.");
+  // Uncommon starts at hard, so later attempts go on from there (Sean's
+  // level 5 example: 22, then 25, 30)
+  const uncommon5 = npc("Naga", { level: 5, traits: ["Uncommon", "Aberration"] });
+  assert("uncommon level 5: DC 22", ctx.getKnowledgeDC(uncommon5), 22);
+  assertIncludes("... later attempts: very hard, incredibly hard", ctx.getRecallKnowledgeNote(uncommon5, "occultism", 22), "Later attempts: DC 25, 30;");
+  assertIncludes("rare: only incredibly hard after", ctx.getRecallKnowledgeNote(npc("Rare", { level: 5, traits: ["Rare", "Fey"] }), "nature", 25), "Later attempts: DC 30;");
+  assertIncludes("unique: none", ctx.getRecallKnowledgeNote(npc("Boss", { level: 5, traits: ["Unique", "Humanoid"] }), "society", 30), "No later attempts: it's already incredibly hard.");
   assertIncludes("cheat sheet: the lowest save and weaknesses", note, "Cheat sheet: lowest save Fortitude +4; weaknesses Vitality 5.");
   assertNotIncludes("a skill that fits: no stretch line", note, "isn't one");
   assertIncludes("a skill that doesn't: harder", ctx.getRecallKnowledgeNote(ghoul, "arcana", 15), "Arcana isn't one: a stretch is harder (DC 17 or 20).");
@@ -83,12 +90,14 @@ section("Identify Magic");
   const known = { _id: "k1", name: "Rope", identified: true, data: { level: 0 } };
   assert("the tradition's skill: no change", ctx.getIdentifyDC(wand, "arcana"), { dc: 20, notes: [] });
   assert("another tradition's: very hard", ctx.getIdentifyDC(wand, "occultism").dc, 25);
-  assert("cursed and rare: +5 rarity, +10 cursed", ctx.getIdentifyDC(cursedRing, "religion"), { dc: 19 + 5 + 10, notes: ["cursed (incredibly hard, +10): only a critical success reveals the curse"] });
+  assert("cursed and rare: incredibly hard in place of rare", ctx.getIdentifyDC(cursedRing, "religion"), { dc: 19 + 10, notes: ["cursed: incredibly hard in place of its rarity; only a critical success reveals the curse"] });
+  assert("... outside its tradition: +5 on top", ctx.getIdentifyDC(cursedRing, "arcana").dc, 19 + 10 + 5);
   assert("alchemy: Crafting", [ctx.getIdentifySkills(elixir), ctx.getIdentifyDC(elixir, "crafting").dc], [["crafting"], 15]);
   assert("no tradition: any of the four", ctx.getIdentifySkills({ data: { traits: ["Magical"] } }), ["arcana", "religion", "occultism", "nature"]);
 
   const record = { _id: "pc", recordType: "characters", name: "Ezren", data: { arcana: 9, inventory: [wand, known, elixir] } };
-  assert("the unidentified items, as the player sees them", ctx.getUnidentifiedItems(record).map((i) => i.label), ["Carved Wand", "Red Vial"]);
+  assert("Identify Magic: the unidentified magic items, as the player sees them", ctx.getUnidentifiedItems(record, "Identify Magic").map((i) => i.label), ["Carved Wand"]);
+  assert("Identify Alchemy: the alchemical ones", ctx.getUnidentifiedItems(record, "Identify Alchemy").map((i) => i.label), ["Red Vial"]);
 
   // From the sheet: pick the item, then the roll
   let options = null;
@@ -99,7 +108,7 @@ section("Identify Magic");
   };
   ctx.api.promptRollForToken = (who, name, formula, modifiers, metadata) => (rolled = metadata);
   ctx.performSkillAction(record, "arcana", "Identify Magic", true);
-  assert("the prompt: unidentified names only, and something else", options.map((o) => o.label), ["Carved Wand", "Red Vial", "Something else (no DC)"]);
+  assert("the prompt: unidentified names only, and something else", options.map((o) => o.label), ["Carved Wand", "Something else (no DC)"]);
   assert("rolled against the item's DC", [rolled?.dc, rolled?.dcName], [20, "Identify Magic DC"]);
   assertIncludes("the GM's note names the item", rolled?.gmNote, "**Identify Magic, Wand of Fireball** (level 5): DC 20.");
   assertIncludes("the GM's button identifies it by id", rolled?.gmMacro, 'if (isGM) identifyInventoryItem("characters", "pc", "w1");');
