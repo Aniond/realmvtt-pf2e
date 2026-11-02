@@ -3,6 +3,10 @@
 //   - Encounter XP, and under Proficiency without Level its
 //     own creature table from -7 to +7 levels (GM Core pg. 85);
 //     onEncounterEnd.js
+//   - Threat (GM Core, roadmap H21): the budgets by party size, a [gm] card
+//     of the threat when an encounter starts (onEncounterStart.js), and an
+//     encounter builder on the GM Tools panel (gm-tools-panel.html) with a
+//     meter and templates that spend a threat's budget exactly
 //   - Advancement speed (GM Core): fast 800, standard 1,000 or slow
 //     1,200 XP a level, or story milestones (Level Up always shows);
 //     getXpToNextLevel in common.js and characters-main.html
@@ -39,6 +43,269 @@ function getEncounterXp(levelDiff, { hazard = false, complex = false } = {}, var
   const diff = parseInt(levelDiff, 10) || 0;
   if (diff < -range) return 0;
   return table[String(Math.min(range, diff))];
+}
+
+// ---------------------------------------------------------------- Threat
+
+// The encounter budget (GM Core, Table 10-1): the XP for four characters, and
+// how much each character more or fewer adds or takes away
+const ENCOUNTER_THREATS = [
+  { name: "Trivial", budget: 40, adjustment: 10 },
+  { name: "Low", budget: 60, adjustment: 20 },
+  { name: "Moderate", budget: 80, adjustment: 20 },
+  { name: "Severe", budget: 120, adjustment: 30 },
+  { name: "Extreme", budget: 160, adjustment: 40 },
+];
+
+// Each threat's budget for the party's size
+function getEncounterBudgets(partySize = 4) {
+  const size = parseInt(partySize, 10) || 4;
+  return ENCOUNTER_THREATS.map(({ name, budget, adjustment }) => ({
+    name,
+    budget: Math.max(0, budget + (size - 4) * adjustment),
+  }));
+}
+
+// The threat for an XP total: the highest budget it reaches (Trivial below
+// Low), "Beyond Extreme" past Extreme's
+function getEncounterThreat(totalXp, partySize = 4) {
+  const budgets = getEncounterBudgets(partySize);
+  const extreme = budgets[budgets.length - 1];
+  if (totalXp > extreme.budget) return "Beyond Extreme";
+  const reached = budgets.filter((b) => b.name !== "Trivial" && totalXp >= b.budget);
+  return reached.length ? reached[reached.length - 1].name : "Trivial";
+}
+
+// The party in an encounter: its characters' average level and how many
+function getEncounterParty(tokens) {
+  const characters = (tokens || []).filter((t) => t?.faction !== "enemy" && t?.recordType === "characters");
+  if (!characters.length) return null;
+  const levels = characters.map((t) => parseInt(t.data?.level, 10) || 1);
+  return {
+    level: Math.round(levels.reduce((sum, level) => sum + level, 0) / levels.length),
+    size: characters.length,
+  };
+}
+
+// Each enemy's XP against the party's level: creatures and complex hazards by
+// the creature table, simple hazards by theirs. Takes tokens, or the
+// builder's creatures ({ name, level, type, complex }).
+function getEncounterBreakdown(enemies, partyLevel) {
+  return (enemies || []).map((enemy) => {
+    const level = parseInt(enemy?.data?.level ?? enemy?.level, 10) || 0;
+    const hazard = (enemy?.data?.type ?? enemy?.type) === "hazard";
+    const complex = !!(enemy?.data?.isComplex ?? enemy?.complex);
+    const xp = getEncounterXp(level - partyLevel, { hazard, complex });
+    let type = hazard ? (complex ? "Complex Hazard" : "Simple Hazard") : "Creature";
+    if (xp === 0) type = hazard ? "Trivial Hazard" : "Trivial Creature";
+    return { name: enemy?.name || "Unknown", level, type, xp };
+  });
+}
+
+// An encounter's threat from its tokens (characters against enemies), or null
+// without both
+function getEncounterThreatSummary(tokens) {
+  const party = getEncounterParty(tokens);
+  const enemies = (tokens || []).filter((t) => t?.faction === "enemy");
+  if (!party || !enemies.length) return null;
+  const breakdown = getEncounterBreakdown(enemies, party.level);
+  const totalXp = breakdown.reduce((sum, e) => sum + e.xp, 0);
+  return {
+    partyLevel: party.level,
+    partySize: party.size,
+    breakdown,
+    totalXp,
+    threat: getEncounterThreat(totalXp, party.size),
+    budgets: getEncounterBudgets(party.size),
+  };
+}
+
+// The budgets as one line: "Trivial 40, Low 60, ..."
+function getEncounterBudgetLine(budgets) {
+  return budgets.map((b) => `${b.name} ${b.budget}`).join(", ");
+}
+
+// The GM's card when an encounter starts: its threat before the fight
+function getEncounterThreatCard(summary) {
+  if (!summary) return "";
+  const { partyLevel, partySize, breakdown, totalXp, threat, budgets } = summary;
+  return [
+    "[gm]**[center]Encounter Threat[/center]**[/gm]",
+    `[gm][center]**${threat}:** ${totalXp} XP for ${partySize} ${partySize === 1 ? "character" : "characters"} of level ${partyLevel}[/center][/gm]`,
+    `[gm]Budgets: ${getEncounterBudgetLine(budgets)}[/gm]`,
+    ...breakdown.map((e) => `[gm]- ${e.name} (Lvl ${e.level} ${e.type}): ${e.xp} XP[/gm]`),
+  ].join("\n");
+}
+
+// ---------------------------------------------------------------- Builder
+
+// The encounter builder (the GM Tools panel, gm-tools-panel.html) keeps its
+// party and creatures in campaign variables, so the panel shows them and
+// they're there next time
+const ENCOUNTER_BUILDER_VARS = {
+  level: "encounterPartyLevel",
+  size: "encounterPartySize",
+  creatures: "encounterCreatures",
+  summary: "encounterSummary",
+  threat: "encounterTemplateThreat",
+};
+
+function getEncounterBuilderState() {
+  const read = (name) => api.getCampaignVariable?.(name);
+  const creatures = read(ENCOUNTER_BUILDER_VARS.creatures);
+  return {
+    level: parseInt(read(ENCOUNTER_BUILDER_VARS.level), 10) || 1,
+    size: parseInt(read(ENCOUNTER_BUILDER_VARS.size), 10) || 4,
+    creatures: Array.isArray(creatures) ? creatures : [],
+  };
+}
+
+// The builder's meter: the XP so far, its threat, and the next threat's
+// budget
+function getEncounterBuilderSummary({ level, size, creatures }) {
+  const breakdown = getEncounterBreakdown(creatures, level);
+  const totalXp = breakdown.reduce((sum, e) => sum + e.xp, 0);
+  const threat = getEncounterThreat(totalXp, size);
+  const next = getEncounterBudgets(size).find((b) => b.name !== "Trivial" && b.budget > totalXp);
+  const lines = [
+    `${totalXp} XP: ${threat}${next ? ` (${next.name} at ${next.budget})` : ""}`,
+    `Party: ${size} of level ${level}. Budgets: ${getEncounterBudgetLine(getEncounterBudgets(size))}`,
+  ];
+  breakdown.forEach((e) => lines.push(`${e.name} (Lvl ${e.level} ${e.type}): ${e.xp} XP`));
+  return lines.join("\n");
+}
+
+// Ways to spend a threat's budget exactly: some creatures of one level, or a
+// leader above the party's level with others below it
+function getEncounterTemplates(partyLevel, partySize, threatName) {
+  const budget = getEncounterBudgets(partySize).find((b) => b.name === threatName)?.budget;
+  if (!budget) return [];
+  const xpFor = (diff) => getEncounterXp(diff);
+  const diffs = [4, 3, 2, 1, 0, -1, -2, -3, -4].filter((diff) => partyLevel + diff >= -1);
+  const level = (diff) => partyLevel + diff;
+  const templates = [];
+  diffs.forEach((diff) => {
+    const count = budget / xpFor(diff);
+    if (Number.isInteger(count) && count >= 1 && count <= 8) {
+      templates.push(`${count} × level ${level(diff)} (${xpFor(diff)} XP each)`);
+    }
+  });
+  diffs
+    .filter((leader) => leader > 0)
+    .forEach((leader) => {
+      diffs
+        .filter((other) => other < 0)
+        .forEach((other) => {
+          const rest = budget - xpFor(leader);
+          const count = rest / xpFor(other);
+          if (rest > 0 && Number.isInteger(count) && count >= 1 && count <= 6) {
+            templates.push(`1 × level ${level(leader)} and ${count} × level ${level(other)}`);
+          }
+        });
+    });
+  return templates;
+}
+
+// The builder's actions (run from the panel) write the new state and the
+// meter, so the panel shows them
+function saveEncounterBuilder(state) {
+  api.setCampaignVariable(ENCOUNTER_BUILDER_VARS.level, state.level);
+  api.setCampaignVariable(ENCOUNTER_BUILDER_VARS.size, state.size);
+  api.setCampaignVariable(ENCOUNTER_BUILDER_VARS.creatures, state.creatures);
+  api.setCampaignVariable(ENCOUNTER_BUILDER_VARS.summary, getEncounterBuilderSummary(state));
+}
+
+// The party's level and size from the Party Sheet
+function setEncounterBuilderFromParty() {
+  api.getParty((party) => {
+    const members = (party || []).filter((member) => member?.recordType === "characters");
+    if (!members.length) {
+      api.showNotification("Open the Party Sheet from the View menu and drag the characters onto it.", "yellow", "Encounter Builder");
+      return;
+    }
+    const levels = members.map((member) => parseInt(member.data?.level, 10) || 1);
+    const level = Math.round(levels.reduce((sum, l) => sum + l, 0) / levels.length);
+    saveEncounterBuilder({ ...getEncounterBuilderState(), level, size: members.length });
+  });
+}
+
+// The party's level or size typed in the panel ("level" or "size", with the
+// value passed, as the variable may not have saved yet)
+function setEncounterBuilderParty(key, value) {
+  const number = parseInt(value, 10);
+  if (!Number.isFinite(number)) return;
+  saveEncounterBuilder({ ...getEncounterBuilderState(), [key]: number });
+}
+
+// The selected NPC and hazard tokens join the encounter
+function addSelectedToEncounterBuilder() {
+  const added = (api.getSelectedTokens?.() || [])
+    .map((t) => t?.token || t)
+    .filter((t) => t?.recordType === "npcs")
+    .map((t) => ({
+      name: t.name || t.record?.name || "Creature",
+      level: parseInt(t.data?.level, 10) || 0,
+      type: t.data?.type || "",
+      complex: !!t.data?.isComplex,
+    }));
+  if (!added.length) {
+    api.showNotification("Select NPC or hazard tokens on the scene first.", "yellow", "Encounter Builder");
+    return;
+  }
+  const state = getEncounterBuilderState();
+  saveEncounterBuilder({ ...state, creatures: [...state.creatures, ...added] });
+}
+
+// A creature by its level against the party's, for planning before the stat
+// blocks are picked
+function addLevelToEncounterBuilder() {
+  const { level } = getEncounterBuilderState();
+  const options = [4, 3, 2, 1, 0, -1, -2, -3, -4].map((diff) => ({
+    label: `Level ${level + diff} (party ${diff >= 0 ? "+" : ""}${diff}): ${getEncounterXp(diff)} XP`,
+    value: String(diff),
+  }));
+  api.showPrompt(
+    "Encounter Builder",
+    "Add a creature of which level?",
+    "Select...",
+    options,
+    null,
+    (choice) => {
+      const diff = parseInt(Array.isArray(choice) ? choice[0] : choice, 10);
+      if (!Number.isFinite(diff)) return;
+      const latest = getEncounterBuilderState();
+      const creatureLevel = latest.level + diff;
+      saveEncounterBuilder({ ...latest, creatures: [...latest.creatures, { name: `Level ${creatureLevel} creature`, level: creatureLevel }] });
+    },
+    "Add",
+    "Cancel",
+    1,
+  );
+}
+
+function clearEncounterBuilder() {
+  saveEncounterBuilder({ ...getEncounterBuilderState(), creatures: [] });
+}
+
+// Templates for a threat (the panel's dropdown passes it), posted for the GM
+function postEncounterTemplates(threatName) {
+  const name = threatName || "Moderate";
+  const { level, size } = getEncounterBuilderState();
+  const budget = getEncounterBudgets(size).find((b) => b.name === name)?.budget;
+  const templates = getEncounterTemplates(level, size, name);
+  api.sendMessage(
+    [
+      `[gm]**[center]${name} Encounter Templates[/center]**[/gm]`,
+      `[gm][center]${budget} XP for ${size} of level ${level}[/center][/gm]`,
+      ...(templates.length ? templates.map((t) => `[gm]- ${t}[/gm]`) : ["[gm]No exact fit; mix levels to come close.[/gm]"]),
+    ].join("\n"),
+  );
+}
+
+// The builder's encounter as a card for the GM
+function postEncounterBuilder() {
+  const lines = getEncounterBuilderSummary(getEncounterBuilderState()).split("\n");
+  api.sendMessage(["[gm]**[center]Encounter Builder[/center]**[/gm]", ...lines.map((line) => `[gm]${line}[/gm]`)].join("\n"));
 }
 
 // ---------------------------------------------------------------- Advancement

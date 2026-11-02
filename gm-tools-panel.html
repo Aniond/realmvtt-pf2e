@@ -1,0 +1,113 @@
+<script>
+  // The GM Tools panel (View menu, GM only): the encounter builder (H21,
+  // gm-tools.js). Its fields are campaign variables; each action writes the
+  // party, the creatures and the meter in encounterSummary.
+  function onEncounterPartyLevel(value) {
+    setEncounterBuilderParty("level", value);
+  }
+
+  function onEncounterPartySize(value) {
+    setEncounterBuilderParty("size", value);
+  }
+
+  function onEncounterTemplateThreat(value) {
+    postEncounterTemplates(value);
+  }
+</script>
+
+<div style="display: flex; flex-direction: column; gap: 6px; padding: 6px">
+  <div
+    class="rvtt-sheet-section rvtt-sheet-corners"
+    style="background: var(--bg, transparent)"
+  >
+    <span class="rvtt-sheet-corner rvtt-sheet-corner--tl"></span>
+    <span class="rvtt-sheet-corner rvtt-sheet-corner--tr"></span>
+    <span class="rvtt-sheet-corner rvtt-sheet-corner--bl"></span>
+    <span class="rvtt-sheet-corner rvtt-sheet-corner--br"></span>
+
+    <div class="rvtt-sheet-divider">
+      <span class="rvtt-sheet-divider__label"
+        >&#10022; Encounter Builder &#10022;</span
+      >
+    </div>
+
+    <div style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap">
+      <span class="rvtt-sheet-mono-dim">PARTY LVL</span>
+      <numberfield
+        field="encounterPartyLevel"
+        size="xs"
+        hidecontrols="true"
+        width="44px"
+        placeholder="1"
+        minvalue="-1"
+        onchange="onEncounterPartyLevel(value)"
+      ></numberfield>
+      <span class="rvtt-sheet-mono-dim">SIZE</span>
+      <numberfield
+        field="encounterPartySize"
+        size="xs"
+        hidecontrols="true"
+        width="44px"
+        placeholder="4"
+        minvalue="1"
+        onchange="onEncounterPartySize(value)"
+      ></numberfield>
+      <button
+        size="xs"
+        variant="light"
+        icon="IconUsers"
+        label="Use the Party"
+        onclick="setEncounterBuilderFromParty()"
+      ></button>
+    </div>
+
+    <div style="display: flex; gap: 4px; flex-wrap: wrap; margin-top: 4px">
+      <button
+        size="xs"
+        variant="light"
+        icon="IconPlus"
+        label="Add Selected Tokens"
+        onclick="addSelectedToEncounterBuilder()"
+      ></button>
+      <button
+        size="xs"
+        variant="light"
+        icon="IconStairs"
+        label="Add by Level"
+        onclick="addLevelToEncounterBuilder()"
+      ></button>
+      <button
+        size="xs"
+        variant="light"
+        icon="IconMessage"
+        label="Post to Chat"
+        onclick="postEncounterBuilder()"
+      ></button>
+      <button
+        size="xs"
+        variant="light"
+        icon="IconTrash"
+        label="Clear"
+        onclick="clearEncounterBuilder()"
+      ></button>
+    </div>
+
+    <!-- The meter: XP, threat, the next threat's budget, each creature -->
+    <label field="encounterSummary" size="xs" style="white-space: pre-line; margin-top: 4px"></label>
+
+    <div style="display: flex; gap: 6px; align-items: center; margin-top: 4px">
+      <span class="rvtt-sheet-mono-dim">TEMPLATES</span>
+      <dropdown
+        field="encounterTemplateThreat"
+        size="xs"
+        placeholder="Pick a threat"
+        onchange="onEncounterTemplateThreat(value)"
+        options='[{"label": "Trivial", "value": "Trivial"},
+        {"label": "Low", "value": "Low"},
+        {"label": "Moderate", "value": "Moderate"},
+        {"label": "Severe", "value": "Severe"},
+        {"label": "Extreme", "value": "Extreme"}]'
+      ></dropdown>
+    </div>
+  </div>
+</div>
