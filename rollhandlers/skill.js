@@ -283,6 +283,15 @@ if (bravadoLines.length > 0) message += `\n\n${bravadoLines.join("\n")}`;
 // this turn (attack-log.js)
 logTurnAttack(data?.roll?.metadata?.turnAttack, noteDegree);
 
+// Recall Knowledge and Identify Magic: the GM's note, and the button that
+// identifies the item (knowledge.js)
+if (data?.roll?.metadata?.gmNote) {
+  message += `\n\n${`${data.roll.metadata.gmNote}`.split("\n").map((line) => `[gm]${line}[/gm]`).join("\n")}`;
+}
+if (data?.roll?.metadata?.gmMacro) {
+  message += `\n\n${data.roll.metadata.gmMacro}`;
+}
+
 api.sendMessage(
   message,
   roll,

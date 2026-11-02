@@ -5496,6 +5496,9 @@
         },
         "Exploration": {
           "file": "rollhandlers/exploration.js"
+        },
+        "Knowledge": {
+          "file": "rollhandlers/knowledge.js"
         }
       },
       "defaultDice": "default",
