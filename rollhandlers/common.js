@@ -9654,6 +9654,10 @@ function rollSkill(
     ...(isBravadoCheck(record, context) && bravadoToken?._id
       ? { bravado: { tokenId: bravadoToken._id, tokenName: getCreatureName(bravadoToken) } }
       : {}),
+    // A check made as a secret action, with secret checks on: rolled GM-only
+    // (forcedAudience opens the roll prompt set to private, and the player
+    // can't change it), and the card shows the GM the result (check-tools.js)
+    ...(isSecretCheck(actionName) ? { secret: true, forcedAudience: "private" } : {}),
     ...metadataExtras,
   };
 

@@ -292,14 +292,15 @@ if (data?.roll?.metadata?.gmMacro) {
   message += `\n\n${data.roll.metadata.gmMacro}`;
 }
 
-api.sendMessage(
-  message,
-  roll,
-  [],
-  [
-    {
-      name: rollName || "Skill",
-      tooltip: tooltip || `${rollName || ""} Skill Check`,
-    },
-  ]
-);
+const rollTags = [
+  {
+    name: rollName || "Skill",
+    tooltip: tooltip || `${rollName || ""} Skill Check`,
+  },
+];
+// A secret check: no dice, and the result for the GM only (check-tools.js)
+if (data?.roll?.metadata?.secret) {
+  api.sendMessage(getSecretCheckMessage(message, roll, rollName), undefined, [], rollTags);
+} else {
+  api.sendMessage(message, roll, [], rollTags);
+}
