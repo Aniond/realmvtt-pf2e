@@ -2,60 +2,15 @@
 // (combat-riders.js)
 clearEncounterRecharges(data?.tokens);
 
-// On Encounter End, calculate XP based on PF2e rules
-// Find all non-enemy character tokens in the combat
-const partyTokens = (data?.tokens || []).filter(
-  (t) => t?.faction !== "enemy" && t?.recordType === "characters"
-);
+// On Encounter End, calculate XP based on PF2e rules: the party's average
+// level and size against each enemy (gm-tools.js)
+const encounter = getEncounterThreatSummary(data?.tokens);
 
-if (partyTokens.length > 0) {
-  // Calculate average party level from characters in combat
-  const partyLevels = partyTokens.map((token) => token.data.level || 1);
-  const avgPartyLevel = Math.round(
-    partyLevels.reduce((sum, level) => sum + level, 0) / partyLevels.length
-  );
-  const partySize = partyTokens.length;
+if (encounter) {
+  const { partyLevel: avgPartyLevel, partySize, totalXp: totalXP, breakdown: xpBreakdown } = encounter;
 
-  // Filter enemy tokens
-  const enemies = (data?.tokens || []).filter((t) => t?.faction === "enemy");
-
-  // Calculate XP for each enemy
-  let totalXP = 0;
-  const xpBreakdown = [];
-
-  enemies.forEach((token) => {
-    const tokenLevel = token?.data?.level || 0;
-    const tokenType = token?.data?.type;
-    const levelDiff = tokenLevel - avgPartyLevel;
-
-    // Creatures too far below the party grant no XP; Proficiency without
-    // Level uses its own table (gm-tools.js)
-    const isHazard = tokenType === "hazard";
-    const isComplex = !!token?.data?.isComplex;
-    const xp = getEncounterXp(levelDiff, { hazard: isHazard, complex: isComplex });
-    let typeLabel = isHazard ? (isComplex ? "Complex Hazard" : "Simple Hazard") : "Creature";
-    if (xp === 0) {
-      typeLabel = isHazard ? "Trivial Hazard" : "Trivial Creature";
-    }
-
-    totalXP += xp;
-    xpBreakdown.push({
-      name: token.name || "Unknown",
-      level: tokenLevel,
-      type: typeLabel,
-      xp: xp,
-    });
-  });
-
-  // Determine encounter severity based on XP budget adjusted for party size
-  // Base budgets are for 4 characters, adjust for different party sizes
+  // The budgets are for 4 characters, adjusted for the party's size
   const partyAdjustment = partySize - 4;
-
-  const trivialBudget = 40 + partyAdjustment * 10;
-  const lowBudget = 60 + partyAdjustment * 20;
-  const moderateBudget = 80 + partyAdjustment * 20;
-  const severeBudget = 120 + partyAdjustment * 30;
-  const extremeBudget = 160 + partyAdjustment * 40;
 
   let adjustmentMessage = "";
   let adjustmentAsterix = "";
@@ -64,20 +19,7 @@ if (partyTokens.length > 0) {
     adjustmentMessage = `[center](*After Party Size Adjustment: ${partyAdjustment})[/center]`;
   }
 
-  let severity = `Trivial${adjustmentAsterix}`;
-  if (totalXP > extremeBudget) {
-    severity = `Beyond Extreme${adjustmentAsterix}`;
-  } else if (totalXP >= extremeBudget) {
-    severity = `Extreme${adjustmentAsterix}`;
-  } else if (totalXP >= severeBudget) {
-    severity = `Severe${adjustmentAsterix}`;
-  } else if (totalXP >= moderateBudget) {
-    severity = `Moderate${adjustmentAsterix}`;
-  } else if (totalXP >= lowBudget) {
-    severity = `Low${adjustmentAsterix}`;
-  } else if (totalXP <= trivialBudget) {
-    severity = `Trivial${adjustmentAsterix}`;
-  }
+  const severity = `${encounter.threat}${adjustmentAsterix}`;
 
   // Adjust XP awards based on party size
   // Formula: (Total XP × 4) ÷ Party Size = XP per character
@@ -92,10 +34,10 @@ if (partyTokens.length > 0) {
 
   // Build macro for awarding XP
   let macro = "";
-  if (enemies.length > 0) {
+  if (xpBreakdown.length > 0) {
     macro = `\`\`\`Award_XP
 if (isGM) {
-  api.awardExp(${adjustedXP}, 'Encounter with ${enemies.length} enemies (${severity}).');
+  api.awardExp(${adjustedXP}, 'Encounter with ${xpBreakdown.length} enemies (${severity}).');
   api.sendMessage('Awarded ${adjustedXP} XP to the Party.');
 }
 \`\`\`

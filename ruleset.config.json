@@ -5401,6 +5401,14 @@
       "commonScript": {
         "file": "rollhandlers/common.js"
       },
+      "campaignPanel": {
+        "name": "GM Tools",
+        "icon": "IconSwords",
+        "file": "gm-tools-panel.html",
+        "gmOnly": true,
+        "width": 460,
+        "height": 360
+      },
       "scripts": {
         "PF2e": {
           "file": "rollhandlers/PF2e.js"

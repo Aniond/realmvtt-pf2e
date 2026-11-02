@@ -188,4 +188,91 @@ section("DC helper (Q27)");
   assertIncludes("the helper posts Athletics DC 22", ctx.__state.messages[0], "[gm]DC 22 (Expert (simple DC 20), hard)[/gm]");
 }
 
+section("Threat (H21)");
+{
+  settings = {};
+  const budgets = (size) => ctx.getEncounterBudgets(size).map((b) => b.budget);
+  assert("4 characters: 40, 60, 80, 120, 160", budgets(4), [40, 60, 80, 120, 160]);
+  assert("5: +10, +20, +20, +30, +40", budgets(5), [50, 80, 100, 150, 200]);
+  assert("3: one fewer", budgets(3), [30, 40, 60, 90, 120]);
+  const threat = (xp, size) => ctx.getEncounterThreat(xp, size);
+  assert("the highest budget reached", [threat(50), threat(60), threat(119), threat(120), threat(160), threat(161)], ["Trivial", "Low", "Moderate", "Severe", "Extreme", "Beyond Extreme"]);
+  assert("by party size", [threat(80, 5), threat(80, 3)], ["Low", "Moderate"]);
+
+  const summary = ctx.getEncounterThreatSummary([...party, foe("Boss", 7), foe("Pit", 5, { type: "hazard" })]);
+  assert("from the tokens: level 5, 4 characters, 80 + 8 XP", [summary.partyLevel, summary.partySize, summary.totalXp, summary.threat], [5, 4, 88, "Moderate"]);
+  assert("no party or no enemies: nothing", [ctx.getEncounterThreatSummary([foe("Boss", 7)]), ctx.getEncounterThreatSummary(party)], [null, null]);
+
+  runHook("onEncounterEnd.js", { tokens: [...party, foe("Boss", 7), foe("Pit", 5, { type: "hazard" })] });
+  const ended = ctx.__state.messages.find((m) => `${m}`.includes("Encounter Ended")) || "";
+  assertIncludes("the end card still: Moderate, 88 XP", ended, "Party Level: 5 | Severity: Moderate");
+  assertIncludes("... the award", ended, "api.awardExp(88, 'Encounter with 2 enemies (Moderate).')");
+}
+
+section("Encounter builder (H21)");
+{
+  settings = {};
+  const vars = {};
+  const written = [];
+  ctx.api.getCampaignVariable = (name) => vars[name];
+  ctx.api.setCampaignVariable = (name, value) => {
+    vars[name] = value;
+    written.push(name);
+  };
+  const writes = (action) => {
+    written.length = 0;
+    action();
+    return [...written];
+  };
+  ctx.api.getParty = (cb) => cb([pc("a", 3), pc("b", 4), pc("c", 3), { _id: "pet", recordType: "npcs", data: { level: 1 } }]);
+  assert("Use the Party: the level, the size and the meter", writes(() => ctx.setEncounterBuilderFromParty()), ["encounterPartyLevel", "encounterPartySize", "encounterSummary"]);
+  assert("... level 3, 3 characters", [vars.encounterPartyLevel, vars.encounterPartySize], [3, 3]);
+
+  ctx.api.getSelectedTokens = () => [foe("Ogre", 5), foe("Trap", 3, { type: "hazard" }), pc("e", 3)];
+  assert("Add Selected Tokens: the creatures and the meter", writes(() => ctx.addSelectedToEncounterBuilder()), ["encounterCreatures", "encounterSummary"]);
+  assert("... NPCs and hazards, no names", vars.encounterCreatures, [{ level: 5, type: "", complex: false }, { level: 3, type: "hazard", complex: false }]);
+  assert("the meter: 80 + 8 XP is Moderate for 3 (Severe at 90)", vars.encounterSummary.split("\n")[0], "88 XP: Moderate (Severe at 90)");
+  assert("... a line each, no names", vars.encounterSummary.split("\n").slice(2), ["Lvl 5 Creature: 80 XP", "Lvl 3 Simple Hazard: 8 XP"]);
+
+  ctx.api.showPrompt = (title, text, placeholder, opts, query, callback) => callback(["-2"]);
+  assert("Add by Level: the creatures and the meter", writes(() => ctx.addLevelToEncounterBuilder()), ["encounterCreatures", "encounterSummary"]);
+  assert("... party -2", vars.encounterCreatures[2], { level: 1, type: "", complex: false });
+
+  vars.encounterPartySize = 4; // the field saves itself
+  assert("a typed size: the meter only", writes(() => ctx.setEncounterBuilderParty("size", "4")), ["encounterSummary"]);
+  assert("... the meter again", vars.encounterSummary.split("\n")[0], "108 XP: Moderate (Severe at 120)");
+
+  assert("Remove Last: the creatures and the meter", writes(() => ctx.removeLastFromEncounterBuilder()), ["encounterCreatures", "encounterSummary"]);
+  assert("... the level 1 creature is gone", vars.encounterCreatures.length, 2);
+
+  assert("Clear: the creatures and the meter", writes(() => ctx.clearEncounterBuilder()), ["encounterCreatures", "encounterSummary"]);
+  assert("... no creatures, the party stays", [vars.encounterCreatures, vars.encounterPartyLevel, vars.encounterSummary.split("\n")[0]], [[], 3, "0 XP: Trivial (Low at 60)"]);
+  assert("Remove Last with none: no write", writes(() => ctx.removeLastFromEncounterBuilder()), []);
+
+  let options = [];
+  ctx.api.showPrompt = (title, text, placeholder, opts, query, callback) => {
+    options = opts;
+    callback(["4"]);
+  };
+  settings = { proficiencyWithoutLevel: "yes" };
+  ctx.addLevelToEncounterBuilder();
+  assert("Proficiency without Level: Add by Level runs -7 to +7", [options.length, options[0].value, options[14].value], [15, "7", "-7"]);
+  assert("... its templates too", ctx.getEncounterTemplates(10, 4, "Extreme").includes("1 × level 17 (160 XP each)"), true);
+  settings = {};
+  ctx.clearEncounterBuilder();
+
+  const templates = ctx.getEncounterTemplates(5, 4, "Moderate");
+  assert("Moderate for 4 at level 5: 2 × level 5, 1 × level 7, 4 × level 3", ["2 × level 5 (40 XP each)", "1 × level 7 (80 XP each)", "4 × level 3 (20 XP each)"].every((t) => templates.includes(t)), true);
+  assert("... a leader and others", templates.includes("1 × level 6 and 1 × level 3"), true);
+  assert("level 1 party: no creatures below level -1", ctx.getEncounterTemplates(1, 4, "Low").some((t) => /level -[2-9]/.test(t)), false);
+
+  ctx.__state.messages.length = 0;
+  ctx.api.showPrompt = (title, text, placeholder, opts, query, callback) => callback(["Severe"]);
+  const before = Object.keys(vars).length;
+  ctx.promptEncounterTemplates();
+  ctx.promptEncounterTemplates();
+  assert("Templates: the same threat posts twice, no variable", [ctx.__state.messages.length, Object.keys(vars).length === before], [2, true]);
+  assertIncludes("... for the GM", ctx.__state.messages[0], "[gm][center]120 XP for 4 of level 3[/center][/gm]");
+}
+
 process.exitCode = summary() > 0 ? 1 : 0;
