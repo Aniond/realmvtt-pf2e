@@ -127,11 +127,15 @@ section("Identify Magic");
   const writes = [];
   ctx.api.getRecord = (type, id, cb) => cb({ _id: id, recordType: type, data: { inventory: [known, wand] } });
   ctx.api.setValuesOnRecord = (rec, values) => writes.push(values);
+  const notes = [];
+  ctx.api.showNotification = (text, color) => notes.push([color, text]);
   ctx.identifyInventoryItem("characters", "pc", "w1");
   assert("identified: one write on the row", writes, [{ "data.inventory.1.identified": true }]);
+  assert("... and a green notification", notes[0][0], "green");
   ctx.identifyInventoryItem("characters", "pc", "k1");
   ctx.identifyInventoryItem("characters", "pc", "gone");
   assert("already identified, or gone: no write", writes.length, 1);
+  assert("... a yellow notification each", notes.slice(1).map(([color]) => color), ["yellow", "yellow"]);
 }
 
 process.exitCode = summary() > 0 ? 1 : 0;

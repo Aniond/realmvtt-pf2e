@@ -211,12 +211,22 @@ function promptIdentifyItem(record, skill, actionName, roll) {
   );
 }
 
-// The GM's button: the item shows as identified (one write)
+// The GM's button: the item shows as identified (one write), and the GM gets
+// a notification saying so
 function identifyInventoryItem(recordType, recordId, itemId) {
   api.getRecord(recordType, recordId, (record) => {
     const index = (record?.data?.inventory || []).findIndex((item) => item?._id === itemId);
-    if (index < 0) return;
-    if (record.data.inventory[index].identified !== false) return;
+    const owner = record?.name || "The character";
+    if (index < 0) {
+      api.showNotification(`${owner} no longer has that item.`, "yellow", "Identify Item");
+      return;
+    }
+    const item = record.data.inventory[index];
+    if (item.identified !== false) {
+      api.showNotification(`${item.name} is already identified.`, "yellow", "Identify Item");
+      return;
+    }
     api.setValuesOnRecord(record, { [`data.inventory.${index}.identified`]: true });
+    api.showNotification(`${owner}'s ${item.unidentifiedName || "item"} is identified: ${item.name}.`, "green", "Identify Item");
   });
 }
