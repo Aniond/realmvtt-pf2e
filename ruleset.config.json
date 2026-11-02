@@ -5588,6 +5588,21 @@
         ]
       },
       {
+        "name": "Secret Checks",
+        "key": "secretChecks",
+        "description": "Player Core pg. 460. A check made as an action with the secret trait (Recall Knowledge, Seek, Sense Motive, Hide, Sneak, Lie, Identify Magic and others) is rolled in secret: the roll prompt opens as a Private GM Roll, and the result card is GM-only, so the table sees only that dice were rolled.",
+        "values": [
+          {
+            "label": "No",
+            "value": "no"
+          },
+          {
+            "label": "Yes",
+            "value": "yes"
+          }
+        ]
+      },
+      {
         "name": "Persistent Damage Recovery",
         "key": "persistentRecoveryRoll",
         "description": "Player Core pg. 450. After persistent damage, the DC 15 flat check to end it: a button to roll, or rolled automatically. Either way a button for particularly appropriate help (DC 10) comes with it.",

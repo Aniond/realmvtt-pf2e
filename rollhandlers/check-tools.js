@@ -518,3 +518,38 @@ function endConditionOnSuccess(metadata) {
   api.removeEffectById(condition.effect._id, token);
   return `\n\n**${getCreatureName(token)} is no longer ${metadata.endsCondition}.**`;
 }
+
+// ---------------------------------------------------------------- Secret checks
+
+// Secret checks (the secret trait, Player Core pg. 460; roadmap H23): with
+// the campaign setting on, a check made as an action with that trait opens
+// its roll prompt as a Private GM Roll (metadata.forcedAudience "private",
+// rollSkill), and skill.js sends its card private too, so the table sees only
+// "Privately Rolled Dice". The player can still change the prompt's audience
+// (we assist, we don't police); the card stays private either way. The
+// actions are the ones whose records carry the secret trait.
+const SECRET_ACTIONS = new Set([
+  "conceal an object",
+  "create forgery",
+  "decipher writing",
+  "gather information",
+  "hide",
+  "identify alchemy",
+  "identify magic",
+  "impersonate",
+  "lie",
+  "recall knowledge",
+  "seek",
+  "sense direction",
+  "sense motive",
+  "sneak",
+]);
+
+function isSecretChecksOn() {
+  return api.getSetting("secretChecks") === "yes";
+}
+
+// Whether a check made as this action is rolled in secret
+function isSecretCheck(actionName) {
+  return !!actionName && SECRET_ACTIONS.has(`${actionName}`.trim().toLowerCase()) && isSecretChecksOn();
+}
