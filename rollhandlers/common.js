@@ -13225,8 +13225,9 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber) {
           : target?.token?.record?.name;
       const targetDistance = target?.distance || 0;
 
-      // Check if target has shield raised
-      if (target?.token?.data?.shieldRaised === "true") {
+      // Whether the target can Shield Block: shield raised and not broken, and
+      // Shield Block (armor-traits.js)
+      if (canShieldBlock(target?.token)) {
         targetShieldRaised = true;
       }
 
@@ -14161,8 +14162,9 @@ function performDamageRoll(record, weapon, weaponDataPath, isCritical) {
 
   if (targets.length > 0) {
     for (const target of targets) {
-      // Check if target has shield raised
-      if (target?.token?.data?.shieldRaised === "true") {
+      // Whether the target can Shield Block: shield raised and not broken, and
+      // Shield Block (armor-traits.js)
+      if (canShieldBlock(target?.token)) {
         targetShieldRaised = true;
       }
       // Check if target is off-guard
@@ -16048,6 +16050,8 @@ function applyDamage(
               newShieldHp,
               isShieldBroken,
               wasShieldBroken,
+              // An item at 0 Hit Points is destroyed (armor-traits.js)
+              isShieldDestroyed: newShieldHp === 0 && currentShieldHp > 0,
               shieldDamageAmount,
               brokenThreshold,
               maxShieldHp,
@@ -16182,6 +16186,10 @@ function applyDamage(
         if (shieldData.isShieldBroken !== shieldData.wasShieldBroken) {
           valuesToSet["data.shieldBroken"] = shieldData.isShieldBroken;
         }
+        // A destroyed shield comes down
+        if (shieldData.isShieldDestroyed) {
+          valuesToSet["data.shieldRaised"] = "false";
+        }
 
         // Store old values for undo
         if (shield) {
@@ -16190,6 +16198,9 @@ function applyDamage(
           oldValues["data.shieldHp"] = target.data?.shieldHp || 0;
           if (shieldData.isShieldBroken !== shieldData.wasShieldBroken) {
             oldValues["data.shieldBroken"] = shieldData.wasShieldBroken;
+          }
+          if (shieldData.isShieldDestroyed) {
+            oldValues["data.shieldRaised"] = target.data?.shieldRaised ?? "false";
           }
         }
       }
@@ -16224,7 +16235,9 @@ function applyDamage(
         if (shieldData.shieldDamageAmount > 0) {
           message += `\n**Shield took ${shieldData.shieldDamageAmount} damage** (${shieldData.newShieldHp}/${shieldData.maxShieldHp} HP remaining)`;
         }
-        if (shieldData.isShieldBroken && !shieldData.wasShieldBroken) {
+        if (shieldData.isShieldDestroyed) {
+          message += `\n**[color=red]Shield is DESTROYED![/color]** It's lowered, and can't be Repaired.`;
+        } else if (shieldData.isShieldBroken && !shieldData.wasShieldBroken) {
           message += `\n**[color=orange]Shield is now BROKEN![/color]**`;
         }
       }

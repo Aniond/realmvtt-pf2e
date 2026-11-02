@@ -1020,8 +1020,11 @@
       if (ourToken) {
         api.floatText(ourToken, "Raising a Shield", "#0000ff");
       }
+      // A hefty shield the Strength doesn't meet takes 2 actions to raise
+      // (armor-traits.js)
+      const note = getRaiseShieldNote(record);
       api.sendMessage(
-        "**[center]Raising a Shield[/center]**",
+        `**[center]Raising a Shield[/center]**${note ? `\n${note}` : ""}`,
         undefined,
         [],
         [],

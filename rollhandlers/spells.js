@@ -1320,9 +1320,10 @@ api.getRecord('${record.recordType}', '${record._id}', (record) => {
       const targetRecord = targetToken?.record;
       const targetDistance = target?.distance || 0;
   
-      // Check if target has shield raised
+      // Whether the target can Shield Block: shield raised and not broken, and
+      // Shield Block (armor-traits.js)
       let targetShieldRaised = false;
-      if (targetToken?.data?.shieldRaised === "true") {
+      if (canShieldBlock(targetToken)) {
         targetShieldRaised = true;
       }
   

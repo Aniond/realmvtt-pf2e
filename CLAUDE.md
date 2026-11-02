@@ -297,6 +297,7 @@ Animal companions are characters, as Foundry's PF2e Companion Compendia builds t
 - Bulwark: `rollSave` adds `getBulwarkModifier` on Reflex saves (+3 instead of the Dex modifier, as a difference): on for a basic save (damaging), unticked otherwise.
 - Ponderous (Treasure Vault): `getPonderousModifier` is an untyped `initiativePenalty` added with the check penalty in `getEffectsAndModifiersForToken`, so it stacks with item penalties: -1, or the check penalty when Strength is short and it's worse.
 - Hindering (the Speed calculation, `hasArmorTrait`) and comfort (the Rest prompt, healing-tools.js) were already in place.
+- Shields (H24): the attack and spell damage cards' Apply Damage to Shield button (`showShieldDamage`) needs `canShieldBlock(target)`: the shield raised, not broken (a broken item can't be used for its normal function), and `hasShieldBlock` (a character's feat by `hasFeatNamed`, an NPC's `data.actions` entry named Shield Block). A Shield Block that takes the shield to 0 HP marks `isShieldDestroyed` in `applyDamage`: the card says it's destroyed, and `data.shieldRaised` goes to "false" (kept in the undo values). Hefty N (`getShieldHefty`, traits like "Hefty-2"): raising takes 2 actions unless `data.str` is at least N, and both sheets' Raise a Shield card adds `getRaiseShieldNote`. Shields have no Strike data (no Shield Bash item; Shield Boss and Shield Spikes are weapons already), so a shield bash isn't here.
 
 ### Familiars (master sync, ability Speeds, ability allowance, Familiar Focus)
 
