@@ -134,23 +134,27 @@ section("Unstable");
   assert("not unstable: nothing", ctx.getUnstableUse({ name: "Overdrive", data: { traits: ["Inventor"] } }, { _id: "t", data: {} }), "");
 }
 
-// --- Thaumaturge and psychic (our Dark Archive module's records) ----------------
+// --- Thaumaturge and psychic (the Dark Archive module's records) ----------------
 
-const PA = { _id: "pa", name: "Exploit Vulnerability (Personal Antithesis)", rules: [{ type: "tokenMark", field: "", valueType: "string", value: "exploit-vulnerability" }, { type: "weakness", field: "", valueType: "string", value: "personal-antithesis @effect.value" }] };
-const MW = { _id: "mw", name: "Exploit Vulnerability (Mortal Weakness)", rules: [{ type: "tokenMark", field: "", valueType: "string", value: "exploit-vulnerability" }] };
+const EV = { _id: "ev", name: "Exploit Vulnerability", rules: [{ type: "tokenMark", field: "", valueType: "string", value: "exploit-vulnerability" }] };
 const fireWeak = (value) => ({ name: "Weakness", data: { type: "fire", value: String(value) } });
 const creature = (id, effects = [], data = {}, values = {}) => ({ _id: id, name: id === "troll" ? "Troll" : "Ogre", recordType: "npcs", identified: true, record: { name: id }, data: { level: 5, weaknesses: [], resistances: [], immunities: [], ...data }, effects, effectIds: effects.map((e) => e._id), effectValues: values });
-const thaum = (data = {}) => ({ _id: "tok-thm", recordType: "characters", name: "Thea", data: { level: 6, loreSkills: [{ name: "Esoteric Lore", data: { rank: "1", mod: 9, ability: "cha" } }], ...data }, effects: [], effectIds: [] });
+// The action's toggles, as updateTogglesList builds them
+const exploitToggles = (on) => [
+  { name: "Exploit Vulnerability: Personal Antithesis", data: { toggled: on === "antithesis", predicateValue: "exploit-vulnerability:personal-antithesis", group: "exploit" } },
+  { name: "Exploit Vulnerability: Mortal Weakness", data: { toggled: on === "mortal", predicateValue: "exploit-vulnerability:mortal-weakness", group: "exploit" } },
+  { name: "Rage: Raging", data: { toggled: true, predicateValue: "raging" } },
+];
+const thaum = (data = {}) => ({ _id: "tok-thm", recordType: "characters", name: "Thea", data: { level: 6, cha: 4, loreSkills: [{ name: "Esoteric Lore", data: { rank: "1", mod: 9, ability: "cha" } }], toggles: exploitToggles(null), ...data }, effects: [], effectIds: [] });
 
-section("Exploit Vulnerability: the weakness and categories");
+section("Exploit Vulnerability: the damage categories");
 {
-  const troll = creature("troll", [PA], { weaknesses: [fireWeak(10)] }, { pa: { value: 5, tokenName: "Thea" } });
-  assert("Personal Antithesis: weakness 5 from the effect's value", ctx.getIWR(troll).weaknesses["personal-antithesis"]?.value, 5);
-  assert("the Strike against it: magical and personal-antithesis", ctx.getExploitDamageCategories({ token: troll }, thaum(), null), ["magical", "personal-antithesis"]);
-  const mortal = creature("troll", [MW], { weaknesses: [fireWeak(10)] });
-  assert("Mortal Weakness: its highest weakness (fire)", ctx.getExploitDamageCategories({ token: mortal }, thaum(), null), ["magical", "fire"]);
-  assert("not exploited: nothing", ctx.getExploitDamageCategories({ token: creature("ogre") }, thaum(), null), []);
-  assert("the highest weakness, personal antithesis left out", ctx.getHighestWeakness(troll), { type: "fire", value: 10 });
+  const troll = creature("troll", [EV], { weaknesses: [fireWeak(10)] }, { ev: { tokenId: "tok-thm" } });
+  assert("personal antithesis: magical (the module's modifier adds the damage)", ctx.getExploitDamageCategories({ token: troll }, thaum({ toggles: exploitToggles("antithesis") }), null), ["magical"]);
+  assert("mortal weakness: and its highest weakness (fire)", ctx.getExploitDamageCategories({ token: troll }, thaum({ toggles: exploitToggles("mortal") }), null), ["magical", "fire"]);
+  assert("another thaumaturge's mark: nothing", ctx.getExploitDamageCategories({ token: troll }, { ...thaum({ toggles: exploitToggles("mortal") }), _id: "tok-other" }, null), []);
+  assert("not exploited: nothing", ctx.getExploitDamageCategories({ token: creature("ogre") }, thaum({ toggles: exploitToggles("mortal") }), null), []);
+  assert("the highest weakness", ctx.getHighestWeakness(troll), { type: "fire", value: 10 });
 }
 
 section("Exploit Vulnerability: the check");
@@ -182,9 +186,9 @@ section("Exploit Vulnerability: applying it");
   const realAdd = ctx.api.addEffect;
   const realRemove = ctx.api.removeEffectById;
   const realFind = ctx.findSceneToken;
-  const ogre = creature("ogre", [MW], {}, { mw: { tokenId: "tok-thm" } });
+  const ogre = creature("ogre", [EV], {}, { ev: { tokenId: "tok-thm" } });
   const troll = creature("troll");
-  const t = thaum({ exploit: { targetId: "ogre", mode: "mortal" } });
+  const t = thaum({ exploit: { targetId: "ogre", mode: "mortal" }, toggles: exploitToggles("mortal") });
   ctx.findSceneToken = (id) => ({ "tok-thm": t, ogre, troll })[id];
   ctx.api.addEffect = (name, token, duration, value) => calls.push(["add", name, token._id, value]);
   ctx.api.removeEffectById = (id, token, cb) => {
@@ -194,16 +198,30 @@ section("Exploit Vulnerability: applying it");
   sets = [];
   state.messages = [];
   ctx.exploitVulnerability("tok-thm", "troll", "antithesis");
+  assert("the last exploit comes off the ogre, then the troll gets the module's effect", calls, [["remove", "ev", "ogre"], ["add", "Exploit Vulnerability", "troll", { tokenId: "tok-thm" }]]);
   assert(
-    "the last exploit comes off the ogre, then the troll gets weakness 2 + 3",
-    calls,
-    [["remove", "mw", "ogre"], ["add", "Exploit Vulnerability (Personal Antithesis)", "troll", { value: 5, tokenId: "tok-thm" }]],
+    "... and in one write the thaumaturge keeps it, with Personal Antithesis on and Mortal Weakness off",
+    sets,
+    [["tok-thm", "characters", { "data.exploit": { targetId: "troll", mode: "antithesis" }, "data.toggles": exploitToggles("antithesis") }]],
   );
-  assert("... and the thaumaturge keeps it", sets, [["tok-thm", "characters", { "data.exploit": { targetId: "troll", mode: "antithesis" } }]]);
-  assertIncludes("the card", state.messages[0], "it has weakness 5 to their unarmed and weapon Strikes");
+  assertIncludes("the card", state.messages[0], "their unarmed and weapon Strikes deal 5 extra damage to it");
+  sets = [];
+  calls.length = 0;
+  const noToggles = thaum({ toggles: [] });
+  ctx.findSceneToken = (id) => ({ "tok-thm": noToggles, ogre, troll })[id];
+  ctx.exploitVulnerability("tok-thm", "troll", "mortal");
+  assert("no exploit toggles on the sheet: just the target kept", sets, [["tok-thm", "characters", { "data.exploit": { targetId: "troll", mode: "mortal" } }]]);
   ctx.api.addEffect = realAdd;
   ctx.api.removeEffectById = realRemove;
   ctx.findSceneToken = realFind;
+}
+
+section("Esoteric Lore with no attribute picked: Charisma");
+{
+  const t = thaum({ level: 6, cha: 4, loreSkills: [{ name: "Esoteric Lore", data: { rank: "2", mod: 12 } }] });
+  const lore = ctx.getEsotericLore(t);
+  assert("expert: its proficiency bonus + Cha 4", [lore.mod, lore.rank, lore.ability], [ctx.calculateProficiencyBonus(t, 2) + 4, 2, "cha"]);
+  assert("an attribute picked: the sheet's modifier", ctx.getEsotericLore(thaum()).mod, 9);
 }
 
 section("Esoteric Lore keeps its Charisma");

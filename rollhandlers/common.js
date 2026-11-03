@@ -452,15 +452,6 @@ function checkForReplacements(
     value = value.replaceAll("@effect.count", String(count));
   }
 
-  // @effect.value: the number the effect was applied with, kept in the
-  // holder's effectValues (Personal Antithesis: 2 + half the thaumaturge's
-  // level); 0 without one
-  if (value.includes("@effect.value") && effectContext?._id) {
-    const stored = thisRecord?.effectValues?.[effectContext._id];
-    const number = parseInt(stored && typeof stored === "object" ? stored.value : stored, 10);
-    value = value.replaceAll("@effect.value", String(Number.isFinite(number) ? number : 0));
-  }
-
   // A value with @ tokens is a Foundry formula: arithmetic left once they are
   // replaced ("-3*2", "5+7") is worked out at the end
   const hadTokens = value.includes("@");
