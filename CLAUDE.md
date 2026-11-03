@@ -158,6 +158,7 @@ Animal companions are characters, as Foundry's PF2e Companion Compendia builds t
   - "holy" or "unholy" when the attack or spell has that trait
   - "area-damage" when its source has an area: `getDamageSource` sets `damageSource.area` from `data.area`, and `updateDamageMacros` also from the ability's text ("in a 30 ft. Cone", `hasAreaText`), since the converted NPC data keeps the area only there. A bare NPC `executeDamageMacro('formula', 'category', 'name')` gets a context (`damageSource`, plus `basicSave` when there is one) when it has a basic save or an area.
   - "splash-damage" on a hit whose damage includes splash (`metadata.splashDamage`) and when splash damage is applied on its own
+- Effect rules carry Foundry's exceptions, definition and doubleVs in the rule's `data`, as a feature modifier does in its own `data` (`getIWRModifierDetails`): `{ type: "resistance", value: "all-damage 5", data: { exceptions: ["force"] } }` (Ghostly Shift). `exceptions` is a list or comma text of words (a damage type, trait or material), or `[{ "definition": [...] }]` entries; `doubleVs` is a list or comma text of words.
 - Weaknesses are checked for each damage type in the hit. Of those that apply to a type (its own, all damage, then each category), only the highest is added, with exceptions and doubleVs counted first: a demon weak to cold iron 5 and holy 5 takes +5 from a holy cold-iron weapon. A precision weakness is part of that choice for the type the precision damage rides on.
 - Legacy data reads as remaster:
   - Damage types: positive becomes vitality and negative becomes void. Good and evil damage becomes spirit damage with the holy or unholy category.
@@ -226,10 +227,25 @@ Animal companions are characters, as Foundry's PF2e Companion Compendia builds t
 - Rest: `rest()` asks first (`showRestOptions`: one choice, a normal night's rest first, and a days prompt only for long-term rest), then runs `restWith(options)`.
   - No shelter halves the healing (minimum 1). Each long-term rest day heals double (`getRestHealingAmount`). Sleeping in armor without the comfort trait wakes the character fatigued (`isRestFatiguing`).
   - The chat line reminds the GM to advance the calendar. `showWatchOrder()` (a GM chat macro) posts the party's watches (GM Core: 8 h x n / (n - 1)).
-- Fast healing and regeneration (NPCs, from `hpDetails` or an ability's name, `getSelfHealing`):
+- Fast healing and regeneration (`getSelfHealing`): a monster's from `hpDetails` or an ability's name, and any creature's `fastHealing` modifiers and effect rules (characters too; the highest value, a formula allowed):
   - Never automatic: only the GM knows whether regeneration was deactivated (damage types, materials, traits). `onTurnStart` posts a card ("Regeneration 20 (deactivated by electricity or fire), unless deactivated.") with an Apply Healing button that calls `applyHealingToToken`. No card at full Hit Points, and once per round (`data.selfHealRound`).
   - At 0 HP a regenerating monster is dead as any NPC, with a Regeneration button (`useRegeneration`): Dead off, dying (at most 3), unconscious and prone.
 - Ferocity (an NPC ability named so): a button at 0 HP until wounded 3. `useMonsterFerocity` sets 1 HP and wounded + 1, and removes the Dead or Unconscious the damage added.
+
+### Spells (heightening, damage rows, casting time)
+
+`rollhandlers/spells.js`:
+
+- Interval heightening adds each step to the damage row of the same index, in that row's category: Blood Vendetta's persistent 2d6 bleed is 4d6 persistent at 4th. A step of the same die and type adds up ("4d6"); another die or type is its own term.
+- Fixed heightening applies every rank up to the casting rank, lowest first, each over the last (Telekinetic Hand at 5th keeps 3rd's target). A rank without damage keeps the earlier damage. Target, range and duration may be text or the converter's `{ value }` object (`getHeightenedText`).
+- A damage row can carry `data.predicate` (JSON text, as a modifier's). Such a row isn't in the spell's damage: `calculateSpellDamage` returns it in `targetDamage` (`{ value: "7d6 spirit", category, predicate }`, heightened like any row), and the damage and attack buttons ask `getSpellTargetDamage` when rolled: on against a single target the predicate passes for, offered unticked ("Chilling Darkness (vs holy)") with no target or several, left out when it fails. A persistent row is added only when the predicate passes (it can't be ticked). Splash rows ignore the predicate.
+- A defense whose attack and save statistics are both empty is no defense, so the spell gets its damage button.
+- Damage and healing cards carry `damageSource` from `getSpellDamageSource`: the spell's slug (an overlay's is its spell's: Heal (vs. Living) is heal) and `castRank`, so healingReceived rules see `item:slug:heal` and `@spell.rank` (Angelic Halo), on the healing card and in applyDamage's vitality healing.
+- Casting times longer than actions (1 minute, 10 minutes, 1 hour) are kept: the sheet clears `data.actions` and hides the icon, and the card shows the time as a tag. "2 to 3" is `twoToThreeActions`.
+- Description damage buttons (`executeDamageMacro`) work their math out first (`resolveDamageFormulaMath`): `(@item.level -3)d6`, nested `floor`/`ceil`/`min`/`max`, `ternary`, `{...}` and products, rounded down at the end.
+- AC knows a spell attack's or Strike's range (`getArmorClassForToken`'s `extraContext.attackRange`): `origin:item:melee` or `origin:item:ranged`, for "+2 AC against ranged attacks".
+- An effect rule whose predicate fails only on atoms the roll can't know (the action, target, effect source or terrain) is offered as an unticked opt-in named for what it's against ("Spell Effect: Safe Passage (vs hazard)"), as a feature modifier's is (`SITUATIONAL_MODIFIER_TYPES`, the type without its -status/-circumstance/-item suffix).
+- Effect rules of type `adjustDegreeOfSuccess` work as a feature modifier's: the adjustment in `data.adjustment` or the value (`{ "success": "one-degree-better" }`, an object or JSON text), the field the statistic.
 
 ### Check tools (Assurance, incapacitation, signature spells, counteract, condition flat checks)
 

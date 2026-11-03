@@ -1644,8 +1644,10 @@ section("reactions to movement (Blessed Swiftness)");
   const sameFeature = [feat("Blessed Swiftness", [])];
   assert("old predicate: never on, even for an ally with the feature", ctx.getArmorClassForToken(ally([aura(["blessed-swiftness"])], sameFeature), false, null, null, { trigger: "movement" }), 20);
   assert("new predicate: an ally with the feature still gets it only vs movement", [ctx.getArmorClassForToken(ally([aura(["trigger:movement"])], sameFeature)), ctx.getTargetSituationalAcModifiers(ally([aura(["trigger:movement"])], sameFeature)).length], [20, 1]);
-  const reflex = capturePrompt(() => ctx.rollSave(swift, "reflex")).modifiers.find((m) => m.name === "Blessed Swiftness");
-  assert("saves: offered unticked", reflex?.active, false);
+  // Named for what it's against, as a feature modifier's opt-in is
+  const reflex = capturePrompt(() => ctx.rollSave(swift, "reflex")).modifiers.find((m) => m.name.startsWith("Blessed Swiftness"));
+  assert("saves: offered unticked", [reflex?.active, !!reflex?.situational], [false, true]);
+  assert("... named for the reaction", reflex?.name, "Blessed Swiftness (vs reaction to movement)");
   // The attack prompt
   const realTargets = ctx.api.getTargets;
   ctx.api.getTargets = () => [{ token: swift, distance: 5 }];

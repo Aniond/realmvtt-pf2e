@@ -3360,6 +3360,45 @@
         "fields": []
       },
       {
+        "label": "Fast Healing",
+        "type": "fastHealing",
+        "fields": []
+      },
+      {
+        "label": "Adjust Degree of Success",
+        "type": "adjustDegreeOfSuccess",
+        "fields": [
+          {
+            "label": "All Checks",
+            "field": "all"
+          },
+          {
+            "label": "Fortitude",
+            "field": "fortitude"
+          },
+          {
+            "label": "Reflex",
+            "field": "reflex"
+          },
+          {
+            "label": "Will",
+            "field": "will"
+          },
+          {
+            "label": "Saving Throws",
+            "field": "saving-throw"
+          },
+          {
+            "label": "Attack Rolls",
+            "field": "attack-roll"
+          },
+          {
+            "label": "Skill Checks",
+            "field": "skill-check"
+          }
+        ]
+      },
+      {
         "label": "All Checks and DCs Bonus (Untyped)",
         "type": "allBonus",
         "fields": [

@@ -1,4 +1,23 @@
 <script>
+  // The actions dropdown's value for a casting time ("2 to 3" is
+  // twoToThreeActions; Foundry's "1 or 2" is 1 to 2), or "" for a longer one
+  // (1 minute, 10 minutes)
+  function getSpellActionsForTime(time) {
+    const key = String(time || "").trim().toLowerCase().replace(" or ", " to ");
+    return (
+      {
+        free: "free",
+        1: "oneAction",
+        2: "twoActions",
+        3: "threeActions",
+        "1 to 2": "oneToTwoActions",
+        "1 to 3": "oneToThreeActions",
+        "2 to 3": "twoToThreeActions",
+        reaction: "reaction",
+      }[key] || ""
+    );
+  }
+
   // Show or hide relevant values on load or change of type
   function showHideFields() {
     const spellDataPath = getNearestParentDataPath(dataPath);
@@ -27,42 +46,24 @@
       valuesToSet[`${dataPrefix}.traitsList`] = traitsObjects;
     }
 
-    // Set actions based on time
-    const showActions = spell.data?.type !== "ritual";
+    // Set actions based on time. A longer casting time (1 minute, 10
+    // minutes) has no action icon.
+    const time = spell.data?.time || "";
+    const actionsForTime = getSpellActionsForTime(time);
+    const isLongCast = !!time && !actionsForTime;
+    const showActions = spell.data?.type !== "ritual" && !isLongCast;
     if (showActions && spell.fields?.actions?.hidden !== false) {
       valuesToSet[`${fieldsPath}.actions.hidden`] = false;
     } else if (!showActions && spell.fields?.actions?.hidden !== true) {
       valuesToSet[`${fieldsPath}.actions.hidden`] = true;
     }
 
-    const time = spell.data?.time || "";
-    if (showActions) {
-      if (time === "free" && spell.data?.actions !== "free") {
-        valuesToSet[`${dataPrefix}.actions`] = "free";
-      } else if (time === "1" && spell.data?.actions !== "oneAction") {
-        valuesToSet[`${dataPrefix}.actions`] = "oneAction";
-      } else if (time === "2" && spell.data?.actions !== "twoActions") {
-        valuesToSet[`${dataPrefix}.actions`] = "twoActions";
-      } else if (time === "3" && spell.data?.actions !== "threeActions") {
-        valuesToSet[`${dataPrefix}.actions`] = "threeActions";
-      } else if (
-        time === "1 to 2" &&
-        spell.data?.actions !== "oneToTwoActions"
-      ) {
-        valuesToSet[`${dataPrefix}.actions`] = "oneToTwoActions";
-      } else if (
-        time === "1 to 3" &&
-        spell.data?.actions !== "oneToThreeActions"
-      ) {
-        valuesToSet[`${dataPrefix}.actions`] = "oneToThreeActions";
-      } else if (
-        time === "2 to 3" &&
-        spell.data?.actions !== "twoToThreeActions"
-      ) {
-        valuesToSet[`${dataPrefix}.actions`] = "oneToThreeActions";
-      } else if (time === "reaction" && spell.data?.actions !== "reaction") {
-        valuesToSet[`${dataPrefix}.actions`] = "reaction";
+    if (actionsForTime && spell.data?.type !== "ritual") {
+      if (spell.data?.actions !== actionsForTime) {
+        valuesToSet[`${dataPrefix}.actions`] = actionsForTime;
       }
+    } else if (isLongCast && spell.data?.actions) {
+      valuesToSet[`${dataPrefix}.actions`] = "";
     }
 
     // Show/hide ritual box
@@ -80,20 +81,8 @@
       valuesToSet[`${fieldsPath}.spellBox.hidden`] = true;
     }
 
-    // Make sure time is set to a valid value if we're not a ritual
-    if (
-      !showRitualBox &&
-      ![
-        "reaction",
-        "free",
-        "1",
-        "2",
-        "3",
-        "1 to 2",
-        "1 to 3",
-        "2 to 3",
-      ].includes(spell.data?.time)
-    ) {
+    // A spell with no casting time casts with one action
+    if (!showRitualBox && !time) {
       valuesToSet[`${dataPrefix}.time`] = "1";
       valuesToSet[`${dataPrefix}.actions`] = "oneAction";
     }
@@ -352,7 +341,10 @@
       {"label": "1 to 2 Actions", "value": "1 to 2"},
       {"label": "1 to 3 Actions", "value": "1 to 3"},
       {"label": "2 to 3 Actions", "value": "2 to 3"},
-      {"label": "Reaction", "value": "reaction"}]'
+      {"label": "Reaction", "value": "reaction"},
+      {"label": "1 Minute", "value": "1 minute"},
+      {"label": "10 Minutes", "value": "10 minutes"},
+      {"label": "1 Hour", "value": "1 hour"}]'
     ></dropdown>
     <stringfield
       field="target"

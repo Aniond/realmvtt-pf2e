@@ -59,9 +59,9 @@ if (isCharacter && getDyingValue(token) > 0 && !isTokenDead(token)) {
 }
 
 // Fast healing and regeneration: a card with Apply Healing buttons at the
-// start of the monster's turn, for the GM to apply (healing-tools.js). Once
-// per round.
-if (token && token.recordType === "npcs") {
+// start of the creature's turn, for the GM to apply (healing-tools.js): a
+// monster's own, and fastHealing effects on characters too. Once per round.
+if (token) {
   const selfHealing = getSelfHealing(token);
   if (selfHealing.fastHealing || selfHealing.regeneration) {
     getCombatRound((round) => runTurnStartSelfHealing(token, round));
