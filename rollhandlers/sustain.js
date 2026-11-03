@@ -145,6 +145,16 @@ function getRemoveSpellEffectsButton(spellName, casterTokenId = null) {
   return `${fence}Remove_${spellName.replace(/[^A-Za-z0-9]+/g, "_")}_Effects\nremoveSpellEffects(${JSON.stringify(spellName)}, ${JSON.stringify(casterTokenId)});\n${fence}`;
 }
 
+// The card for the spells that end unsustained, with their Remove buttons
+function getUnsustainedSpellsMessage(token, ended) {
+  return ended
+    .map(
+      (entry) =>
+        `**${entry.name} ends**: ${getTokenDisplayName(token)} ${entry.tooLong ? `has Sustained it for ${getEntryLimit(entry).label}, the most it can be` : "didn't Sustain it this turn"}.\n${getRemoveSpellEffectsButton(entry.name, token._id)}`,
+    )
+    .join("\n");
+}
+
 // onTurnEnd: the spells the caster didn't Sustain end
 function endUnsustainedSpells(token) {
   if (!token?._id || getSustainedSpells(token).length === 0) return;
@@ -153,11 +163,7 @@ function endUnsustainedSpells(token) {
     const { ended, kept } = getUnsustainedSpells(token, round);
     if (ended.length === 0) return;
     writeSustainedSpells(token, kept);
-    const lines = ended.map(
-      (entry) =>
-        `**${entry.name} ends**: ${getTokenDisplayName(token)} ${entry.tooLong ? `has Sustained it for ${getEntryLimit(entry).label}, the most it can be` : "didn't Sustain it this turn"}.\n${getRemoveSpellEffectsButton(entry.name, token._id)}`,
-    );
-    api.sendMessage(lines.join("\n"), undefined, [], [], token);
+    api.sendMessage(getUnsustainedSpellsMessage(token, ended), undefined, [], [], token);
   });
 }
 

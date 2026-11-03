@@ -13,6 +13,15 @@
     performInitiativeRoll(record);
   }
 
+  // Delay and Ready, for the character's token (delay-ready.js)
+  function onDelay() {
+    delayTurn(api.getToken());
+  }
+
+  function onReady() {
+    readyAction(api.getToken(), record);
+  }
+
   function onAddSpellcastingEntry() {
     addSpellcastingEntry(record);
     api.closeOpenedPopovers();
@@ -198,6 +207,54 @@
         onchange="onAddAction()"
         variant="striped"
       ></list>
+    </div>
+
+    <!-- Actions in Combat, closed by default (delay-ready.js); other basic
+         actions can join it -->
+    <div style="margin-top: 4px">
+      <accordion size="sm" field="combatActionsOpen" variant="contained">
+        <accordion.control>
+          <div
+            style="
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              width: 100%;
+              height: 100%;
+            "
+          >
+            <label
+              class="rvtt-sheet-label rvtt-sheet-label--accent"
+              label="Actions in Combat"
+            ></label>
+          </div>
+        </accordion.control>
+        <div
+          style="
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 6px;
+            margin-top: 6px;
+          "
+        >
+          <button
+            size="xxs"
+            variant="outline"
+            width="100%"
+            icon="free-action"
+            label="Delay"
+            onclick="onDelay()"
+          ></button>
+          <button
+            size="xxs"
+            variant="outline"
+            width="100%"
+            icon="two-actions"
+            label="Ready"
+            onclick="onReady()"
+          ></button>
+        </div>
+      </accordion>
     </div>
   </div>
 

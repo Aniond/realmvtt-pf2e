@@ -58,17 +58,24 @@ applyDamage(null, roll, false);
   }
 };
 
+// A creature that Delayed: its turn's end effects happened at Delay, not
+// again on the turn it returns to that round, and it Sustains on that turn
+// (delay-ready.js)
+const delayTurnEnd = getDelayTurnEnd(token, data?.round ?? getEncounterState()?.round);
+
 // Persistent damage (On Fire and the like) gets rolled now: each instance of
 // the creature's persistent damage effects
-getTurnEndPersistentDamage(token).forEach(({ value, partIndex }) => {
-  if (typeof value === "string") {
-    processPersistentDamage(value, partIndex);
-  }
-});
+if (delayTurnEnd.repeat) {
+  getTurnEndPersistentDamage(token).forEach(({ value, partIndex }) => {
+    if (typeof value === "string") {
+      processPersistentDamage(value, partIndex);
+    }
+  });
+}
 
 // Holding breath or suffocating: the air left, or the Fortitude save, with
 // buttons (table-rules.js)
-const breathMessage = getBreathTurnEndMessage(token);
+const breathMessage = delayTurnEnd.repeat ? getBreathTurnEndMessage(token) : "";
 if (breathMessage) {
   api.sendMessage(breathMessage, undefined, [], [], token);
 }
@@ -86,4 +93,11 @@ if (isConditionUpkeepOn() && !isTurnEndUpkeepDone(token)) {
 }
 
 // A sustained spell the creature didn't Sustain this turn ends (sustain.js)
-endUnsustainedSpells(token);
+if (delayTurnEnd.sustain) {
+  endUnsustainedSpells(token);
+}
+
+// The delay ends with the turn the creature returned to
+if (delayTurnEnd.clear && token?._id) {
+  api.setValuesOnTokenById(token._id, "tokens", { "data.delaying": null });
+}

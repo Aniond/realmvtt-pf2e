@@ -85,6 +85,11 @@ if (token && Array.isArray(token.data?.recharges) && token.data.recharges.length
 // keeps the turn's log when Next after Previous starts the same turn again.
 setCurrentTurn(token, data?.round);
 
+// A creature that Delayed a whole round without returning loses the delayed
+// turn's actions and keeps its initiative, and the spells it didn't Sustain
+// that round end; the reminder below sees what's left (delay-ready.js)
+const turnToken = endFullRoundDelay(token, data?.round);
+
 // Uses per turn and per round come back at the creature's own turn, and
 // per turn at every other creature's turn, as in Foundry (limited-uses.js).
 // data.tokens is every token in the combat tracker.
@@ -110,4 +115,4 @@ if (token && isConditionUpkeepOn() && !isTokenDead(token)) {
 }
 
 // What the creature is sustaining, with Sustain buttons (sustain.js)
-remindSustainedSpells(token);
+remindSustainedSpells(turnToken);

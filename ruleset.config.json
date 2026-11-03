@@ -5550,6 +5550,9 @@
         },
         "Knowledge": {
           "file": "rollhandlers/knowledge.js"
+        },
+        "DelayReady": {
+          "file": "rollhandlers/delay-ready.js"
         }
       },
       "defaultDice": "default",

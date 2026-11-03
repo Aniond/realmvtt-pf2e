@@ -2,6 +2,9 @@
 // (combat-riders.js)
 clearEncounterRecharges(data?.tokens);
 
+// Nor does a delay (delay-ready.js)
+clearEncounterDelays(data?.tokens);
+
 // On Encounter End, calculate XP based on PF2e rules: the party's average
 // level and size against each enemy (gm-tools.js)
 const encounter = getEncounterThreatSummary(data?.tokens);
