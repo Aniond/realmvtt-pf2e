@@ -26,6 +26,14 @@
 //     recharge
 //   - Unstable (Guns & Gears): using an unstable action rolls the DC 15 flat
 //     check (13 if legendary in Crafting) and says what happens
+//   - Exploit Vulnerability (Dark Archive pg. 32, our module's records):
+//     using it rolls Esoteric Lore against the standard DC for the target's
+//     level, with what it learns for the GM and the exploit buttons; the
+//     effects go on the target, the last exploit's come off, and the
+//     thaumaturge's Strikes against it add the matching damage categories
+//   - Unleash Psyche (Dark Archive pg. 12): using it adds the effect, unless
+//     stupefied or still recharging; when it ends, a card for the stupefied
+//     and the wait. An amp spends a Focus Point (castSpell)
 //
 // The ruleset assists the GM and doesn't police the action economy (#27): no
 // warnings for concentrate actions while raging or attacks after a finisher.
@@ -373,4 +381,221 @@ function getUnstableUse(action, token = api.getToken()) {
   const result = getUnstableResult(natural, dc, getCreatureLevel(token));
   const color = result.degree >= 1 ? "green" : "red";
   return `\n**Unstable (DC ${dc} flat check): [color=${color}]${natural}[/color]**, ${result.text}`;
+}
+
+// ---------------------------------------------------------------- Thaumaturge and psychic
+
+// Exploit Vulnerability (Dark Archive pg. 32): our Dark Archive module's
+// effects, applied to the target. Both carry the exploit-vulnerability token
+// mark; Personal Antithesis also gives the target a personal-antithesis
+// weakness worth the effect's value (2 + half the thaumaturge's level)
+const EXPLOIT_EFFECTS = {
+  antithesis: "Exploit Vulnerability (Personal Antithesis)",
+  mortal: "Exploit Vulnerability (Mortal Weakness)",
+};
+
+// A creature's weaknesses, resistances and immunities, as the damage code
+// reads them: { weaknesses: [{ type, value }], resistances, immunities }
+function getExploitIWR(target) {
+  const iwr = getIWR(target) || {};
+  const list = (map) =>
+    Object.values(map || {})
+      .filter((entry) => entry?.type && entry.type !== "personal-antithesis")
+      .map((entry) => ({ type: entry.type, value: parseInt(entry.value, 10) || 0 }));
+  return {
+    weaknesses: list(iwr.weaknesses).sort((a, b) => b.value - a.value),
+    resistances: list(iwr.resistances),
+    immunities: list(iwr.immunities),
+  };
+}
+
+// The creature's highest weakness, or null
+function getHighestWeakness(target) {
+  return getExploitIWR(target).weaknesses[0] || null;
+}
+
+function formatIWRList(entries, withValues = true) {
+  return entries.length > 0 ? entries.map((e) => (withValues && e.value ? `${e.type} ${e.value}` : e.type)).join(", ") : "none";
+}
+
+// The button that exploits the target this way: the thaumaturge and the
+// target by id, so nothing needs selecting
+function getExploitButton(thaumaturge, target, mode) {
+  const fence = "```";
+  const label = mode === "mortal" ? "Exploit_Mortal_Weakness" : "Exploit_Personal_Antithesis";
+  return `\n${fence}${label}\nexploitVulnerability(${JSON.stringify(thaumaturge._id)}, ${JSON.stringify(target._id)}, ${JSON.stringify(mode)});\n${fence}`;
+}
+
+// The notes the Esoteric Lore check shows for each result: what the
+// thaumaturge learns (for the GM only), and the exploit buttons
+function getExploitNotes(thaumaturge, target) {
+  const iwr = getExploitIWR(target);
+  const highest = iwr.weaknesses[0];
+  const both = `${getExploitButton(thaumaturge, target, "mortal")}${getExploitButton(thaumaturge, target, "antithesis")}`;
+  const fence = "```";
+  const offGuard = `\n${fence}Off-Guard_Until_Next_Turn\napi.addEffect("Off-Guard", findSceneToken(${JSON.stringify(thaumaturge._id)}), { value: 1, unit: "start_turn" });\n${fence}`;
+  return [
+    {
+      name: "Exploit Vulnerability",
+      text: `you learn all its weaknesses, resistances and immunities. [gm]Weaknesses: ${formatIWRList(iwr.weaknesses)}. Resistances: ${formatIWRList(iwr.resistances)}. Immunities: ${formatIWRList(iwr.immunities, false)}.[/gm] Exploit its mortal weakness or its personal antithesis.${both}`,
+      outcome: [2],
+    },
+    {
+      name: "Exploit Vulnerability",
+      text: `you learn its highest weakness. [gm]${highest ? `Highest weakness: ${highest.type} ${highest.value}.` : "It has no weaknesses: only personal antithesis does anything."}[/gm] Exploit its mortal weakness or its personal antithesis.${both}`,
+      outcome: [1],
+    },
+    { name: "Exploit Vulnerability", text: `you can exploit only its personal antithesis.${getExploitButton(thaumaturge, target, "antithesis")}`, outcome: [0] },
+    { name: "Exploit Vulnerability", text: `you're off-guard until the start of your next turn, and exploit nothing.${offGuard}`, outcome: [-1] },
+  ];
+}
+
+// The thaumaturge's Esoteric Lore: its lore skill entry's modifier, rank
+// and attribute (Charisma)
+function getEsotericLore(creature) {
+  const data = creature?.data || creature?.record?.data || {};
+  const lore = (data.loreSkills || []).find((entry) => /^esoteric\b/i.test(String(entry?.name || "")));
+  return {
+    mod: parseInt(lore?.data?.mod || "0", 10) || 0,
+    rank: parseInt(lore?.data?.rank || "1", 10) || 1,
+    ability: lore?.data?.ability || "cha",
+  };
+}
+
+// Exploit Vulnerability: the Esoteric Lore check against the standard DC
+// for the target's level, rolled as it's used
+function getExploitVulnerabilityUse(action, token = api.getToken()) {
+  if (!isActionNamed(action, "Exploit Vulnerability") || !token?._id) return "";
+  const target = (api.getTargets() || [])[0]?.token;
+  if (!target?._id) return "\nTarget the creature first: Exploit Vulnerability rolls against it.";
+  const dc = getDCForLevel(getCreatureLevel(target));
+  const lore = getEsotericLore(token);
+  rollSkill(token, "Esoteric Lore", dc, true, lore.mod, lore.rank, lore.ability, true, false, undefined, {
+    action: "Exploit Vulnerability",
+    targetNotes: getExploitNotes(token, target),
+  });
+  return `\nEsoteric Lore against DC ${dc}, the standard DC for ${getCreatureName(target)}'s level.`;
+}
+
+// A creature's exploit effects from this thaumaturge (or with no applier kept)
+function getExploitEffects(creature, thaumaturgeId) {
+  return (creature?.effects || []).filter((effect) => {
+    if (!Object.values(EXPLOIT_EFFECTS).includes(effect?.name)) return false;
+    const appliedBy = creature?.effectValues?.[effect._id]?.tokenId;
+    return !appliedBy || appliedBy === thaumaturgeId;
+  });
+}
+
+// Removes the effects one at a time, then calls back
+function removeEffectsInTurn(creature, effects, callback) {
+  if (!creature || effects.length === 0) {
+    callback();
+    return;
+  }
+  const [first, ...rest] = effects;
+  api.removeEffectById(first._id, creature, () => removeEffectsInTurn(creature, rest, callback));
+}
+
+// From the result's buttons: the last exploit ends (its effects come off its
+// target), and the new one goes on the target, with the thaumaturge kept on
+// it (data.exploit: { targetId, mode })
+function exploitVulnerability(thaumaturgeId, targetId, mode) {
+  const thaumaturge = findSceneToken(thaumaturgeId);
+  const target = findSceneToken(targetId);
+  if (!thaumaturge || !target) {
+    api.showNotification("The thaumaturge and the target need to be on the scene.", "yellow", "Exploit Vulnerability");
+    return;
+  }
+  const last = thaumaturge.data?.exploit ?? thaumaturge.record?.data?.exploit;
+  const lastTarget = last?.targetId ? findSceneToken(last.targetId) : null;
+  // The target's own exploit effects go too, so exploiting it again replaces them
+  const toRemove = [
+    ...(lastTarget && lastTarget._id !== target._id ? [[lastTarget, getExploitEffects(lastTarget, thaumaturgeId)]] : []),
+    [target, getExploitEffects(target, thaumaturgeId)],
+  ];
+  const level = getCreatureLevel(thaumaturge);
+  const amount = 2 + Math.floor(level / 2);
+  const apply = () => {
+    if (mode === "antithesis") {
+      api.addEffect(EXPLOIT_EFFECTS.antithesis, target, undefined, { value: amount, tokenId: thaumaturgeId });
+    } else {
+      api.addEffect(EXPLOIT_EFFECTS.mortal, target, undefined, { tokenId: thaumaturgeId });
+    }
+    api.setValuesOnTokenById(thaumaturgeId, thaumaturge.recordType, { "data.exploit": { targetId, mode } });
+    const highest = getHighestWeakness(target);
+    api.sendMessage(
+      mode === "antithesis"
+        ? `**${getCreatureName(thaumaturge)} exploits ${getCreatureName(target)}'s personal antithesis:** it has weakness ${amount} to their unarmed and weapon Strikes.`
+        : `**${getCreatureName(thaumaturge)} exploits ${getCreatureName(target)}'s mortal weakness:** their unarmed and weapon Strikes trigger its highest weakness${highest ? "" : " (it has none)"}. Creatures of the exact same type are affected too; the GM applies that.`,
+      undefined,
+      [],
+      [],
+      thaumaturge,
+    );
+  };
+  const run = (index) => {
+    if (index >= toRemove.length) {
+      apply();
+      return;
+    }
+    const [creature, effects] = toRemove[index];
+    removeEffectsInTurn(creature, effects, () => run(index + 1));
+  };
+  run(0);
+}
+
+// The damage categories a thaumaturge's Strike adds against the creature it
+// exploits: magical, personal-antithesis (the target's weakness to it), or
+// the target's highest weakness for a mortal weakness
+function getExploitDamageCategories(target, attackerToken, record) {
+  const token = target?.token || target;
+  if (!token || !hasOwnTokenMark(token, "exploit-vulnerability", attackerToken, record)) return [];
+  const categories = ["magical"];
+  const names = (token.effects || []).map((effect) => effect?.name);
+  if (names.includes(EXPLOIT_EFFECTS.antithesis)) categories.push("personal-antithesis");
+  if (names.includes(EXPLOIT_EFFECTS.mortal)) {
+    const highest = getHighestWeakness(token);
+    if (highest) categories.push(highest.type);
+  }
+  return categories;
+}
+
+// Unleash Psyche (Dark Archive pg. 12): used at the start of the psychic's
+// turn, it puts our module's Unleash Psyche effect on them (2 rounds: double
+// the spell's rank to spell damage), unless they're stupefied or it's still
+// recharging. When the effect ends, onEffectsChanged posts the subsiding
+function getUnleashPsycheUse(action, token = api.getToken()) {
+  if (!isActionNamed(action, "Unleash Psyche") || !token?._id) return "";
+  if (getTokenConditionValue(token, "stupefied") > 0) {
+    return "\nYou're stupefied: you can't Unleash Psyche.";
+  }
+  const round = getEncounterState()?.round || 0;
+  const recharge = (token.data?.recharges || []).find((entry) => entry?.name === "Unleash Psyche");
+  if (recharge && Number.isFinite(parseInt(recharge.readyRound, 10)) && round < parseInt(recharge.readyRound, 10)) {
+    return `\nYou can't Unleash Psyche again until round ${recharge.readyRound}.`;
+  }
+  api.addEffect("Unleash Psyche", token);
+  return "\nYour psyche is unleashed for 2 rounds: damaging psychic spells get a status bonus of double their rank. (It needs a spell cast on your last turn.)";
+}
+
+// onEffectsChanged: when Unleash Psyche ends, the stupefied and the wait,
+// as buttons. The hook can't add effects to the same creature, so the card
+// does it.
+function getPsycheSubsidesMessage(creature, changes) {
+  const ended = (changes || []).some((change) => change?.name === "Unleash Psyche" && (change.oldCount || 0) > 0 && (change.newCount || 0) === 0);
+  if (!ended || !creature?._id) return "";
+  const stupefied = `\n${getChatButton("Stupefied_1_(2_rounds)", creature, 'api.addEffect("Stupefied", token, { value: 2, unit: "rounds" })')}`;
+  const wait = `\n${getChatButton("Start_Wait_(2_rounds)", creature, 'startRecharge(token, "Unleash Psyche", "2")')}`;
+  return `**${getCreatureName(creature)}'s psyche subsides:** stupefied 1 for 2 rounds, and no Unleash Psyche for 2 rounds.${stupefied}${wait}`;
+}
+
+// An amp (a psi cantrip's overlay with data.amp): 1 Focus Point from the
+// character's one pool, or the entry's for an NPC; null when there's none
+// left
+function getAmpFocusValues(record, entry, entryPath) {
+  const isCharacter = record?.recordType === "characters";
+  const max = isCharacter ? getFocusPoolMax(record) : parseInt(entry?.data?.focusPoolMax || "1", 10) || 1;
+  const spent = isCharacter ? getFocusPointsSpent(record) : parseInt(entry?.data?.focusPool || "0", 10) || 0;
+  if (spent >= max) return null;
+  return isCharacter ? getFocusPoolValues(record, spent + 1) : { [`${entryPath}.data.focusPool`]: spent + 1 };
 }

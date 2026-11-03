@@ -452,6 +452,15 @@ function checkForReplacements(
     value = value.replaceAll("@effect.count", String(count));
   }
 
+  // @effect.value: the number the effect was applied with, kept in the
+  // holder's effectValues (Personal Antithesis: 2 + half the thaumaturge's
+  // level); 0 without one
+  if (value.includes("@effect.value") && effectContext?._id) {
+    const stored = thisRecord?.effectValues?.[effectContext._id];
+    const number = parseInt(stored && typeof stored === "object" ? stored.value : stored, 10);
+    value = value.replaceAll("@effect.value", String(Number.isFinite(number) ? number : 0));
+  }
+
   // A value with @ tokens is a Foundry formula: arithmetic left once they are
   // replaced ("-3*2", "5+7") is worked out at the end
   const hadTokens = value.includes("@");
@@ -7385,6 +7394,8 @@ function updateProficiencies(record, valuesToSet) {
     thievery: 0,
     lore: {},
   };
+  // A granted lore skill's attribute, by lore name (Esoteric Lore: Charisma)
+  const loreAbilities = {};
 
   const possibleSkills = [
     "acrobatics",
@@ -7623,6 +7634,9 @@ function updateProficiencies(record, valuesToSet) {
           ) {
             proficiencies.lore[loreSkillName] = rank;
           }
+          if (proficiency?.data?.ability) {
+            loreAbilities[loreSkillName] = String(proficiency.data.ability).toLowerCase();
+          }
         }
         // Otherwise assume it's a class DC
         else {
@@ -7826,6 +7840,10 @@ function updateProficiencies(record, valuesToSet) {
       if (rank > currentRank) {
         existingLoreSkill.data.rank = rank.toString();
       }
+      // The grant's attribute, unless one was already picked
+      if (loreAbilities[loreSkillName] && !existingLoreSkill.data?.ability) {
+        existingLoreSkill.data.ability = loreAbilities[loreSkillName];
+      }
       loreSkillsToSet.push(existingLoreSkill);
       processedLoreSkills.add(loreSkillFullName);
     } else {
@@ -7837,6 +7855,7 @@ function updateProficiencies(record, valuesToSet) {
         unidentifiedName: "Lore Skill",
         data: {
           rank: rank.toString(),
+          ...(loreAbilities[loreSkillName] ? { ability: loreAbilities[loreSkillName] } : {}),
         },
         icon: "IconTools",
       });
@@ -11002,7 +11021,7 @@ function useAction(action, actionDataPath = null) {
 ${usesLine ? `${usesLine}\n` : ""}
 ---
 ${actionDescription}
-${effectMacros}${getActionHealingMacros(action)}${getFirstAidActionMacro(action)}${getSkillActionMacros(action)}${getRechargeButton(action)}${getFinisherButton(action)}${applyCursebound(action)}${getStratagemUse(action)}${getOverdriveUse(action)}${getUnstableUse(action)}
+${effectMacros}${getActionHealingMacros(action)}${getFirstAidActionMacro(action)}${getSkillActionMacros(action)}${getRechargeButton(action)}${getFinisherButton(action)}${applyCursebound(action)}${getStratagemUse(action)}${getOverdriveUse(action)}${getUnstableUse(action)}${getExploitVulnerabilityUse(action)}${getUnleashPsycheUse(action)}
 `;
 
   // Send the message
@@ -13496,7 +13515,11 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber) {
         // (critical-specialization.js)
         critSpec: hasCriticalSpecialization ? getCriticalSpecializationContext(record, weapon) : null,
         traits: traits,
-        damageCategories: damageCategories,
+        // A thaumaturge's Strike against the creature it exploits adds magical
+        // and the weakness it triggers (class-extras.js)
+        damageCategories: isNPCAttack || isSpell
+          ? damageCategories
+          : [...new Set([...damageCategories, ...getExploitDamageCategories(target, ourToken, record)])],
         runes: runes,
         icon: isMelee && !isThrown ? "IconSword" : "IconBow",
         portrait: weapon?.portrait,
