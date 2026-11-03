@@ -13,6 +13,15 @@
     performInitiativeRoll(record);
   }
 
+  // Delay and Ready, for the character's token (delay-ready.js)
+  function onDelay() {
+    delayTurn(api.getToken());
+  }
+
+  function onReady() {
+    readyAction(api.getToken(), record);
+  }
+
   function onAddSpellcastingEntry() {
     addSpellcastingEntry(record);
     api.closeOpenedPopovers();
@@ -139,6 +148,20 @@
         label="Initiative"
         variant="outline"
         onclick="rollInitiative()"
+      ></button>
+      <button
+        size="xs"
+        icon="free-action"
+        label="Delay"
+        variant="light"
+        onclick="onDelay()"
+      ></button>
+      <button
+        size="xs"
+        icon="two-actions"
+        label="Ready"
+        variant="light"
+        onclick="onReady()"
       ></button>
     </div>
 

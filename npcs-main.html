@@ -1402,6 +1402,23 @@
           field="acDetails"
           placeholder="AC details..."
         ></stringfield>
+        <!-- Delay and Ready, for this token (delay-ready.js) -->
+        <div style="display: flex; flex-direction: row; gap: 4px; justify-content: flex-end">
+          <button
+            size="xs"
+            icon="free-action"
+            label="Delay"
+            variant="light"
+            onclick="delayTurn(api.getToken())"
+          ></button>
+          <button
+            size="xs"
+            icon="two-actions"
+            label="Ready"
+            variant="light"
+            onclick="readyAction(api.getToken(), record)"
+          ></button>
+        </div>
       </div>
     </box>
 
