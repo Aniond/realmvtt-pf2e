@@ -34,7 +34,7 @@
 //     target's highest weakness as the Strike's damage category
 //   - Unleash Psyche (Dark Archive pg. 12): using it adds the effect, unless
 //     stupefied or still recharging; when it ends, a card for the stupefied
-//     and the wait. An amp spends a Focus Point (castSpell)
+//     and the wait
 //
 // The ruleset assists the GM and doesn't police the action economy (#27): no
 // warnings for concentrate actions while raging or attacks after a finisher.
@@ -651,15 +651,4 @@ function getPsycheSubsidesMessage(creature, changes) {
   if (!ended || !creature?._id) return "";
   const button = `\n${getChatButton("Stupefied_1_and_Wait_(2_rounds)", creature, 'api.addEffect("Stupefied", token, { value: 2, unit: "rounds" }); startRecharge(token, "Unleash Psyche", "2")')}`;
   return `**${getCreatureName(creature)}'s psyche subsides:** stupefied 1 for 2 rounds, and no Unleash Psyche for 2 rounds.${button}`;
-}
-
-// An amp (a psi cantrip's overlay with data.amp): 1 Focus Point from the
-// character's one pool, or the entry's for an NPC; null when there's none
-// left
-function getAmpFocusValues(record, entry, entryPath) {
-  const isCharacter = record?.recordType === "characters";
-  const max = isCharacter ? getFocusPoolMax(record) : parseInt(entry?.data?.focusPoolMax || "1", 10) || 1;
-  const spent = isCharacter ? getFocusPointsSpent(record) : parseInt(entry?.data?.focusPool || "0", 10) || 0;
-  if (spent >= max) return null;
-  return isCharacter ? getFocusPoolValues(record, spent + 1) : { [`${entryPath}.data.focusPool`]: spent + 1 };
 }

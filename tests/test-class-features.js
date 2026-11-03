@@ -291,21 +291,4 @@ section("Unleash Psyche");
   assert("added, or another effect: nothing", [ctx.getPsycheSubsidesMessage(psychic(), [{ name: "Unleash Psyche", oldCount: 0, newCount: 1 }]), ctx.getPsycheSubsidesMessage(psychic(), [{ name: "Frightened", oldCount: 1, newCount: 0 }])], ["", ""]);
 }
 
-section("Amps");
-{
-  const realMax = ctx.getFocusPoolMax;
-  const realSpent = ctx.getFocusPointsSpent;
-  const realValues = ctx.getFocusPoolValues;
-  ctx.getFocusPoolMax = () => 2;
-  ctx.getFocusPoolValues = (record, spent) => ({ "data.focusPool": spent });
-  ctx.getFocusPointsSpent = () => 1;
-  assert("a character with a point left spends it", ctx.getAmpFocusValues({ recordType: "characters" }, {}, "data.spells.0"), { "data.focusPool": 2 });
-  ctx.getFocusPointsSpent = () => 2;
-  assert("... none left: null", ctx.getAmpFocusValues({ recordType: "characters" }, {}, "data.spells.0"), null);
-  assert("an NPC spends its entry's", ctx.getAmpFocusValues({ recordType: "npcs" }, { data: { focusPoolMax: 1, focusPool: 0 } }, "data.spells.0"), { "data.spells.0.data.focusPool": 1 });
-  ctx.getFocusPoolMax = realMax;
-  ctx.getFocusPointsSpent = realSpent;
-  ctx.getFocusPoolValues = realValues;
-}
-
 process.exitCode = summary() > 0 ? 1 : 0;

@@ -1668,21 +1668,6 @@ function castSpell(record, spell, dataPathToSpell, isOverlay = false) {
     }
   }
 
-  // An amp (a psi cantrip's overlay marked amp) spends a Focus Point
-  // (class-extras.js)
-  if (isOverlay && spell?.data?.amp === true) {
-    const ampValues = getAmpFocusValues(record, spellCastingEntry, dataPathToSpellCastingEntry);
-    if (ampValues === null) {
-      api.showNotification(
-        `You are out of Focus points and must first Refocus to amp this cantrip.`,
-        "red",
-        "Out of Focus Points"
-      );
-      return;
-    }
-    Object.assign(valuesToSet, ampValues);
-  }
-
   if (isSpontaneous && !isCantrip) {
     // Spontaneous spells use the `useSpellsX` field to track
     const usedSpells =
