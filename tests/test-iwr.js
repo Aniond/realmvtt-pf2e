@@ -678,4 +678,14 @@ section("A precision weakness counts in the highest-weakness choice (Sean's thir
   assert("no precision in the hit: no precision weakness", damageDealt(noPrecision, roll("piercing", 5)), 5);
 }
 
+section("Personal antithesis (metadata.exploitWeakness)");
+{
+  const withAntithesis = (r, value) => ({ ...r, metadata: { ...r.metadata, exploitWeakness: value } });
+  assert("a weakness of 5 on a hit: 10 + 5", damageDealt(makeTarget({}), withAntithesis(roll("slashing", 10), 5)), 15);
+  assert("a critical hit doubles the damage, not the weakness: 20 + 5", damageDealt(makeTarget({}), withAntithesis(roll("slashing", 10, { critical: true }), 5)), 25);
+  assert("two damage types: added once", damageDealt(makeTarget({}), withAntithesis(multiRoll([["slashing", 6], ["fire", 4]]), 5)), 15);
+  const fireWeak = makeTarget({ weaknesses: [weak("fire", 10)] });
+  assert("only the highest weakness counts: fire 10 over antithesis 5", damageDealt(fireWeak, withAntithesis(roll("fire", 4), 5)), 14);
+}
+
 process.exit(summary());

@@ -7502,6 +7502,8 @@ function updateProficiencies(record, valuesToSet) {
     thievery: 0,
     lore: {},
   };
+  // A granted lore skill's attribute, by lore name (Esoteric Lore: Charisma)
+  const loreAbilities = {};
 
   const possibleSkills = [
     "acrobatics",
@@ -7740,6 +7742,9 @@ function updateProficiencies(record, valuesToSet) {
           ) {
             proficiencies.lore[loreSkillName] = rank;
           }
+          if (proficiency?.data?.ability) {
+            loreAbilities[loreSkillName] = String(proficiency.data.ability).toLowerCase();
+          }
         }
         // Otherwise assume it's a class DC
         else {
@@ -7943,6 +7948,10 @@ function updateProficiencies(record, valuesToSet) {
       if (rank > currentRank) {
         existingLoreSkill.data.rank = rank.toString();
       }
+      // The grant's attribute, unless one was already picked
+      if (loreAbilities[loreSkillName] && !existingLoreSkill.data?.ability) {
+        existingLoreSkill.data.ability = loreAbilities[loreSkillName];
+      }
       loreSkillsToSet.push(existingLoreSkill);
       processedLoreSkills.add(loreSkillFullName);
     } else {
@@ -7954,6 +7963,7 @@ function updateProficiencies(record, valuesToSet) {
         unidentifiedName: "Lore Skill",
         data: {
           rank: rank.toString(),
+          ...(loreAbilities[loreSkillName] ? { ability: loreAbilities[loreSkillName] } : {}),
         },
         icon: "IconTools",
       });
@@ -11119,7 +11129,7 @@ function useAction(action, actionDataPath = null) {
 ${usesLine ? `${usesLine}\n` : ""}
 ---
 ${actionDescription}
-${effectMacros}${getActionHealingMacros(action)}${getFirstAidActionMacro(action)}${getSkillActionMacros(action)}${getRechargeButton(action)}${getFinisherButton(action)}${applyCursebound(action)}${getStratagemUse(action)}${getOverdriveUse(action)}${getUnstableUse(action)}
+${effectMacros}${getActionHealingMacros(action)}${getFirstAidActionMacro(action)}${getSkillActionMacros(action)}${getRechargeButton(action)}${getFinisherButton(action)}${applyCursebound(action)}${getStratagemUse(action)}${getOverdriveUse(action)}${getUnstableUse(action)}${getExploitVulnerabilityUse(action)}${getUnleashPsycheUse(action)}
 `;
 
   // Send the message
@@ -13621,7 +13631,13 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber) {
         // (critical-specialization.js)
         critSpec: hasCriticalSpecialization ? getCriticalSpecializationContext(record, weapon) : null,
         traits: traits,
-        damageCategories: damageCategories,
+        // A thaumaturge's Strike against the creature it exploits adds magical
+        // and the weakness it triggers: a mortal weakness as a category,
+        // personal antithesis as exploitWeakness (class-extras.js)
+        damageCategories: isNPCAttack || isSpell
+          ? damageCategories
+          : [...new Set([...damageCategories, ...getExploitDamageCategories(target, ourToken, record)])],
+        exploitWeakness: isNPCAttack || isSpell ? 0 : getExploitWeakness(target, ourToken, record),
         runes: runes,
         icon: isMelee && !isThrown ? "IconSword" : "IconBow",
         portrait: weapon?.portrait,
@@ -15941,6 +15957,9 @@ function applyDamage(
       // These are applied AFTER halving
       // Track final damage per type to ensure each type doesn't go below 0
       const finalDamageByType = {};
+      // Personal antithesis (class-extras.js): a weakness to the Strike,
+      // counted for one damage type
+      let exploitWeakness = isApplyingSplash ? 0 : parseInt(roll?.metadata?.exploitWeakness, 10) || 0;
 
       Object.keys(damageByTypeAfterHalf).forEach((type) => {
         const lowerType = type.toLowerCase();
@@ -16050,6 +16069,10 @@ function applyDamage(
           });
           const values = applicable.map(weaknessValueFor);
           if (precisionWeaknessType === lowerType) values.push(precisionWeaknessValue);
+          if (exploitWeakness > 0) {
+            values.push(exploitWeakness);
+            exploitWeakness = 0;
+          }
           damageOfThisType += Math.max(0, ...values);
         }
 
