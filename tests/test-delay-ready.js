@@ -94,6 +94,23 @@ section("A whole round");
   assert("the same round, returned, or not delaying: nothing", sets, []);
 }
 
+section("A whole round: sustained spells");
+{
+  reset();
+  const sustaining = [
+    { name: "Bless", castRound: 1, sustainedRound: 2, limitRounds: 10, limitLabel: "1 minute" },
+    { name: "Light", castRound: 1, sustainedRound: 1, limitRounds: 10, limitLabel: "1 minute" },
+  ];
+  const token = goblin("a", "Goblin A", 20, { delaying: { round: 2, returned: false }, sustaining });
+  const seen = ctx.endFullRoundDelay(token, 3);
+  assert("the spell not Sustained in the delay's round ends, in the same write as the delay", sets, [["a", { "data.delaying": null, "data.sustaining": [sustaining[0]] }]]);
+  assertIncludes("... the card says so", state.messages[0], "**Light ends**: Goblin A didn't Sustain it this turn.");
+  assert("... and the reminder sees what's left", seen.data.sustaining, [sustaining[0]]);
+  reset();
+  const all = goblin("a", "Goblin A", 20, { delaying: { round: 2, returned: false }, sustaining: [sustaining[0]] });
+  assert("all Sustained: only the delay", [ctx.endFullRoundDelay(all, 3), sets], [all, [["a", { "data.delaying": null }]]]);
+}
+
 section("The encounter's end");
 {
   reset();

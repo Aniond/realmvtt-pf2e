@@ -38,8 +38,9 @@ function getReturnInitiative(currentInitiative, otherInitiatives) {
   return Math.round(((currentInitiative + next) / 2) * 1000) / 1000;
 }
 
-// Delay, from the creature's sheet or the GM's panel: the delay on the token
-// and a card with the Return button. The GM ends the turn.
+// Delay, from Actions in Combat on the character's Actions tab or the NPC
+// sheet: the delay on the token and a card with the Return button. The GM
+// ends the turn.
 function delayTurn(token) {
   if (!token?._id) {
     api.showNotification("Delay needs the creature's token on the scene.", "yellow", "Delay");
@@ -107,19 +108,26 @@ function returnFromDelay(token) {
 }
 
 // At the start of a creature's turn: one that Delayed a whole round without
-// returning loses the delayed turn's actions and keeps its initiative
+// returning loses the delayed turn's actions and keeps its initiative, and the
+// spells it didn't Sustain in that round end (the delayed turn's end left
+// them for the turn it would return to; Delay doesn't extend them), in the
+// same write. Returns the token as the turn-start reminder should see it.
 function endFullRoundDelay(token, round) {
   const delay = getDelayState(token);
   const turnRound = parseInt(round, 10);
-  if (!delay || delay.returned || !Number.isFinite(turnRound) || turnRound <= delay.round) return;
-  api.setValuesOnTokenById(token._id, "tokens", { "data.delaying": null });
+  if (!delay || delay.returned || !Number.isFinite(turnRound) || turnRound <= delay.round) return token;
+  const values = { "data.delaying": null };
+  const { ended, kept } = getUnsustainedSpells(token, delay.round);
+  if (ended.length > 0) values["data.sustaining"] = kept;
+  api.setValuesOnTokenById(token._id, "tokens", values);
   api.sendMessage(
-    `**${getTokenDisplayName(token)}** Delayed a whole round without returning: the delayed turn's actions are lost, and their initiative stays where it was.`,
+    `**${getTokenDisplayName(token)}** Delayed a whole round without returning: the delayed turn's actions are lost, and their initiative stays where it was.${ended.length > 0 ? `\n${getUnsustainedSpellsMessage(token, ended)}` : ""}`,
     undefined,
     [],
     [],
     token,
   );
+  return ended.length > 0 ? { ...token, data: { ...(token.data || {}), sustaining: kept } } : token;
 }
 
 // A delay doesn't carry into the next encounter
