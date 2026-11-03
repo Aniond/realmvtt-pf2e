@@ -11099,7 +11099,7 @@ function useAction(action, actionDataPath = null) {
 ${usesLine ? `${usesLine}\n` : ""}
 ---
 ${actionDescription}
-${effectMacros}${getActionHealingMacros(action)}${getFirstAidActionMacro(action)}${getSkillActionMacros(action)}${getRechargeButton(action)}${getFinisherButton(action)}${applyCursebound(action)}
+${effectMacros}${getActionHealingMacros(action)}${getFirstAidActionMacro(action)}${getSkillActionMacros(action)}${getRechargeButton(action)}${getFinisherButton(action)}${applyCursebound(action)}${getStratagemUse(action)}${getOverdriveUse(action)}${getUnstableUse(action)}
 `;
 
   // Send the message
@@ -13167,6 +13167,15 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber) {
       targetId,
     });
 
+  // Devise a Stratagem: the first Strike against the marked creature takes
+  // the investigator's d20, used up in the same write (class-extras.js), with
+  // an agile or finesse weapon or unarmed attack, or a ranged one that isn't
+  // thrown (Player Core 2; Foundry's SubstituteRoll predicate)
+  const stratagemWeapon = isStratagemWeapon(weapon, isMelee, hasThrownTrait);
+  const stratagemD20 =
+    isNPCAttack || isSpell || !stratagemWeapon ? null : getStratagemD20(record, targets?.[0], attackerToken);
+  if (stratagemD20 !== null) valuesToSet["data.stratagem.used"] = true;
+
   if (Object.keys(valuesToSet).length > 0) {
     // A thrown shield's AC goes with it, as when it's dropped from the
     // inventory
@@ -13649,6 +13658,8 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber) {
           weapon._id,
           { weapon, targets: [target] },
         ),
+        // The stratagem's d20 in place of the roll (attack.js)
+        ...(stratagemD20 !== null && target === targets[0] ? { stratagemD20 } : {}),
       };
 
       if (targetIsOffGuardDueToFlanking) {

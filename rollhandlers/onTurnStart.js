@@ -85,6 +85,10 @@ if (token && Array.isArray(token.data?.recharges) && token.data.recharges.length
 // keeps the turn's log when Next after Previous starts the same turn again.
 setCurrentTurn(token, data?.round);
 
+// The investigator's stratagem lasts until the start of their next turn
+// (class-extras.js)
+clearStratagem(token);
+
 // A creature that Delayed a whole round without returning loses the delayed
 // turn's actions and keeps its initiative, and the spells it didn't Sustain
 // that round end; the reminder below sees what's left (delay-ready.js)
