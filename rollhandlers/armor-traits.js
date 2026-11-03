@@ -101,3 +101,52 @@ function getPonderousModifier(record, bestArmor) {
     slug: "ponderous",
   };
 }
+
+// ---------------------------------------------------------------- Shields
+
+// Shields (Player Core pg. 276-277; hefty is Treasure Vault (Remastered)
+// pg. 219; roadmap H24):
+//   - Shield Block: the damage card's Apply Damage to Shield button only for a
+//     raised shield that isn't broken (a broken item can't be used for its
+//     normal function), on a creature with Shield Block (a character's feat,
+//     an NPC's ability)
+//   - Hefty N: raising it takes 2 actions unless the Strength modifier is at
+//     least N; the Raise a Shield card says so
+//   - Destroyed at 0 Hit Points: the damage card says so and the shield is
+//     lowered (applyDamage)
+
+// Whether a creature has Shield Block: a character's feat, or an NPC's
+// ability of that name
+function hasShieldBlock(creature) {
+  if (!creature) return false;
+  if (creature.recordType === "npcs") {
+    return (creature.data?.actions || []).some((action) => `${action?.name || ""}`.trim().toLowerCase() === "shield block");
+  }
+  return hasFeatNamed(creature, "Shield Block");
+}
+
+// Whether a creature can Shield Block now: its shield raised, not broken, and
+// the reaction to use
+function canShieldBlock(creature) {
+  return (
+    creature?.data?.shieldRaised === "true" &&
+    creature?.data?.shieldBroken !== true &&
+    hasShieldBlock(creature)
+  );
+}
+
+// The number on a shield's hefty trait ("Hefty-2", "Hefty 2"), or null
+function getShieldHefty(traits) {
+  const hefty = getTraitNameList(traits || []).find((trait) => /^hefty[\s-]*\d+$/.test(trait));
+  return hefty ? parseInt(hefty.replace(/\D+/g, ""), 10) : null;
+}
+
+// The Raise a Shield card's note for a hefty shield the creature's Strength
+// doesn't meet, or ""
+function getRaiseShieldNote(creature) {
+  const hefty = getShieldHefty(getBestEquippedArmor(creature)?.shield?.traits);
+  if (hefty === null) return "";
+  const strength = parseInt(creature?.data?.str, 10) || 0;
+  if (strength >= hefty) return "";
+  return `Hefty ${hefty}: raising it takes 2 actions (Strength ${strength >= 0 ? "+" : ""}${strength}, under +${hefty}).`;
+}

@@ -5758,7 +5758,15 @@ function updateAttribute({
   if (dexCap !== undefined && (dexCap > 0 || dexValue < 0)) {
     ac += Math.min(dexValue, dexCap);
   }
-  const shieldBroken = record.data?.shieldBroken === true;
+  // Broken follows the equipped shield's HP, so a swapped or unequipped shield
+  // doesn't keep the flag (written with the shield values below). With no
+  // shield, bestArmor.shield is a placeholder with no id; a shield with no Hit
+  // Points filled in isn't broken.
+  const shieldMaxHp = parseInt(bestArmor?.shield?.hp?.max, 10) || 0;
+  const shieldBroken =
+    bestArmor?.shield?.shieldId != null &&
+    shieldMaxHp > 0 &&
+    (parseInt(bestArmor.shield.hp.value, 10) || 0) <= Math.floor(shieldMaxHp / 2);
   // AC bonus is only if shield is equipped AND raised AND not broken
   if (
     bestArmor.shield &&
@@ -5999,6 +6007,9 @@ function updateAttribute({
     valuesToSet[`data.shieldHp`] = null;
     valuesToSet[`data.shieldMaxHp`] = null;
     valuesToSet[`data.shieldBt`] = null;
+  }
+  if (shieldBroken !== (record.data?.shieldBroken === true)) {
+    valuesToSet[`data.shieldBroken`] = shieldBroken;
   }
   if (bestArmor?.shield?.hardness !== undefined) {
     valuesToSet[`data.shieldHardness`] = bestArmor.shield.hardness;
@@ -13225,8 +13236,9 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber) {
           : target?.token?.record?.name;
       const targetDistance = target?.distance || 0;
 
-      // Check if target has shield raised
-      if (target?.token?.data?.shieldRaised === "true") {
+      // Whether the target can Shield Block: shield raised and not broken, and
+      // Shield Block (armor-traits.js)
+      if (canShieldBlock(target?.token)) {
         targetShieldRaised = true;
       }
 
@@ -14161,8 +14173,9 @@ function performDamageRoll(record, weapon, weaponDataPath, isCritical) {
 
   if (targets.length > 0) {
     for (const target of targets) {
-      // Check if target has shield raised
-      if (target?.token?.data?.shieldRaised === "true") {
+      // Whether the target can Shield Block: shield raised and not broken, and
+      // Shield Block (armor-traits.js)
+      if (canShieldBlock(target?.token)) {
         targetShieldRaised = true;
       }
       // Check if target is off-guard
@@ -16048,6 +16061,8 @@ function applyDamage(
               newShieldHp,
               isShieldBroken,
               wasShieldBroken,
+              // An item at 0 Hit Points is destroyed (armor-traits.js)
+              isShieldDestroyed: newShieldHp === 0 && currentShieldHp > 0,
               shieldDamageAmount,
               brokenThreshold,
               maxShieldHp,
@@ -16182,6 +16197,10 @@ function applyDamage(
         if (shieldData.isShieldBroken !== shieldData.wasShieldBroken) {
           valuesToSet["data.shieldBroken"] = shieldData.isShieldBroken;
         }
+        // A destroyed shield comes down
+        if (shieldData.isShieldDestroyed) {
+          valuesToSet["data.shieldRaised"] = "false";
+        }
 
         // Store old values for undo
         if (shield) {
@@ -16190,6 +16209,9 @@ function applyDamage(
           oldValues["data.shieldHp"] = target.data?.shieldHp || 0;
           if (shieldData.isShieldBroken !== shieldData.wasShieldBroken) {
             oldValues["data.shieldBroken"] = shieldData.wasShieldBroken;
+          }
+          if (shieldData.isShieldDestroyed) {
+            oldValues["data.shieldRaised"] = target.data?.shieldRaised ?? "false";
           }
         }
       }
@@ -16224,7 +16246,9 @@ function applyDamage(
         if (shieldData.shieldDamageAmount > 0) {
           message += `\n**Shield took ${shieldData.shieldDamageAmount} damage** (${shieldData.newShieldHp}/${shieldData.maxShieldHp} HP remaining)`;
         }
-        if (shieldData.isShieldBroken && !shieldData.wasShieldBroken) {
+        if (shieldData.isShieldDestroyed) {
+          message += `\n**[color=red]Shield is DESTROYED![/color]** It's lowered, and can't be Repaired.`;
+        } else if (shieldData.isShieldBroken && !shieldData.wasShieldBroken) {
           message += `\n**[color=orange]Shield is now BROKEN![/color]**`;
         }
       }
