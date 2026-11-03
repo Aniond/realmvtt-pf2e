@@ -297,6 +297,26 @@ function getLabelForAbility(ability) {
   return ability;
 }
 
+// The chat card draws a roll's dice from the values in its rollString's
+// "@(...)" tail, not from roll.dice, so a d20 a handler changes (Devise a
+// Stratagem, a minimum roll) has to change there too: the d20 rolled `from`
+// becomes `to`. Unchanged when there's no tail or no such d20.
+function setD20InRollString(rollString, from, to) {
+  const [notation, tail] = String(rollString || "").split("@");
+  const values = tail?.match(/^\s*\(([^)]*)\)/);
+  if (!values) return rollString;
+  const list = values[1].split(",").map((value) => value.trim());
+  // Each die's size, in the order the values list them
+  const sizes = [];
+  for (const [, count, size] of notation.matchAll(/(\d*)d(\d+)/gi)) {
+    for (let i = 0; i < (parseInt(count, 10) || 1); i++) sizes.push(parseInt(size, 10));
+  }
+  const index = sizes.findIndex((size, i) => size === 20 && parseInt(list[i], 10) === from);
+  if (index === -1) return rollString;
+  list[index] = String(to);
+  return `${notation}@(${list.join(",")})${tail.slice(values[0].length)}`;
+}
+
 function getDamageType(rollString) {
   const regex = /(?:\d*d\d+|\+\d+)?(?:\s*\+?-?\s*\d+)?(?:\s+([\w-_]+))?/;
   const match = rollString.match(regex);

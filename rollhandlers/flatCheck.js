@@ -68,7 +68,17 @@ if (dc <= 1) {
     if (data?.roll?.metadata?.failureNote) {
       message += `\n\n${data.roll.metadata.failureNote}`;
     }
+    // A critical failure's extra (an unstable action's fire damage;
+    // class-extras.js)
+    if (total <= dc - 10 && data?.roll?.metadata?.criticalFailureNote) {
+      message += ` ${data.roll.metadata.criticalFailureNote}`;
+    }
   }
+}
+
+// Devise a Stratagem's d20, kept on the investigator (class-extras.js)
+if (data?.roll?.metadata?.stratagem) {
+  message = keepStratagemRoll(data.roll.metadata.stratagem, roll);
 }
 
 api.sendMessage(
