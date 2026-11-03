@@ -502,7 +502,8 @@ function getHazardDetectionCard(hazard, results) {
   if (hasHazardTrait(hazard, "magical")) {
     lines.push(minimum ? "Detect Magic can't find it." : "Detect Magic shows it's there, not what it is.");
   }
-  return `[gm]${lines.join("\n")}[/gm]`;
+  // A [gm] tag only hides what's on its own line, so each line gets one
+  return lines.map((line) => `[gm]${line}[/gm]`).join("\n");
 }
 
 // The hazard sheet's Detect button: the party (the Party Sheet's

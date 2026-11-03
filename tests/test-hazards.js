@@ -65,7 +65,7 @@ section("The rolls");
 section("The card");
 {
   const card = ctx.getHazardDetectionCard(hazard(), ctx.getHazardDetectionResults(hazard(), [ezren, kyra], [14, 18]));
-  assert("only the GM sees it", [card.startsWith("[gm]"), card.endsWith("[/gm]")], [true, true]);
+  assert("only the GM sees it: each line in its own [gm] tags", card.split("\n").every((line) => line.startsWith("[gm]") && line.endsWith("[/gm]")), true);
   assertIncludes("the DC and the rank", card, "Perception vs Stealth DC 23 (trained)");
   assertIncludes("a roll", card, "- Ezren: 14 + 9 = 23, [color=green]notices it[/color]");
   assertIncludes("below the rank", card, "- Kyra: can't find it (needs trained Perception)");
