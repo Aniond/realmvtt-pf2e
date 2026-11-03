@@ -115,7 +115,8 @@ function getPonderousModifier(record, bestArmor) {
 //   - Destroyed at 0 Hit Points: the damage card says so and the shield is
 //     lowered (applyDamage)
 //   - Shield Strikes: an equipped shield has its own attack row, and the
-//     attack code treats it as a weapon (getShieldWeapon)
+//     attack code treats it as a weapon (getShieldWeapon); a broken one can't
+//     Strike, and a thrown one is dropped (getShieldCarriedValues)
 
 // Whether a creature has Shield Block: a character's feat, or an NPC's
 // ability of that name
@@ -135,6 +136,13 @@ function canShieldBlock(creature) {
     creature?.data?.shieldBroken !== true &&
     hasShieldBlock(creature)
   );
+}
+
+// Whether a shield's Hit Points ({ value, max }) are at or below its Broken
+// Threshold, half its max. A shield with no max filled in isn't broken.
+function isShieldBroken(hp) {
+  const max = parseInt(hp?.max, 10) || 0;
+  return max > 0 && (parseInt(hp.value, 10) || 0) <= Math.floor(max / 2);
 }
 
 // The number on a shield's hefty trait ("Hefty-2", "Hefty 2"), or null
@@ -198,4 +206,17 @@ function getShieldWeapon(item) {
       runes: { potency: 0, striking: 0, property: [] },
     },
   };
+}
+
+// The values that move a shield from the hand (thrown, stowed or dropped): its
+// carried state, its hand freed (weapon-traits.js), and lowered if raised.
+// The caller recalculates after writing them (onAddEditFeature), as the
+// inventory's carried dropdown does, so its AC goes with it.
+function getShieldCarriedValues(record, shield, shieldDataPath, carried) {
+  const values = {
+    [`${shieldDataPath}.data.carried`]: carried,
+    ...getHandsValues(record, { [shield?._id]: { carried } }),
+  };
+  if (record?.data?.shieldRaised === "true") values["data.shieldRaised"] = "false";
+  return values;
 }

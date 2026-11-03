@@ -170,14 +170,25 @@
     ];
   }
 
+  // A shield is lowered too, and its AC goes with it (armor-traits.js)
+  function putAway(weapon, dataPathToWeapon, carried) {
+    if (weapon?.data?.type === "shield") {
+      api.setValues(
+        getShieldCarriedValues(record, weapon, dataPathToWeapon, carried),
+        (updated) => onAddEditFeature(updated, undefined, true),
+      );
+      return;
+    }
+    api.setValues({
+      [`${dataPathToWeapon}.data.carried`]: carried,
+      ...getHandsValues(record, { [weapon?._id]: { carried } }),
+    });
+  }
+
   function handleStow() {
     const dataPathToWeapon = getNearestParentDataPath(dataPath);
     const weapon = api.getValue(dataPathToWeapon);
-    const valuesToSet = {
-      [`${dataPathToWeapon}.data.carried`]: "carried",
-      ...getHandsValues(record, { [weapon?._id]: { carried: "carried" } }),
-    };
-    api.setValues(valuesToSet);
+    putAway(weapon, dataPathToWeapon, "carried");
     const ourToken = api.getToken();
 
     api.sendMessage(
@@ -192,11 +203,7 @@
   function handleDrop() {
     const dataPathToWeapon = getNearestParentDataPath(dataPath);
     const weapon = api.getValue(dataPathToWeapon);
-    const valuesToSet = {
-      [`${dataPathToWeapon}.data.carried`]: "dropped",
-      ...getHandsValues(record, { [weapon?._id]: { carried: "dropped" } }),
-    };
-    api.setValues(valuesToSet);
+    putAway(weapon, dataPathToWeapon, "dropped");
     const ourToken = api.getToken();
 
     api.sendMessage(

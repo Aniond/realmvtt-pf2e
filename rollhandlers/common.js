@@ -4725,7 +4725,8 @@ function onItemInvested(value) {
 // Returns the proper fields object for the given item
 function getItemFields(item) {
   // A shield's attack row shows the controls for the weapon it Strikes as
-  // (armor-traits.js), with no hand choice
+  // (armor-traits.js), with no hand choice and no ammunition (thrown, it's
+  // dropped)
   const isShield = item?.data?.type === "shield";
   item = getShieldWeapon(item) || item;
   const traits = item.data?.traits || [];
@@ -4800,8 +4801,8 @@ function getItemFields(item) {
     rangeToggleBtn: { hidden: !(isMelee && isThrown) },
     rangeToggleBtnDisabled: { hidden: isMelee },
     meleeToggleBtnDisabled: { hidden: !isMelee || (isMelee && isThrown) },
-    ammoFields: { hidden: isMelee && !isThrown },
-    ammo: { hidden: isMelee && !isThrown },
+    ammoFields: { hidden: (isMelee && !isThrown) || isShield },
+    ammo: { hidden: (isMelee && !isThrown) || isShield },
     reloadBtn: { hidden: !requiresReload },
     // Capacity and double barrel weapons count their loaded shots, and a
     // double barrel weapon can fire both; parry and versatile with another
@@ -4825,7 +4826,8 @@ function getItemFields(item) {
 // On the given, item, and valuesToSet, set the items fields as needed
 function setItemFields(item, itemDataPath, valuesToSet) {
   // A shield's attack row shows the controls for the weapon it Strikes as
-  // (armor-traits.js), with no hand choice
+  // (armor-traits.js), with no hand choice and no ammunition (thrown, it's
+  // dropped)
   const isShield = item?.data?.type === "shield";
   item = getShieldWeapon(item) || item;
   const itemFields = item.fields || {};
@@ -4919,6 +4921,7 @@ function setItemFields(item, itemDataPath, valuesToSet) {
   }
   if (
     (!isMelee || isThrown) &&
+    !isShield &&
     (itemFields?.ammo?.hidden !== false ||
       itemFields?.ammoFields?.hidden !== false)
   ) {
@@ -4961,7 +4964,7 @@ function setItemFields(item, itemDataPath, valuesToSet) {
     valuesToSet[`${itemDataPath}.fields.ammoSelect.hidden`] = false;
   }
 
-  if (isThrown && item.data?.count !== item.data?.ammo) {
+  if (isThrown && !isShield && item.data?.count !== item.data?.ammo) {
     valuesToSet[`${itemDataPath}.data.ammo`] = item.data?.count;
   }
 
@@ -5773,11 +5776,8 @@ function updateAttribute({
   // doesn't keep the flag (written with the shield values below). With no
   // shield, bestArmor.shield is a placeholder with no id; a shield with no Hit
   // Points filled in isn't broken.
-  const shieldMaxHp = parseInt(bestArmor?.shield?.hp?.max, 10) || 0;
   const shieldBroken =
-    bestArmor?.shield?.shieldId != null &&
-    shieldMaxHp > 0 &&
-    (parseInt(bestArmor.shield.hp.value, 10) || 0) <= Math.floor(shieldMaxHp / 2);
+    bestArmor?.shield?.shieldId != null && isShieldBroken(bestArmor.shield.hp);
   // AC bonus is only if shield is equipped AND raised AND not broken
   if (
     bestArmor.shield &&
@@ -12260,6 +12260,13 @@ function hasArmorSpecializationEffect(record, item) {
 }
 
 function performAttackRoll(record, weapon, weaponDataPath, attackNumber) {
+  // A broken shield can't be used to Strike (a broken item can't be used for
+  // its normal function; Foundry leaves it out of the Strikes)
+  const isShieldStrike = weapon?.data?.type === "shield";
+  if (isShieldStrike && isShieldBroken(weapon.data.hp)) {
+    api.showNotification(`${weapon.name} is broken: it can't be used to Strike.`, "red", "Broken Shield");
+    return;
+  }
   // Feats and effects can change the die size or traits for this Strike; a
   // shield Strikes as a weapon (armor-traits.js)
   weapon = getAlteredWeapon(record, getShieldWeapon(weapon) || weapon);
@@ -12438,6 +12445,12 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber) {
   if (isRangedUnarmed) {
     abilityScore = "dex";
     addStrengthToDamage = false;
+  } else if (isShieldStrike && isThrown) {
+    // A thrown shield is dropped (it lands at the target), not counted as
+    // ammunition: it leaves the hand and is lowered (armor-traits.js)
+    abilityScore = "dex";
+    addStrengthToDamage = true;
+    Object.assign(valuesToSet, getShieldCarriedValues(record, weapon, weaponDataPath, "dropped"));
   } else if (!isNPCAttack && (isThrown || !isMelee)) {
     // Thrown and ranged always use dex
     abilityScore = "dex";
@@ -13055,7 +13068,12 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber) {
     });
 
   if (Object.keys(valuesToSet).length > 0) {
-    api.setValues(valuesToSet);
+    // A thrown shield's AC goes with it, as when it's dropped from the
+    // inventory
+    api.setValues(
+      valuesToSet,
+      isShieldStrike && isThrown ? (updated) => onAddEditFeature(updated, undefined, true) : undefined,
+    );
   }
 
   // Get damage modifiers
