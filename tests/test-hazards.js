@@ -37,12 +37,22 @@ section("The DC and the rank");
     [1, 2, 3, 4, 0],
   );
   assert("Trap Finder: +1 against a trap", [ctx.getHazardPerceptionMod(merisiel, hazard()), ctx.getHazardPerceptionMod(merisiel, hazard("", ["Haunt"]))], [11, 10]);
+  const master = { ...merisiel, data: { ...merisiel.data, thievery: "3" } };
+  assert("... +2 with master Thievery", ctx.getHazardPerceptionMod(master, hazard()), 12);
+  const realMods = ctx.getEffectsAndModifiersForToken;
+  ctx.getEffectsAndModifiersForToken = (token, types) =>
+    types.includes("perceptionBonus") ? [{ name: "Trap Finder (Perception vs traps)", type: "circumstance", value: 1, active: true }] : [];
+  assert("... the feat's toggle on too: still +1, not +2", ctx.getHazardPerceptionMod(merisiel, hazard()), 11);
+  ctx.getEffectsAndModifiersForToken = (token, types) =>
+    types.includes("perceptionBonus") ? [{ name: "Some Other Bonus", type: "circumstance", value: 2, active: true }] : [];
+  assert("... another +2 circumstance bonus: the higher only", ctx.getHazardPerceptionMod(merisiel, hazard()), 12);
+  ctx.getEffectsAndModifiersForToken = realMods;
 }
 
 section("The rolls");
 {
   const results = ctx.getHazardDetectionResults(hazard(), [ezren, valeros, kyra, merisiel], [14, 16, 20, 12]);
-  assert("Ezren: 14 + 9 = 23, notices it", results[0], { name: "Ezren", mod: 9, natural: 14, total: 23, noticed: true });
+  assert("Ezren: 14 + 9 = 23, notices it", results[0], { name: "Ezren", mod: 9, natural: 14, total: 23, noticed: true, trapFinder: false });
   assert("Valeros: 16 + 6 = 22, doesn't", results[1].noticed, false);
   assert("Kyra, untrained: can't find a trained hazard", results[2], { name: "Kyra", rank: 0 });
   assert("Merisiel: 12 + 11 (Trap Finder) = 23, notices it", [results[3].total, results[3].noticed], [23, true]);
@@ -59,7 +69,9 @@ section("The card");
   assertIncludes("the DC and the rank", card, "Perception vs Stealth DC 23 (trained)");
   assertIncludes("a roll", card, "- Ezren: 14 + 9 = 23, [color=green]notices it[/color]");
   assertIncludes("below the rank", card, "- Kyra: can't find it (needs trained Perception)");
-  assertIncludes("with a minimum rank, only searchers", card, "only those Searching (exploring) or Seeking roll");
+  assertIncludes("with a minimum rank, only searchers", card, "only those Searching (exploring) or Seeking roll.");
+  const withRogue = ctx.getHazardDetectionCard(hazard(), ctx.getHazardDetectionResults(hazard(), [ezren, merisiel], [14, 12]));
+  assertIncludes("... with a Trap Finder rogue: the note", withRogue, "Seeking roll (Trap Finder: even when not Searching).");
   assertNotIncludes("not magical: no Detect Magic line", card, "Detect Magic");
   const magical = hazard("", ["Magical", "Trap"]);
   const open = ctx.getHazardDetectionCard(magical, ctx.getHazardDetectionResults(magical, [kyra], [5]));

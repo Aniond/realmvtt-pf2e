@@ -17,8 +17,8 @@
 //   - Hazards (GM Core pg. 98, roadmap H27): the hazard sheet's Detect
 //     button rolls the party's Perception against the Stealth DC in secret,
 //     a card only the GM sees. A minimum rank keeps out those below it, and
-//     then only those Searching or Seeking roll; Trap Finder adds +1 against
-//     traps. Disabling is the stat block's own check links
+//     then only those Searching or Seeking roll; Trap Finder adds its
+//     circumstance bonus against traps (+2 with master Thievery). Disabling is the stat block's own check links
 
 // ---------------------------------------------------------------- XP
 
@@ -434,19 +434,30 @@ function hasHazardTrait(record, trait) {
   return (record?.data?.traits || []).some((t) => String(t).trim().toLowerCase() === trait);
 }
 
+// Whether Trap Finder (Player Core pg. 162) works against this hazard: the
+// character has it and the hazard is a trap
+function hasTrapFinderFor(member, hazard) {
+  return hasHazardTrait(hazard, "trap") && hasFeatNamed(member, "Trap Finder");
+}
+
 // A character's Perception modifier to find a hazard: the sheet's, its
-// Perception and Wisdom bonuses and penalties, and Trap Finder's +1
-// circumstance against a trap (Player Core pg. 162)
+// Perception and Wisdom bonuses and penalties, and Trap Finder against a
+// trap: a circumstance bonus, +2 with master Thievery, +1 otherwise. It goes
+// through the stacking, so the module's own Trap Finder modifier (on with
+// the feat's toggle) or another circumstance bonus isn't added twice.
 function getHazardPerceptionMod(member, hazard) {
   let mod = parseInt(member?.data?.perceptionMod || "0", 10) || 0;
+  const trapFinder = hasTrapFinderFor(member, hazard)
+    ? [{ name: "Trap Finder", type: "circumstance", value: (parseInt(member?.data?.thievery, 10) || 0) >= 3 ? 2 : 1, active: true }]
+    : [];
   mergeModifierLists(
     getEffectsAndModifiersForToken(member, ["perceptionBonus", "perceptionPenalty"], "perception"),
     getEffectsAndModifiersForToken(member, ["allBonus", "allPenalty"], "wis"),
+    trapFinder,
   ).forEach((m) => {
     if (m.active === false || m.situational) return;
     mod += parseInt(m.value || 0, 10) || 0;
   });
-  if (hasHazardTrait(hazard, "trap") && hasFeatNamed(member, "Trap Finder")) mod += 1;
   return mod;
 }
 
@@ -465,7 +476,7 @@ function getHazardDetectionResults(hazard, members, naturals) {
     const total = natural + mod;
     // A natural 20 lifts the result a step, a natural 1 lowers it
     const step = (total >= dc + 10 ? 2 : total >= dc ? 1 : total <= dc - 10 ? -1 : 0) + (natural === 20 ? 1 : natural === 1 ? -1 : 0);
-    return { name, mod, natural, total, noticed: step >= 1 };
+    return { name, mod, natural, total, noticed: step >= 1, trapFinder: hasTrapFinderFor(member, hazard) };
   });
 }
 
@@ -485,7 +496,7 @@ function getHazardDetectionCard(hazard, results) {
   });
   lines.push(
     minimum
-      ? "With a minimum rank, only those Searching (exploring) or Seeking roll."
+      ? `With a minimum rank, only those Searching (exploring) or Seeking roll${results.some((r) => r.trapFinder) ? " (Trap Finder: even when not Searching)" : ""}.`
       : "Everyone gets this check on first entering the hazard's area.",
   );
   if (hasHazardTrait(hazard, "magical")) {
