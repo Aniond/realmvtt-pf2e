@@ -14,6 +14,11 @@
 //   - DCs (GM Core): simple DCs by proficiency, level-based DCs,
 //     the difficulty and rarity adjustments, and a GM prompt that posts a
 //     check for the selected tokens (showDCHelper, run from a chat macro)
+//   - Hazards (GM Core pg. 98, roadmap H27): the hazard sheet's Detect
+//     button rolls the party's Perception against the Stealth DC in secret,
+//     a card only the GM sees. A minimum rank keeps out those below it, and
+//     then only those Searching or Seeking roll; Trap Finder adds its
+//     circumstance bonus against traps (+2 with master Thievery). Disabling is the stat block's own check links
 
 // ---------------------------------------------------------------- XP
 
@@ -406,6 +411,118 @@ function isInitiativeAdversary(token) {
 function getInitiativeValue(total, token) {
   const value = parseFloat(total) || 0;
   return isInitiativeAdversary(token) ? Math.round((value + ADVERSARY_INITIATIVE_TIEBREAK) * 10) / 10 : value;
+}
+
+// ---------------------------------------------------------------- Hazards
+
+// A hazard's Stealth DC: 10 + its Stealth modifier (Scythe Blades: +13, DC 23)
+function getHazardStealthDC(record) {
+  return 10 + getHazardStealthMod(record);
+}
+
+// The minimum Perception rank to find a hazard, from its Stealth details
+// ("(trained)"): 0 when there's none
+function getHazardMinimumRank(record) {
+  const details = String(record?.data?.stealth?.details || "").toLowerCase();
+  for (let rank = PROFICIENCY_RANK_NAMES.length - 1; rank > 0; rank--) {
+    if (new RegExp(`\\b${PROFICIENCY_RANK_NAMES[rank].toLowerCase()}\\b`).test(details)) return rank;
+  }
+  return 0;
+}
+
+function hasHazardTrait(record, trait) {
+  return (record?.data?.traits || []).some((t) => String(t).trim().toLowerCase() === trait);
+}
+
+// Whether Trap Finder (Player Core pg. 162) works against this hazard: the
+// character has it and the hazard is a trap
+function hasTrapFinderFor(member, hazard) {
+  return hasHazardTrait(hazard, "trap") && hasFeatNamed(member, "Trap Finder");
+}
+
+// A character's Perception modifier to find a hazard: the sheet's, its
+// Perception and Wisdom bonuses and penalties, and Trap Finder against a
+// trap: a circumstance bonus, +2 with master Thievery, +1 otherwise. It goes
+// through the stacking, so the module's own Trap Finder modifier (on with
+// the feat's toggle) or another circumstance bonus isn't added twice.
+function getHazardPerceptionMod(member, hazard) {
+  let mod = parseInt(member?.data?.perceptionMod || "0", 10) || 0;
+  const trapFinder = hasTrapFinderFor(member, hazard)
+    ? [{ name: "Trap Finder", type: "circumstance", value: (parseInt(member?.data?.thievery, 10) || 0) >= 3 ? 2 : 1, active: true }]
+    : [];
+  mergeModifierLists(
+    getEffectsAndModifiersForToken(member, ["perceptionBonus", "perceptionPenalty"], "perception"),
+    getEffectsAndModifiersForToken(member, ["allBonus", "allPenalty"], "wis"),
+    trapFinder,
+  ).forEach((m) => {
+    if (m.active === false || m.situational) return;
+    mod += parseInt(m.value || 0, 10) || 0;
+  });
+  return mod;
+}
+
+// Each character's detection: { name, mod, natural, total, noticed } or,
+// below the minimum rank, { name, rank } with no roll. naturals: one d20 per
+// character, in order.
+function getHazardDetectionResults(hazard, members, naturals) {
+  const dc = getHazardStealthDC(hazard);
+  const minimum = getHazardMinimumRank(hazard);
+  return (members || []).map((member, index) => {
+    const name = getCreatureName(member);
+    const rank = parseInt(member?.data?.perception || "0", 10) || 0;
+    if (rank < minimum) return { name, rank };
+    const mod = getHazardPerceptionMod(member, hazard);
+    const natural = parseInt(naturals?.[index], 10) || 1;
+    const total = natural + mod;
+    // A natural 20 lifts the result a step, a natural 1 lowers it
+    const step = (total >= dc + 10 ? 2 : total >= dc ? 1 : total <= dc - 10 ? -1 : 0) + (natural === 20 ? 1 : natural === 1 ? -1 : 0);
+    return { name, mod, natural, total, noticed: step >= 1, trapFinder: hasTrapFinderFor(member, hazard) };
+  });
+}
+
+// The GM's card for a hazard's detection
+function getHazardDetectionCard(hazard, results) {
+  const dc = getHazardStealthDC(hazard);
+  const minimum = getHazardMinimumRank(hazard);
+  const name = getCreatureName(hazard);
+  const lines = [`**[center]Detect: ${name}[/center]**`, `[center]Perception vs Stealth DC ${dc}${minimum ? ` (${PROFICIENCY_RANK_NAMES[minimum].toLowerCase()})` : ""}[/center]`];
+  results.forEach((r) => {
+    if (r.total === undefined) {
+      lines.push(`- ${r.name}: can't find it (needs ${PROFICIENCY_RANK_NAMES[minimum].toLowerCase()} Perception)`);
+      return;
+    }
+    const color = r.noticed ? "green" : "red";
+    lines.push(`- ${r.name}: ${r.natural} ${r.mod >= 0 ? "+" : "-"} ${Math.abs(r.mod)} = ${r.total}, [color=${color}]${r.noticed ? "notices it" : "doesn't"}[/color]`);
+  });
+  lines.push(
+    minimum
+      ? `With a minimum rank, only those Searching (exploring) or Seeking roll${results.some((r) => r.trapFinder) ? " (Trap Finder: even when not Searching)" : ""}.`
+      : "Everyone gets this check on first entering the hazard's area.",
+  );
+  if (hasHazardTrait(hazard, "magical")) {
+    lines.push(minimum ? "Detect Magic can't find it." : "Detect Magic shows it's there, not what it is.");
+  }
+  return `[gm]${lines.join("\n")}[/gm]`;
+}
+
+// The hazard sheet's Detect button: the party (the Party Sheet's
+// characters, else the characters on the scene) rolls in secret
+function detectHazard(hazard) {
+  if (!hazard) return;
+  const fromScene = () =>
+    ((api.getOtherTokens ? api.getOtherTokens() : []) || [])
+      .map((entry) => entry?.token || entry)
+      .filter((token) => token?.recordType === "characters");
+  api.getParty((party) => {
+    const fromParty = (party || []).filter((member) => member?.recordType === "characters");
+    const members = fromParty.length > 0 ? fromParty : fromScene();
+    if (!members.length) {
+      api.showNotification("No characters on the Party Sheet or the scene to roll.", "yellow", "Detect");
+      return;
+    }
+    const naturals = members.map(() => parseInt(api.rollInstant("1d20")?.total, 10) || 1);
+    api.sendMessage(getHazardDetectionCard(hazard, getHazardDetectionResults(hazard, members, naturals)), undefined, [], []);
+  });
 }
 
 // ---------------------------------------------------------------- DCs

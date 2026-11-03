@@ -2531,6 +2531,16 @@
           field="stealth.details"
           placeholder="Enter stealth details..."
         ></richtextfield>
+        <!-- The party's secret Perception checks to find it (gm-tools.js) -->
+        <div style="display: flex; justify-content: flex-end; margin-top: 4px">
+          <button
+            size="xs"
+            icon="IconEye"
+            label="Detect"
+            variant="light"
+            onclick="detectHazard(record)"
+          ></button>
+        </div>
         <divider color="primary" label="DISABLE" textalign="center"></divider>
         <richtextfield
           width="100%"
