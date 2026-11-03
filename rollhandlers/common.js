@@ -5672,9 +5672,12 @@ function updateAttribute({
     const classHp = record.data?.classes?.[0]?.data?.hp || 0;
     const level = record.data?.level || 0;
     // Level 0 Characters (GM Core): ancestry HP + Constitution modifier
-    const totalHp = isLevelZeroCharacter(record)
-      ? extraHitpoints + ancestryHp + conMod
-      : extraHitpoints + ancestryHp + (conMod + classHp) * level;
+    // Drained lowers the maximum while it lasts (dying.js)
+    const totalHp =
+      (isLevelZeroCharacter(record)
+        ? extraHitpoints + ancestryHp + conMod
+        : extraHitpoints + ancestryHp + (conMod + classHp) * level) -
+      getDrainedMaxHpReduction(record);
     valuesToSet[`data.hitpoints`] = totalHp;
     // If curhp is not set, set it to hitpoints
     if (record.data?.curhp === undefined) {

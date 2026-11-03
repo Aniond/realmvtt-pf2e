@@ -5560,6 +5560,9 @@
       "onReroll": {
         "file": "rollhandlers/onReroll.js"
       },
+      "onEffectsChanged": {
+        "file": "rollhandlers/onEffectsChanged.js"
+      },
       "rerollIgnoresAdvDis": true
     },
     "campaignSettings": [

@@ -20,6 +20,57 @@ function getDoomedValue(creature) {
   return getTokenConditionValue(creature, "doomed");
 }
 
+// Drained (Player Core pg. 443): a creature loses its level (at least 1) in
+// Hit Points per drained value and its maximum drops by the same. The maximum
+// follows the drained value; the lost Hit Points don't come back when it drops.
+function getDrainedHitPointsPerValue(creature) {
+  return Math.max(parseInt(creature?.data?.level, 10) || 0, 1);
+}
+
+// A Drained effect: named "Drained" or starting with it ("Drained 2",
+// "Drained (Vampire Bite)"), in any case
+function isDrainedEffectName(name) {
+  return String(name || "").trim().toLowerCase().startsWith("drained");
+}
+
+// A creature's drained value: the stack count of its Drained effect (the
+// highest, if it has more than one)
+function getDrainedValue(creature) {
+  const effectIds = creature?.effectIds || [];
+  let value = 0;
+  for (const effect of creature?.effects || []) {
+    if (!isDrainedEffectName(effect?.name)) continue;
+    value = Math.max(value, effectIds.filter((id) => id === effect._id).length);
+  }
+  return value;
+}
+
+// How far drained lowers a creature's maximum Hit Points right now
+function getDrainedMaxHpReduction(creature) {
+  return getDrainedHitPointsPerValue(creature) * getDrainedValue(creature);
+}
+
+// The Hit Point writes for a change to a creature's drained value, from the
+// onEffectsChanged hook (rollhandlers/onEffectsChanged.js), saved with the
+// change itself. The maximum moves by the difference (updateAttribute takes
+// drained off when it recomputes a character's maximum), and current Hit
+// Points drop only when drained goes up.
+function getDrainedHitPointUpdates(creature, changes) {
+  const delta = (changes || [])
+    .filter((c) => isDrainedEffectName(c?.name))
+    .reduce((sum, c) => sum + (c.newCount || 0) - (c.oldCount || 0), 0);
+  if (delta === 0) return {};
+  const perValue = getDrainedHitPointsPerValue(creature);
+  const maxHp = parseInt(creature?.data?.hitpoints, 10) || 0;
+  const newMaxHp = Math.max(maxHp - perValue * delta, 1);
+  const updates = { "data.hitpoints": newMaxHp };
+  if (delta > 0) {
+    const curHp = parseInt(creature?.data?.curhp, 10) || 0;
+    updates["data.curhp"] = Math.min(Math.max(curHp - perValue * delta, 0), newMaxHp);
+  }
+  return updates;
+}
+
 // The dying value a creature dies at: 4, or 5 with Diehard, less its doomed
 // value. At 0 or less it dies as soon as it gains dying.
 function getDeathThreshold(creature) {
