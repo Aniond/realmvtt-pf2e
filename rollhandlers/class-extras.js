@@ -395,9 +395,10 @@ function getUnstableUse(action, token = api.getToken()) {
 // Exploit Vulnerability (Dark Archive pg. 32), with the Dark Archive module's
 // records: the Exploit Vulnerability effect on the target carries the
 // exploit-vulnerability token mark, and the action's two toggles (group
-// exploit) pick what's exploited. Its Personal Antithesis modifier is a
-// damage bonus on the toggle and the mark; a mortal weakness is the target's
-// highest weakness, added here as the Strike's damage category.
+// exploit) pick what's exploited. Both are weaknesses the thaumaturge's
+// Strikes trigger, added once after a critical hit's doubling: personal
+// antithesis is 2 + half their level (the Strike's exploitWeakness), a
+// mortal weakness the target's highest weakness (a damage category).
 const EXPLOIT_EFFECT = "Exploit Vulnerability";
 const EXPLOIT_TOGGLES = {
   antithesis: "exploit-vulnerability:personal-antithesis",
@@ -443,7 +444,8 @@ function getExploitNotes(thaumaturge, target) {
   const highest = iwr.weaknesses[0];
   const both = `${getExploitButton(thaumaturge, target, "mortal")}${getExploitButton(thaumaturge, target, "antithesis")}`;
   const fence = "```";
-  const offGuard = `\n${fence}Off-Guard_Until_Next_Turn\napi.addEffect("Off-Guard", findSceneToken(${JSON.stringify(thaumaturge._id)}), { value: 1, unit: "start_turn" });\n${fence}`;
+  // A critical failure is a new Exploit Vulnerability too: the last one ends
+  const offGuard = `\n${fence}Off-Guard_Until_Next_Turn\nexploitVulnerability(${JSON.stringify(thaumaturge._id)});\napi.addEffect("Off-Guard", findSceneToken(${JSON.stringify(thaumaturge._id)}), { value: 1, unit: "start_turn" });\n${fence}`;
   return [
     {
       name: "Exploit Vulnerability",
@@ -456,7 +458,7 @@ function getExploitNotes(thaumaturge, target) {
       outcome: [1],
     },
     { name: "Exploit Vulnerability", text: `you can exploit only its personal antithesis.${getExploitButton(thaumaturge, target, "antithesis")}`, outcome: [0] },
-    { name: "Exploit Vulnerability", text: `you're off-guard until the start of your next turn, and exploit nothing.${offGuard}`, outcome: [-1] },
+    { name: "Exploit Vulnerability", text: `you're off-guard until the start of your next turn, and exploit nothing (your last exploit ends).${offGuard}`, outcome: [-1] },
   ];
 }
 
@@ -511,7 +513,8 @@ function removeEffectsInTurn(creature, effects, callback) {
 }
 
 // The thaumaturge's toggles with this exploit's on and the other off (the
-// action's exploit group), or null when they have neither
+// action's exploit group; both off with no mode), or null when they have
+// neither
 function getExploitToggleValues(thaumaturge, mode) {
   const toggles = thaumaturge?.data?.toggles ?? thaumaturge?.record?.data?.toggles;
   if (!Array.isArray(toggles)) return null;
@@ -527,11 +530,12 @@ function getExploitToggleValues(thaumaturge, mode) {
 // From the result's buttons: the last exploit ends (its effect comes off its
 // target), the module's effect goes on the target, and the thaumaturge's
 // toggle for it is set, in one write with the target kept on them
-// (data.exploit: { targetId, mode })
+// (data.exploit: { targetId, mode }). With no mode (a critical failure), the
+// last exploit just ends: both toggles off and data.exploit null.
 function exploitVulnerability(thaumaturgeId, targetId, mode) {
   const thaumaturge = findSceneToken(thaumaturgeId);
-  const target = findSceneToken(targetId);
-  if (!thaumaturge || !target) {
+  const target = mode ? findSceneToken(targetId) : null;
+  if (!thaumaturge || (mode && !target)) {
     api.showNotification("The thaumaturge and the target need to be on the scene.", "yellow", "Exploit Vulnerability");
     return;
   }
@@ -539,21 +543,21 @@ function exploitVulnerability(thaumaturgeId, targetId, mode) {
   const lastTarget = last?.targetId ? findSceneToken(last.targetId) : null;
   // The target's own exploit effect goes too, so exploiting it again replaces it
   const toRemove = [
-    ...(lastTarget && lastTarget._id !== target._id ? [[lastTarget, getExploitEffects(lastTarget, thaumaturgeId)]] : []),
-    [target, getExploitEffects(target, thaumaturgeId)],
+    ...(lastTarget && lastTarget._id !== target?._id ? [[lastTarget, getExploitEffects(lastTarget, thaumaturgeId)]] : []),
+    ...(target ? [[target, getExploitEffects(target, thaumaturgeId)]] : []),
   ];
-  const amount = 2 + Math.floor(getCreatureLevel(thaumaturge) / 2);
   const apply = () => {
-    api.addEffect(EXPLOIT_EFFECT, target, undefined, { tokenId: thaumaturgeId });
+    if (target) api.addEffect(EXPLOIT_EFFECT, target, undefined, { tokenId: thaumaturgeId });
     const toggles = getExploitToggleValues(thaumaturge, mode);
     api.setValuesOnTokenById(thaumaturgeId, thaumaturge.recordType, {
-      "data.exploit": { targetId, mode },
+      "data.exploit": target ? { targetId, mode } : null,
       ...(toggles ? { "data.toggles": toggles } : {}),
     });
+    if (!target) return;
     const highest = getHighestWeakness(target);
     api.sendMessage(
       mode === "antithesis"
-        ? `**${getCreatureName(thaumaturge)} exploits ${getCreatureName(target)}'s personal antithesis:** their unarmed and weapon Strikes deal ${amount} extra damage to it.`
+        ? `**${getCreatureName(thaumaturge)} exploits ${getCreatureName(target)}'s personal antithesis:** it has weakness ${getAntithesisWeakness(thaumaturge)} to their unarmed and weapon Strikes.`
         : `**${getCreatureName(thaumaturge)} exploits ${getCreatureName(target)}'s mortal weakness:** their unarmed and weapon Strikes trigger its highest weakness${highest ? "" : " (it has none)"}. Creatures of the exact same type are affected too; the GM applies that.`,
       undefined,
       [],
@@ -572,6 +576,11 @@ function exploitVulnerability(thaumaturgeId, targetId, mode) {
   run(0);
 }
 
+// Personal antithesis: weakness 2 + half the thaumaturge's level
+function getAntithesisWeakness(thaumaturge) {
+  return 2 + Math.floor(getCreatureLevel(thaumaturge) / 2);
+}
+
 // Whether a creature has a toggle on (data.toggles' predicateValue)
 function hasToggleOn(creature, predicateValue) {
   const toggles = creature?.data?.toggles ?? creature?.record?.data?.toggles;
@@ -582,7 +591,7 @@ function hasToggleOn(creature, predicateValue) {
 
 // The damage categories a thaumaturge's Strike adds against the creature it
 // exploits: magical, and with the Mortal Weakness toggle on, the target's
-// highest weakness. Personal Antithesis is the module's damage bonus.
+// highest weakness
 function getExploitDamageCategories(target, attackerToken, record) {
   const token = target?.token || target;
   if (!token || !hasOwnTokenMark(token, "exploit-vulnerability", attackerToken, record)) return [];
@@ -592,6 +601,17 @@ function getExploitDamageCategories(target, attackerToken, record) {
     if (highest) categories.push(highest.type);
   }
   return categories;
+}
+
+// The personal antithesis weakness a thaumaturge's Strike triggers against
+// the creature it exploits, with the Personal Antithesis toggle on (the
+// Strike's metadata.exploitWeakness; applyDamage adds it once, as a
+// weakness); else 0
+function getExploitWeakness(target, attackerToken, record) {
+  const token = target?.token || target;
+  if (!token || !hasOwnTokenMark(token, "exploit-vulnerability", attackerToken, record)) return 0;
+  if (!hasToggleOn(record || attackerToken, EXPLOIT_TOGGLES.antithesis)) return 0;
+  return getAntithesisWeakness(record || attackerToken);
 }
 
 // Unleash Psyche (Dark Archive pg. 12): used at the start of the psychic's
@@ -618,9 +638,8 @@ function getUnleashPsycheUse(action, token = api.getToken()) {
 function getPsycheSubsidesMessage(creature, changes) {
   const ended = (changes || []).some((change) => change?.name === "Unleash Psyche" && (change.oldCount || 0) > 0 && (change.newCount || 0) === 0);
   if (!ended || !creature?._id) return "";
-  const stupefied = `\n${getChatButton("Stupefied_1_(2_rounds)", creature, 'api.addEffect("Stupefied", token, { value: 2, unit: "rounds" })')}`;
-  const wait = `\n${getChatButton("Start_Wait_(2_rounds)", creature, 'startRecharge(token, "Unleash Psyche", "2")')}`;
-  return `**${getCreatureName(creature)}'s psyche subsides:** stupefied 1 for 2 rounds, and no Unleash Psyche for 2 rounds.${stupefied}${wait}`;
+  const button = `\n${getChatButton("Stupefied_1_and_Wait_(2_rounds)", creature, 'api.addEffect("Stupefied", token, { value: 2, unit: "rounds" }); startRecharge(token, "Unleash Psyche", "2")')}`;
+  return `**${getCreatureName(creature)}'s psyche subsides:** stupefied 1 for 2 rounds, and no Unleash Psyche for 2 rounds.${button}`;
 }
 
 // An amp (a psi cantrip's overlay with data.amp): 1 Focus Point from the

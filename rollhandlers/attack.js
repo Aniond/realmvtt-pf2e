@@ -492,6 +492,8 @@ const damageMetadata = {
   portrait: portrait,
   traits,
   damageCategories,
+  // Personal antithesis's weakness, applied once (class-extras.js)
+  exploitWeakness: data?.roll?.metadata?.exploitWeakness,
   splashDamage: splashDamage,
   splashDamageType: splashDamageType,
   // So we can tell the damage handler script if it was a spell-related damage

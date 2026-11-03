@@ -155,6 +155,8 @@ section("Exploit Vulnerability: the damage categories");
   assert("another thaumaturge's mark: nothing", ctx.getExploitDamageCategories({ token: troll }, { ...thaum({ toggles: exploitToggles("mortal") }), _id: "tok-other" }, null), []);
   assert("not exploited: nothing", ctx.getExploitDamageCategories({ token: creature("ogre") }, thaum({ toggles: exploitToggles("mortal") }), null), []);
   assert("the highest weakness", ctx.getHighestWeakness(troll), { type: "fire", value: 10 });
+  assert("personal antithesis: weakness 2 + half level 6", ctx.getExploitWeakness({ token: troll }, thaum({ toggles: exploitToggles("antithesis") }), null), 5);
+  assert("... none with the Mortal Weakness toggle or no mark", [ctx.getExploitWeakness({ token: troll }, thaum({ toggles: exploitToggles("mortal") }), null), ctx.getExploitWeakness({ token: creature("ogre") }, thaum({ toggles: exploitToggles("antithesis") }), null)], [0, 0]);
 }
 
 section("Exploit Vulnerability: the check");
@@ -176,6 +178,7 @@ section("Exploit Vulnerability: the check");
   assertIncludes("a success: the highest weakness", notes[1].text, "[gm]Highest weakness: fire 10.[/gm]");
   assert("a failure: personal antithesis only", [notes[2].text.includes("Exploit_Personal_Antithesis"), notes[2].text.includes("Exploit_Mortal_Weakness")], [true, false]);
   assertIncludes("a critical failure: off-guard", notes[3].text, 'api.addEffect("Off-Guard"');
+  assertIncludes("... and the last exploit ends", notes[3].text, 'exploitVulnerability("tok-thm");');
   ctx.rollSkill = realRollSkill;
   ctx.api.getTargets = realTargets;
 }
@@ -204,13 +207,22 @@ section("Exploit Vulnerability: applying it");
     sets,
     [["tok-thm", "characters", { "data.exploit": { targetId: "troll", mode: "antithesis" }, "data.toggles": exploitToggles("antithesis") }]],
   );
-  assertIncludes("the card", state.messages[0], "their unarmed and weapon Strikes deal 5 extra damage to it");
+  assertIncludes("the card", state.messages[0], "it has weakness 5 to their unarmed and weapon Strikes");
   sets = [];
   calls.length = 0;
   const noToggles = thaum({ toggles: [] });
   ctx.findSceneToken = (id) => ({ "tok-thm": noToggles, ogre, troll })[id];
   ctx.exploitVulnerability("tok-thm", "troll", "mortal");
   assert("no exploit toggles on the sheet: just the target kept", sets, [["tok-thm", "characters", { "data.exploit": { targetId: "troll", mode: "mortal" } }]]);
+  sets = [];
+  calls.length = 0;
+  state.messages = [];
+  const exploiting = thaum({ exploit: { targetId: "ogre", mode: "antithesis" }, toggles: exploitToggles("antithesis") });
+  ctx.findSceneToken = (id) => ({ "tok-thm": exploiting, ogre, troll })[id];
+  ctx.exploitVulnerability("tok-thm");
+  assert("no mode (a critical failure): the last exploit's effect comes off, nothing added", calls, [["remove", "ev", "ogre"]]);
+  assert("... both toggles off and data.exploit null, in one write", sets, [["tok-thm", "characters", { "data.exploit": null, "data.toggles": exploitToggles(null) }]]);
+  assert("... and no card", state.messages, []);
   ctx.api.addEffect = realAdd;
   ctx.api.removeEffectById = realRemove;
   ctx.findSceneToken = realFind;
@@ -251,8 +263,8 @@ section("Unleash Psyche");
 
   const ended = ctx.getPsycheSubsidesMessage(psychic(), [{ name: "Unleash Psyche", oldCount: 1, newCount: 0 }]);
   assertIncludes("it ends: the card", ended, "**Pia's psyche subsides:** stupefied 1 for 2 rounds");
-  assertIncludes("... with the stupefied button", ended, 'api.addEffect("Stupefied", token, { value: 2, unit: "rounds" })');
-  assertIncludes("... and the wait", ended, 'startRecharge(token, "Unleash Psyche", "2")');
+  assertIncludes("... one button for stupefied and the wait", ended, 'Stupefied_1_and_Wait_(2_rounds)');
+  assertIncludes("... which does both", ended, 'api.addEffect("Stupefied", token, { value: 2, unit: "rounds" }); startRecharge(token, "Unleash Psyche", "2")');
   assert("added, or another effect: nothing", [ctx.getPsycheSubsidesMessage(psychic(), [{ name: "Unleash Psyche", oldCount: 0, newCount: 1 }]), ctx.getPsycheSubsidesMessage(psychic(), [{ name: "Frightened", oldCount: 1, newCount: 0 }])], ["", ""]);
 }
 
