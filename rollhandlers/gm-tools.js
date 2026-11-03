@@ -522,7 +522,10 @@ function detectHazard(hazard) {
       return;
     }
     const naturals = members.map(() => parseInt(api.rollInstant("1d20")?.total, 10) || 1);
-    api.sendMessage(getHazardDetectionCard(hazard, getHazardDetectionResults(hazard, members, naturals)), undefined, [], []);
+    // Private: players see only "Private GM Message" from the GM, not the
+    // hazard's name and portrait, which the message would otherwise take
+    // from the sheet
+    api.sendMessage(getHazardDetectionCard(hazard, getHazardDetectionResults(hazard, members, naturals)), { audience: "private" }, [], []);
   });
 }
 
