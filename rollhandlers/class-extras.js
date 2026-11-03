@@ -288,9 +288,20 @@ function isActionNamed(action, name) {
 // effect's toggle, not the d20.
 function getStratagemUse(action, token = api.getToken()) {
   if (!isActionNamed(action, "Devise a Stratagem") || !token?._id) return "";
-  const value = parseInt(api.rollInstant("1d20")?.total, 10) || 1;
-  api.setValuesOnTokenById(token._id, token.recordType, { "data.stratagem": { value, used: false } });
-  return `\n**Stratagem d20: ${value}.** Attack stratagem: the first Strike against the creature you mark, before your next turn, uses ${value} for its attack roll (a natural 20 or 1 counts). Skill stratagem: you can't Strike it until your next turn, and get +1 to a check about it instead.`;
+  // A d20 everyone sees; flatCheck.js keeps it (keepStratagemRoll)
+  api.roll("1d20", { rollName: "Devise a Stratagem", stratagem: { tokenId: token._id, recordType: token.recordType } }, "flatCheck");
+  return "";
+}
+
+// flatCheck.js: the stratagem's d20, kept on the investigator, and the card's
+// text for what it does
+function keepStratagemRoll(stratagem, roll) {
+  const d20 = (roll?.dice || []).find((d) => d.type === 20 && d.reason !== "dropped");
+  const value = parseInt(d20?.value ?? roll?.total, 10) || 1;
+  if (stratagem?.tokenId) {
+    api.setValuesOnTokenById(stratagem.tokenId, stratagem.recordType, { "data.stratagem": { value, used: false } });
+  }
+  return `**Attack stratagem:** the first Strike against the creature you mark, before your next turn, uses ${value} for its attack roll (a natural 20 or 1 counts). Drop the Devise a Stratagem effect on it.\n\n**Skill stratagem:** you can't Strike it until your next turn, and get +1 to your next Intelligence-, Wisdom- or Charisma-based check or Perception check about it.`;
 }
 
 // Whether a creature carries a token mark this attacker applied (Devise a
@@ -371,23 +382,23 @@ function getUnstableDC(creature) {
   return (parseInt((creature?.data || creature?.record?.data || {}).crafting, 10) || 0) >= 4 ? 13 : 15;
 }
 
-// What an unstable check's d20 means: { degree, text }
-function getUnstableResult(natural, dc, level) {
-  const degree = natural >= dc + 10 ? 2 : natural >= dc ? 1 : natural <= dc - 10 ? -1 : 0;
-  if (degree >= 1) return { degree, text: "it holds." };
-  const malfunction = "your innovation malfunctions harmlessly (smoke, sparks) and can't be used for unstable actions until you spend 10 minutes retuning it.";
-  if (degree === 0) return { degree, text: malfunction };
-  return { degree, text: `${malfunction} You take ${Math.max(1, Math.floor((parseInt(level, 10) || 1) / 2))} fire damage (half your level; a minion innovation takes it instead).` };
-}
-
-// An unstable action: the flat check, rolled as it's used
+// An unstable action: the flat check, a d20 everyone sees (flatCheck.js),
+// with what a failure and a critical failure mean
 function getUnstableUse(action, token = api.getToken()) {
   if (!getTraitNameList(action?.data?.traits).includes("unstable") || !token) return "";
   const dc = getUnstableDC(token);
-  const natural = parseInt(api.rollInstant("1d20")?.total, 10) || 1;
-  const result = getUnstableResult(natural, dc, getCreatureLevel(token));
-  const color = result.degree >= 1 ? "green" : "red";
-  return `\n**Unstable (DC ${dc} flat check): [color=${color}]${natural}[/color]**, ${result.text}`;
+  const damage = Math.max(1, Math.floor(getCreatureLevel(token) / 2));
+  api.roll(
+    "1d20",
+    {
+      rollName: "Unstable",
+      dc,
+      failureNote: "Your innovation malfunctions harmlessly (smoke, sparks) and can't be used for unstable actions until you spend 10 minutes retuning it.",
+      criticalFailureNote: `You also take ${damage} fire damage (half your level; a minion innovation takes it instead).`,
+    },
+    "flatCheck",
+  );
+  return "";
 }
 
 // ---------------------------------------------------------------- Thaumaturge and psychic

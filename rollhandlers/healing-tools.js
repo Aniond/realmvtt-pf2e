@@ -415,19 +415,22 @@ function showWatchOrder() {
 
 // ------------------------------------------ Fast healing, regeneration, ferocity
 
-// A monster's fast healing and regeneration, from its Hit Points details
-// ("regeneration 20 (deactivated by electricity or fire)") or, failing that,
-// its abilities' names: { fastHealing, regeneration, deactivatedBy }
+// A creature's fast healing and regeneration: fastHealing modifiers and
+// effect rules (a spell's or an item's, characters too; the highest), and a
+// monster's Hit Points details ("regeneration 20 (deactivated by electricity
+// or fire)") or, failing that, its abilities' names: { fastHealing,
+// regeneration, deactivatedBy }
 function getSelfHealing(creature) {
-  const result = { fastHealing: 0, regeneration: 0, deactivatedBy: [] };
+  const result = { fastHealing: getFastHealingModifier(creature), regeneration: 0, deactivatedBy: [] };
   if (creature?.recordType === "characters") return result;
   const sources = [
     `${creature?.data?.hpDetails || ""}`,
     ...(creature?.data?.actions || []).map((action) => `${action?.name || ""}`),
   ];
+  let textFastHealing = 0;
   for (const text of sources) {
     const fast = text.match(/fast healing\s+(\d+)/i);
-    if (fast && !result.fastHealing) result.fastHealing = parseInt(fast[1], 10);
+    if (fast && !textFastHealing) textFastHealing = parseInt(fast[1], 10);
     const regen = text.match(/regeneration\s+(\d+)(?:\s*\(\s*deactivated by\s+([^)]*)\))?/i);
     if (regen && !result.regeneration) {
       result.regeneration = parseInt(regen[1], 10);
@@ -437,10 +440,22 @@ function getSelfHealing(creature) {
         .filter(Boolean);
     }
   }
+  result.fastHealing = Math.max(result.fastHealing, textFastHealing);
   return result;
 }
 
-// What a monster may heal at the start of its turn: one part each for fast
+// The highest active fastHealing modifier or effect rule (its value can be a
+// formula: "{2*@record.data.effects.rank}"); 0 without one
+function getFastHealingModifier(creature) {
+  if (!creature) return 0;
+  return getEffectsAndModifiersForToken(creature, ["fastHealing"]).reduce((best, mod) => {
+    if (mod.active === false || mod.situational) return best;
+    const value = Math.floor(evaluateMath(String(mod.value ?? "")) || parseFloat(mod.value) || 0);
+    return Math.max(best, value);
+  }, 0);
+}
+
+// What a creature may heal at the start of its turn: one part each for fast
 // healing and regeneration, with the card's line and the healing's source
 function getTurnStartSelfHealing(creature) {
   if (isTokenDead(creature)) return [];

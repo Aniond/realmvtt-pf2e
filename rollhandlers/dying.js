@@ -403,8 +403,13 @@ function getHealingReceivedAdjustment(target, options = {}) {
   const source = options.damageSource || null;
   if (options.isSpell || source?.type === "spell") {
     context.origin = { recordType: "spells", data: { traits: ["magical", "healing"] } };
-    // Foundry's item:magical and item:type:spell for the spell
+    // Foundry's item:magical and item:type:spell for the spell, and
+    // item:slug:<spell> (Angelic Halo: heal)
     context.item = { name: source?.slug || "", recordType: "spells", data: { traits: ["magical", "healing"] } };
+    // The rank it was cast at, for @spell.rank (Angelic Halo: 2 x the rank)
+    context.spell = context.item;
+    const castRank = parseInt(source?.castRank, 10);
+    if (castRank > 0) context.castRank = castRank;
   } else if (source && source.type) {
     const traits = [...(source.traits || [])];
     if (source.magical && !traits.includes("magical")) traits.push("magical");

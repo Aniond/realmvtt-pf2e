@@ -499,6 +499,14 @@ function getSpellCastContext(record, spell, dataPathToSpell) {
   };
 }
 
+// A spell's target, range or duration as text: the sheet's text, or the
+// { value } object the converter copies from Foundry's fixed heightening
+function getHeightenedText(value) {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "object") return getHeightenedText(value.value);
+  return String(value).trim();
+}
+
 function getSpellHeighteningInfo(spell, castingRank) {
   const heightening = spell?.data?.heightening || [];
   const baseRank = spell?.data?.level || 1;
@@ -536,40 +544,46 @@ function getSpellHeighteningInfo(spell, castingRank) {
         });
       }
 
-      // Add area increase (number that adds to base area value)
-      if (heightenData.area && typeof heightenData.area === "number") {
-        result.intervalAreaIncrease += heightenData.area * numIntervals;
+      // Add area increase (number that adds to base area value, stored as
+      // a number or text)
+      const areaIncrease = parseFloat(heightenData.area);
+      if (areaIncrease > 0) {
+        result.intervalAreaIncrease += areaIncrease * numIntervals;
       }
     }
   });
 
-  // Find the single highest fixed heightening across all fixed entries
-  let bestMatchingLevel = null;
-  let highestMatchingRank = 0;
-
+  // Every fixed rank up to the casting rank applies, lowest first, each over
+  // the last (Foundry's heightening.levels): Telekinetic Hand at 5th keeps
+  // 3rd's target and takes 5th's range
+  const fixedLevels = [];
   heightening.forEach((heightenEntry) => {
     const heightenData = heightenEntry?.data;
     if (!heightenData || heightenData.type !== "fixed") return;
-
-    const levels = heightenData.levels || [];
-    levels.forEach((levelEntry) => {
+    (heightenData.levels || []).forEach((levelEntry) => {
       const levelRank = levelEntry?.data?.rank || 0;
-      if (levelRank <= castingRank && levelRank > highestMatchingRank) {
-        bestMatchingLevel = levelEntry;
-        highestMatchingRank = levelRank;
-      }
+      if (levelRank <= castingRank) fixedLevels.push(levelEntry);
     });
   });
-
-  // Apply the single best fixed heightening if found
-  if (bestMatchingLevel) {
-    const levelData = bestMatchingLevel.data;
-    result.damage = levelData?.damage || null;
-    result.area = levelData?.area || null;
-    result.target = levelData?.target || null;
-    result.duration = levelData?.duration || null;
-    result.range = levelData?.range || null;
-  }
+  fixedLevels
+    .sort((a, b) => (a?.data?.rank || 0) - (b?.data?.rank || 0))
+    .forEach((levelEntry) => {
+      const levelData = levelEntry.data || {};
+      if (Array.isArray(levelData.damage) && levelData.damage.length > 0) {
+        result.damage = levelData.damage;
+      }
+      if (levelData.area && (levelData.area.type || levelData.area.value)) {
+        result.area = levelData.area;
+      }
+      const target = getHeightenedText(levelData.target);
+      if (target) result.target = target;
+      const range = getHeightenedText(levelData.range);
+      if (range) result.range = range;
+      // A duration keeps its object, which says whether it's sustained
+      if (getHeightenedText(levelData.duration)) {
+        result.duration = levelData.duration;
+      }
+    });
 
   return result;
 }
@@ -602,6 +616,9 @@ function calculateSpellDamage(record, spell, dataPathToSpell) {
   const precisionDamageComponents = []; // Separate array for precision damage
   const healingComponents = [];
   const persistentComponents = [];
+  // Rows that apply only against some targets (data.predicate), worked out
+  // when the damage is rolled (getSpellTargetDamage)
+  const targetDamage = [];
   let splashDamageValue = 0;
   let splashDamageType = "untyped";
 
@@ -611,215 +628,104 @@ function calculateSpellDamage(record, spell, dataPathToSpell) {
   // Get heightening info
   const heighteningInfo = getSpellHeighteningInfo(spell, castingRank);
 
-  // If fixed heightening applies, use its damage instead of base
+  // The rows to roll: a fixed heightening's own, or the base rows with each
+  // interval step added to the row of the same index, so a persistent row
+  // heightens its persistent damage (Blood Vendetta)
+  let rows;
   if (heighteningInfo.damage) {
-    heighteningInfo.damage.forEach((dmgEntry) => {
-      const formula = dmgEntry?.data?.formula || "";
-      const type = dmgEntry?.data?.type || primaryDamageType;
-      const category = dmgEntry?.data?.category || "";
-      const kinds = dmgEntry?.data?.kinds || [];
-      const applyMod = dmgEntry?.data?.applyMod || false;
-
-      // If no kinds specified, assume damage
-      const isDamage = kinds.length === 0 || kinds.includes("damage");
-      const isHealing = kinds.includes("healing");
-
-      if (isDamage) {
-        hasDamage = true;
-      }
-      if (isHealing) {
-        hasHealing = true;
-      }
-
-      if (category === "persistent") {
-        if (formula && isDamage) {
-          persistentComponents.push(`${formula} ${type}`);
-        }
-      } else if (category === "splash") {
-        // Splash damage is tracked separately and not added to the main damage string
-        if (formula && isDamage) {
-          // Check if it's a pure number or a dice formula
-          const splashNumber = Number(formula);
-          if (!isNaN(splashNumber)) {
-            // It's a pure number like "3"
-            splashDamageValue = splashNumber;
-          } else {
-            // It's a dice formula like "1d4"
-            splashDamageValue = formula;
-          }
-          splashDamageType = type;
-        }
-      } else if (category === "precision") {
-        // Precision damage goes into separate array
-        if (formula && isDamage) {
-          // Apply attribute modifier if applyMod is true
-          const effectFormula =
-            applyMod && attributeMod > 0
-              ? `${formula} + ${attributeMod} precision`.trim()
-              : `${formula} precision`.trim();
-          precisionDamageComponents.push(effectFormula);
-        }
-      } else {
-        if (formula) {
-          // Apply attribute modifier if applyMod is true
-          // For healing, use "heal" instead of "untyped"
-          const typeString = isHealing && type === "untyped" ? "heal" : type;
-          const effectFormula =
-            applyMod && attributeMod > 0
-              ? `${formula} + ${attributeMod} ${typeString}`.trim()
-              : `${formula} ${typeString}`.trim();
-
-          if (isDamage && !isHealing) {
-            damageComponents.push(effectFormula);
-          } else if (isHealing && !isDamage) {
-            healingComponents.push(effectFormula);
-          } else if (isDamage && isHealing) {
-            // Both damage and healing - add to both
-            damageComponents.push(effectFormula);
-            healingComponents.push(effectFormula);
-          }
-        }
-      }
-    });
+    rows = heighteningInfo.damage.map((entry) =>
+      getSpellDamageRow(entry, primaryDamageType)
+    );
   } else {
-    // Use base damage
-    baseDamage.forEach((dmgEntry) => {
-      const formula = dmgEntry?.data?.formula || "";
-      const type = dmgEntry?.data?.type || "untyped";
-      const category = dmgEntry?.data?.category || "";
-      const kinds = dmgEntry?.data?.kinds || [];
-      const applyMod = dmgEntry?.data?.applyMod || false;
-
-      // If no kinds specified, assume damage
-      const isDamage = kinds.length === 0 || kinds.includes("damage");
-      const isHealing = kinds.includes("healing");
-
-      if (isDamage) {
-        hasDamage = true;
-      }
-      if (isHealing) {
-        hasHealing = true;
-      }
-
-      if (category === "persistent") {
-        if (formula && isDamage) {
-          persistentComponents.push(`${formula} ${type}`);
+    rows = baseDamage.map((entry) => getSpellDamageRow(entry, "untyped"));
+    heighteningInfo.intervalDamageIncrease.forEach(({ numIntervals, damage }) => {
+      (damage || []).forEach((heightenDmg, index) => {
+        const formula = String(heightenDmg?.data?.formula || "").trim();
+        if (!formula) return;
+        const [first, ...rest] = multiplyDamageFormula(formula, numIntervals);
+        const type =
+          heightenDmg?.data?.type ||
+          baseDamage[index]?.data?.type ||
+          primaryDamageType;
+        if (!rows[index]) {
+          // A step with no base row is direct damage of its own
+          rows[index] = getSpellDamageRow(
+            { data: { formula: first, type } },
+            primaryDamageType
+          );
+        } else {
+          addSpellDamageTerm(rows[index], first, type);
         }
-      } else if (category === "splash") {
-        // Splash damage is tracked separately and not added to the main damage string
-        if (formula && isDamage) {
-          // Check if it's a pure number or a dice formula
-          const splashNumber = Number(formula);
-          if (!isNaN(splashNumber)) {
-            // It's a pure number like "3"
-            splashDamageValue = splashNumber;
-          } else {
-            // It's a dice formula like "1d4"
-            splashDamageValue = formula;
-          }
-          splashDamageType = type;
-        }
-      } else if (category === "precision") {
-        // Precision damage goes into separate array
-        if (formula && isDamage) {
-          // Apply attribute modifier if applyMod is true
-          const effectFormula =
-            applyMod && attributeMod > 0
-              ? `${formula} + ${attributeMod} precision`.trim()
-              : `${formula} precision`.trim();
-          precisionDamageComponents.push(effectFormula);
-        }
-      } else {
-        if (formula) {
-          // Apply attribute modifier if applyMod is true
-          // For healing, use "heal" instead of "untyped"
-          const typeString = isHealing && type === "untyped" ? "heal" : type;
-          const effectFormula =
-            applyMod && attributeMod > 0
-              ? `${formula} + ${attributeMod} ${typeString}`.trim()
-              : `${formula} ${typeString}`.trim();
-
-          if (isDamage && !isHealing) {
-            damageComponents.push(effectFormula);
-          } else if (isHealing && !isDamage) {
-            healingComponents.push(effectFormula);
-          } else if (isDamage && isHealing) {
-            // Both damage and healing - add to both
-            damageComponents.push(effectFormula);
-            healingComponents.push(effectFormula);
-          }
-        }
-      }
-    });
-
-    // Apply interval heightening (stacks with base damage/healing)
-    // Interval heightening doesn't have kinds - we check the base damage entry at the same index
-    heighteningInfo.intervalDamageIncrease.forEach((intervalInfo) => {
-      const { numIntervals, damage } = intervalInfo;
-      damage.forEach((heightenDmg, index) => {
-        const heightenFormula = heightenDmg?.data?.formula || "";
-        // Use the corresponding base damage type if available, otherwise use primary damage type
-        const baseDmgType = baseDamage[index]?.data?.type || primaryDamageType;
-        const heightenType = heightenDmg?.data?.type || baseDmgType;
-
-        // Get the corresponding base damage entry to check its kinds
-        const baseDmgEntry = baseDamage[index];
-        const baseKinds = baseDmgEntry?.data?.kinds || [];
-
-        // If no kinds specified in base, assume damage
-        const heightenIsDamage =
-          baseKinds.length === 0 || baseKinds.includes("damage");
-        const heightenIsHealing = baseKinds.includes("healing");
-
-        if (heightenFormula) {
-          // Parse the formula to multiply by intervals
-          const match = heightenFormula.match(/^(\d+)(d\d+)$/);
-          if (match) {
-            const numDice = parseInt(match[1], 10);
-            const dieType = match[2];
-            const totalDice = numDice * numIntervals;
-            // For healing, use "heal" instead of "untyped"
-            const typeString =
-              heightenIsHealing && heightenType === "untyped"
-                ? "heal"
-                : heightenType;
-            const intervalString =
-              `${totalDice}${dieType} ${typeString}`.trim();
-
-            if (heightenIsDamage) {
-              damageComponents[index] = `${
-                damageComponents[index] || ""
-              } + ${intervalString}`.trim();
-            }
-            if (heightenIsHealing) {
-              healingComponents[index] = `${
-                healingComponents[index] || ""
-              } + ${intervalString}`.trim();
-            }
-          } else {
-            // If it's not dice notation, just add it multiple times
-            // For healing, use "heal" instead of "untyped"
-            const typeString =
-              heightenIsHealing && heightenType === "untyped"
-                ? "heal"
-                : heightenType;
-            for (let i = 0; i < numIntervals; i++) {
-              if (heightenIsDamage) {
-                damageComponents.push(
-                  `${heightenFormula} ${heightenType}`.trim()
-                );
-              }
-              if (heightenIsHealing) {
-                healingComponents.push(
-                  `${heightenFormula} ${typeString}`.trim()
-                );
-              }
-            }
-          }
-        }
+        rest.forEach((increase) => addSpellDamageTerm(rows[index], increase, type));
       });
     });
   }
+
+  rows.forEach((row) => {
+    const { category, isDamage, isHealing, applyMod } = row;
+    if (isDamage) hasDamage = true;
+    if (isHealing) hasHealing = true;
+    if (!row.formula) return;
+    // For healing, use "heal" instead of "untyped"
+    const typeOf = (type) => (isHealing && type === "untyped" ? "heal" : type);
+    const terms = [{ formula: row.formula, type: row.type }, ...row.terms];
+
+    if (row.predicate && isDamage && !isHealing && category !== "splash") {
+      terms.forEach((term) => {
+        targetDamage.push({
+          value: `${term.formula} ${category === "precision" ? "precision" : term.type}`,
+          category: category === "persistent" ? "persistent" : "",
+          predicate: row.predicate,
+        });
+      });
+      return;
+    }
+
+    if (category === "persistent") {
+      if (isDamage) {
+        terms.forEach((term) =>
+          persistentComponents.push(`${term.formula} ${term.type}`)
+        );
+      }
+    } else if (category === "splash") {
+      // Splash damage is tracked separately and not added to the main damage string
+      if (isDamage) {
+        // Check if it's a pure number or a dice formula
+        const splashNumber = Number(row.formula);
+        // A pure number like "3", or a dice formula like "1d4"
+        splashDamageValue = !isNaN(splashNumber) ? splashNumber : row.formula;
+        splashDamageType = row.type;
+      }
+    } else if (category === "precision") {
+      // Precision damage goes into separate array
+      if (isDamage) {
+        // Apply attribute modifier if applyMod is true
+        const effectFormula =
+          applyMod && attributeMod > 0
+            ? `${row.formula} + ${attributeMod} precision`.trim()
+            : `${row.formula} precision`.trim();
+        precisionDamageComponents.push(
+          [effectFormula, ...row.terms.map((t) => `${t.formula} precision`)].join(" + ")
+        );
+      }
+    } else {
+      // Apply attribute modifier if applyMod is true
+      const effectFormula = [
+        applyMod && attributeMod > 0
+          ? `${row.formula} + ${attributeMod} ${typeOf(row.type)}`.trim()
+          : `${row.formula} ${typeOf(row.type)}`.trim(),
+        ...row.terms.map((t) => `${t.formula} ${typeOf(t.type)}`),
+      ].join(" + ");
+
+      if (isDamage) {
+        damageComponents.push(effectFormula);
+      }
+      // Both damage and healing: added to both
+      if (isHealing) {
+        healingComponents.push(effectFormula);
+      }
+    }
+  });
 
   // Build final strings
   // Combine regular damage components first, then precision damage components
@@ -835,6 +741,9 @@ function calculateSpellDamage(record, spell, dataPathToSpell) {
   // d10s instead of d8s). Field "healing" or "damage" limits which.
   damageString = applySpellDieSize(record, spell, damageString, "damage");
   healingString = applySpellDieSize(record, spell, healingString, "healing");
+  targetDamage.forEach((entry) => {
+    entry.value = applySpellDieSize(record, spell, entry.value, "damage");
+  });
 
   return {
     damageString,
@@ -845,7 +754,128 @@ function calculateSpellDamage(record, spell, dataPathToSpell) {
     hasDamage,
     hasHealing,
     castingRank,
+    targetDamage,
   };
+}
+
+// One of a spell's damage rows, with what interval heightening adds to it in
+// terms
+function getSpellDamageRow(entry, fallbackType) {
+  const data = entry?.data || {};
+  const kinds = data.kinds || [];
+  return {
+    formula: String(data.formula || "").trim(),
+    type: data.type || fallbackType,
+    category: data.category || "",
+    // If no kinds specified, assume damage
+    isDamage: kinds.length === 0 || kinds.includes("damage"),
+    isHealing: kinds.includes("healing"),
+    applyMod: data.applyMod || false,
+    predicate: isNonEmptyPredicate(parseModifierPredicate(data.predicate || ""))
+      ? data.predicate
+      : "",
+    terms: [],
+  };
+}
+
+// A heightening step taken n times, as the terms to add: "2d6" 3 times is
+// ["6d6"], "1" twice ["2"], and "1d4+1" twice ["1d4+1", "1d4+1"], each typed
+// on its own
+function multiplyDamageFormula(formula, times) {
+  const dice = formula.match(/^(\d*)d(\d+)$/i);
+  if (dice) return [`${(parseInt(dice[1], 10) || 1) * times}d${dice[2]}`];
+  if (/^\d+$/.test(formula)) return [String(parseInt(formula, 10) * times)];
+  return Array(times).fill(formula);
+}
+
+// Two formulas of the same dice or both flat added up ("2d6" and "2d6" is
+// "4d6"), or null when they can't be
+function addDamageFormulas(a, b) {
+  const diceA = String(a).match(/^(\d*)d(\d+)$/i);
+  const diceB = String(b).match(/^(\d*)d(\d+)$/i);
+  if (diceA && diceB && diceA[2] === diceB[2]) {
+    return `${(parseInt(diceA[1], 10) || 1) + (parseInt(diceB[1], 10) || 1)}d${diceA[2]}`;
+  }
+  if (/^\d+$/.test(a) && /^\d+$/.test(b)) {
+    return String(parseInt(a, 10) + parseInt(b, 10));
+  }
+  return null;
+}
+
+// Adds a heightening increase to a row: into its formula or a term of the
+// same type when they add up, else as a term of its own
+function addSpellDamageTerm(row, formula, type) {
+  const sameType = [row, ...row.terms].filter((term) => term.type === type);
+  for (const term of sameType) {
+    const sum = addDamageFormulas(term.formula, formula);
+    if (sum !== null) {
+      term.formula = sum;
+      return;
+    }
+  }
+  row.terms.push({ formula, type });
+}
+
+// The damage rows that apply only against some targets (calculateSpellDamage's
+// targetDamage) for one roll against these targets: a damage modifier, on
+// when the predicate passes against the one target and offered unticked when
+// that can't be known (no target or several), as weapon damage against a
+// target's trait is (Chilling Darkness's spirit damage against holy
+// creatures). Persistent damage can't be ticked in the roll prompt, so it's
+// added only when the predicate passes. { modifiers, persistent }
+function getSpellTargetDamage(record, rows, targets, context = {}, name = "") {
+  const result = { modifiers: [], persistent: [] };
+  if (!Array.isArray(rows) || rows.length === 0 || !record) return result;
+  const lookup = {
+    ...context,
+    targets: Array.isArray(targets) ? targets : [],
+  };
+  const traits = collectTraitsAndProperties(record, lookup);
+  rows.forEach((row) => {
+    const predicate = parseModifierPredicate(row.predicate);
+    const passes = evaluateEffectPredicate(predicate, traits, record, lookup);
+    const situational =
+      !passes &&
+      evaluateEffectPredicate(predicate, traits, record, {
+        ...lookup,
+        __assumeSituational: true,
+      });
+    if (!passes && !situational) return;
+    if (row.category === "persistent") {
+      if (passes) result.persistent.push(row.value);
+      return;
+    }
+    // Named for what it's against ("vs holy"), with or without a target
+    const label = getSituationalLabel(predicate, new Set(), {}, record);
+    const modifier = {
+      name: label ? `${name || "Spell"} (${label})` : name || "Spell",
+      value: row.value,
+      active: passes,
+      type: "",
+      valueType: "string",
+      modifierType: "spellDamageBonus",
+      isPenalty: false,
+    };
+    if (situational) modifier.situational = label || true;
+    result.modifiers.push(modifier);
+  });
+  return result;
+}
+
+// Where a spell's damage or healing comes from (getDamageSource), with the
+// rank it's cast at. An overlay goes by its spell's name, as Foundry's slug
+// does: Heal (vs. Living) is heal.
+function getSpellDamageSource(record, spell, dataPathToSpell, tradition = "", castRank = null) {
+  const source = getDamageSource(record, spell, tradition);
+  const overlay = String(dataPathToSpell || "").match(/^(.*)\.data\.overlays\.\d+$/);
+  if (overlay) {
+    const baseSpell = api.getValueOnRecord(record, overlay[1]);
+    const slug = toSlug(String(baseSpell?.name || ""));
+    if (slug) source.slug = slug;
+  }
+  const rank = parseInt(castRank, 10);
+  if (rank > 0) source.castRank = rank;
+  return source;
 }
 
 function isVitalityDualKindSpell(spell) {
@@ -883,7 +913,8 @@ function getSpellDamageMacro(record, spell, dataPathToSpell, tradition = "") {
   if (
     (!spellDamage.damageString || spellDamage.damageString.trim() === "") &&
     spellDamage.persistentDamage &&
-    spellDamage.persistentDamage.trim() !== ""
+    spellDamage.persistentDamage.trim() !== "" &&
+    !(spellDamage.targetDamage || []).length
   ) {
     const persistentMacroName = spellDamage.persistentDamage
       .split(" ")
@@ -932,6 +963,7 @@ applyPersistentDamage("${spellDamage.persistentDamage}", "${tokenId}", "${tokenN
     save?.statistic && (save.basic === true || save.basic === "true")
       ? { saveType: String(save.statistic).toLowerCase() }
       : null;
+  const castContext = getSpellCastContext(record, spell, dataPathToSpell);
 
   return `\`\`\`${macroName}
 // Lookup the record and then prompt the roll
@@ -947,11 +979,20 @@ api.getRecord('${record.recordType}', '${record._id}', (record) => {
     "",
     undefined,
     undefined,
-    { spell, ...${JSON.stringify(getSpellCastContext(record, spell, dataPathToSpell))} }
+    { spell, ...${JSON.stringify(castContext)} }
   );
+  // Damage only against some targets (getSpellTargetDamage)
+  const targetDamage = getSpellTargetDamage(
+    record,
+    ${JSON.stringify(spellDamage.targetDamage || [])},
+    api.getTargets(),
+    { spell, ...${JSON.stringify(castContext)} },
+    ${JSON.stringify(spellName)}
+  );
+  damageModifiers.push(...targetDamage.modifiers);
 
   let damage = "${spellDamage.damageString}";
-  const persistentDamage = "${spellDamage.persistentDamage}";
+  const persistentDamage = ["${spellDamage.persistentDamage}", ...targetDamage.persistent].filter(Boolean).join(" + ");
   const splashDamageValue = ${
     typeof spellDamage.splashDamageValue === "number"
       ? spellDamage.splashDamageValue
@@ -1011,7 +1052,7 @@ api.getRecord('${record.recordType}', '${record._id}', (record) => {
       icon: "IconWand",
       portrait: ${JSON.stringify(spell?.portrait || "")},
       // The spell and its casting tradition, for resistances to spells
-      damageSource: getDamageSource(record, spell, ${JSON.stringify(tradition)}),
+      damageSource: getSpellDamageSource(record, spell, '${dataPathToSpell}', ${JSON.stringify(tradition)}, ${castContext.castRank || "null"}),
       basicSave: ${JSON.stringify(basicSave)},
     },
     "damage"
@@ -1020,7 +1061,7 @@ api.getRecord('${record.recordType}', '${record._id}', (record) => {
 \`\`\``;
 }
 
-function getSpellHealingMacro(record, spell, dataPathToSpell) {
+function getSpellHealingMacro(record, spell, dataPathToSpell, tradition = "") {
   const spellName = spell?.name || "Unknown Spell";
   const spellEffect = calculateSpellDamage(record, spell, dataPathToSpell);
 
@@ -1030,6 +1071,7 @@ function getSpellHealingMacro(record, spell, dataPathToSpell) {
 
   // Get healing modifiers based on spell type
   const healingModifierTypes = ["healingBonus", "healingPenalty"];
+  const castContext = getSpellCastContext(record, spell, dataPathToSpell);
 
   return `\`\`\`Roll_Healing
 // Lookup the record and then prompt the roll
@@ -1045,7 +1087,7 @@ api.getRecord('${record.recordType}', '${record._id}', (record) => {
     "",
     undefined,
     undefined,
-    { spell, ...${JSON.stringify(getSpellCastContext(record, spell, dataPathToSpell))} }
+    { spell, ...${JSON.stringify(castContext)} }
   );
 
   const healing = "${spellEffect.healingString}";
@@ -1056,7 +1098,10 @@ api.getRecord('${record.recordType}', '${record._id}', (record) => {
     healingModifiers,
     {
       isSpell: true,
-      rollName: "${spellName} Healing"
+      rollName: "${spellName} Healing",
+      // The spell and its rank, for healing the target receives from spells
+      // (healingReceived: Angelic Halo)
+      damageSource: getSpellDamageSource(record, spell, '${dataPathToSpell}', ${JSON.stringify(tradition)}, ${castContext.castRank || "null"}),
     },
     "healing"
   );
@@ -1173,6 +1218,11 @@ function getSpellAttackMacro(
   // Incapacitation: one degree worse against a target above twice the rank
   // (check-tools.js)
   const castingRank = getCastingRank(record, spell, dataPathToSpell);
+  const castContext = getSpellCastContext(record, spell, dataPathToSpell);
+  const tradition = spellCastingEntry?.data?.tradition || "";
+  // Damage only against some targets, for one target or none
+  // (getSpellTargetDamage)
+  const targetDamage = (targets) => `getSpellTargetDamage(record, ${JSON.stringify(spellDamage.targetDamage || [])}, ${targets}, { spell, ...${JSON.stringify(castContext)} }, ${JSON.stringify(spellName)})`;
 
   return `\`\`\`Roll_Attack
 // Lookup the record and then prompt the roll
@@ -1217,7 +1267,7 @@ api.getRecord('${record.recordType}', '${record._id}', (record) => {
     "",
     undefined,
     undefined,
-    { spell, ...${JSON.stringify(getSpellCastContext(record, spell, dataPathToSpell))} }
+    { spell, ...${JSON.stringify(castContext)} }
   );
   
   const modifiers = [
@@ -1282,6 +1332,7 @@ api.getRecord('${record.recordType}', '${record._id}', (record) => {
 
   if (targets.length === 0) {
     // No target - just roll without target-specific modifiers
+    const targetDamage = ${targetDamage("[]")};
     const metadata = {
       attack: "${spellName}",
       icon: "IconWand",
@@ -1293,18 +1344,18 @@ api.getRecord('${record.recordType}', '${record._id}', (record) => {
       isRanged: ${!isMelee},
       damage: "${spellDamage.damageString}",
       damageType: "${primaryDamageType}",
-      persistentDamage: "${spellDamage.persistentDamage}",
+      persistentDamage: ["${spellDamage.persistentDamage}", ...targetDamage.persistent].filter(Boolean).join(" + "),
       splashDamage: splashDamageValue,
       splashDamageType: splashDamageType,
       tokenId: ourToken?._id,
       tokenName: tokenName,
       turnAttack: getTurnAttack(null),
-      damageModifiers: damageModifiers,
+      damageModifiers: [...damageModifiers, ...targetDamage.modifiers],
       traits: ${JSON.stringify(traits)},
       animation: ${JSON.stringify(animation)},
       isVitalityDual: ${isVitalityDual},
       criticalOnlyDice: criticalOnlyDice,
-      damageSource: getDamageSource(record, spell, ${JSON.stringify(spellCastingEntry?.data?.tradition || "")}),
+      damageSource: getSpellDamageSource(record, spell, '${dataPathToSpell}', ${JSON.stringify(tradition)}, ${castContext.castRank || "null"}),
     };
   
     api.promptRoll(
@@ -1353,7 +1404,8 @@ api.getRecord('${record.recordType}', '${record._id}', (record) => {
       // (Outwit) are named on the card
       const acReasons = [];
       if (${isAC}) {
-        targetDC = getArmorClassForToken(targetToken, targetIsOffGuardDueToFlanking, ourToken, acReasons);
+        // A melee or ranged spell attack, for AC against ranged attacks
+        targetDC = getArmorClassForToken(targetToken, targetIsOffGuardDueToFlanking, ourToken, acReasons, { attackRange: "${isMelee ? "melee" : "ranged"}" });
       } else {
         targetDC = getSaveDCForToken(targetToken, "${saveType}");
       }
@@ -1363,11 +1415,12 @@ api.getRecord('${record.recordType}', '${record._id}', (record) => {
       // AC bonuses only against a reaction to the target's movement
       // (Blessed Swiftness): unticked
       const situationalAc = ${isAC}
-        ? getTargetSituationalAcModifiers(targetToken, ourToken, targetIsOffGuardDueToFlanking)
+        ? getTargetSituationalAcModifiers(targetToken, ourToken, targetIsOffGuardDueToFlanking, { attackRange: "${isMelee ? "melee" : "ranged"}" })
         : [];
       const targetModifiers = [...modifiers, ...targetEffects, ...situationalAc];
   
       const targetName = targetToken?.identified === false ? targetRecord?.unidentifiedName : targetRecord?.name;
+      const targetDamage = ${targetDamage("[target]")};
   
       const metadata = {
         attack: "${spellName}",
@@ -1394,16 +1447,16 @@ api.getRecord('${record.recordType}', '${record._id}', (record) => {
         incapacitation: isIncapacitationResisted(targetToken, { traits: ${JSON.stringify(traits)}, rank: ${castingRank} }),
         damage: "${spellDamage.damageString}",
         damageType: "${primaryDamageType}",
-        persistentDamage: "${spellDamage.persistentDamage}",
+        persistentDamage: ["${spellDamage.persistentDamage}", ...targetDamage.persistent].filter(Boolean).join(" + "),
         splashDamage: splashDamageValue,
         splashDamageType: splashDamageType,
-        damageModifiers: damageModifiers,
+        damageModifiers: [...damageModifiers, ...targetDamage.modifiers],
         traits: ${JSON.stringify(traits)},
         showShieldDamage: targetShieldRaised && ${damageIsPhysical},
         animation: ${JSON.stringify(animation)},
         isVitalityDual: ${isVitalityDual},
         criticalOnlyDice: criticalOnlyDice,
-        damageSource: getDamageSource(record, spell, ${JSON.stringify(spellCastingEntry?.data?.tradition || "")}),
+        damageSource: getSpellDamageSource(record, spell, '${dataPathToSpell}', ${JSON.stringify(tradition)}, ${castContext.castRank || "null"}),
       };
   
       api.promptRoll(
@@ -1417,6 +1470,12 @@ api.getRecord('${record.recordType}', '${record._id}', (record) => {
   }
 });
 \`\`\``;
+}
+
+// Whether a spell's range reaches past touch, for its cast animation
+function isRangedSpell(range) {
+  const text = getHeightenedText(range).toLowerCase();
+  return !!text && text !== "self" && text !== "touch";
 }
 
 function castSpell(record, spell, dataPathToSpell, isOverlay = false) {
@@ -1460,7 +1519,7 @@ function castSpell(record, spell, dataPathToSpell, isOverlay = false) {
   const heighteningInfo = getSpellHeighteningInfo(spell, castingRank);
 
   // Add other tags like range, duration, etc. (use heightened values if available)
-  const range = heighteningInfo.range || spell?.data?.range || "";
+  const range = heighteningInfo.range || getHeightenedText(spell?.data?.range);
   const duration = heighteningInfo.duration || spell?.data?.duration || null;
   const durationString =
     typeof duration === "string"
@@ -1468,7 +1527,8 @@ function castSpell(record, spell, dataPathToSpell, isOverlay = false) {
       : duration && duration.value
       ? `${duration.value} ${duration.sustained ? "Sustained" : ""}`
       : "";
-  const targetString = heighteningInfo.target || spell?.data?.target || "";
+  const targetString =
+    heighteningInfo.target || getHeightenedText(spell?.data?.target);
 
   // Area can be replaced (fixed heightening) or increased (interval heightening)
   let area = heighteningInfo.area || spell?.data?.area || null;
@@ -1477,11 +1537,12 @@ function castSpell(record, spell, dataPathToSpell, isOverlay = false) {
     spell?.data?.area &&
     heighteningInfo.intervalAreaIncrease > 0
   ) {
-    // Apply interval area increase to base area
+    // Apply interval area increase to base area (stored as text or a number)
     area = {
       type: spell.data.area.type,
       value:
-        (spell.data.area.value || 0) + heighteningInfo.intervalAreaIncrease,
+        (parseFloat(spell.data.area.value) || 0) +
+        heighteningInfo.intervalAreaIncrease,
     };
   }
 
@@ -1489,6 +1550,14 @@ function castSpell(record, spell, dataPathToSpell, isOverlay = false) {
     area && area.type && area.value
       ? `${capitalize(area.type)} ${area.value} ft`
       : "";
+  // A casting time longer than actions (1 minute, 10 minutes) has no icon
+  const castingTime = String(spell?.data?.time || "").trim();
+  if (!actionIcon && castingTime) {
+    tags.push({
+      name: castingTime,
+      tooltip: `Cast: ${castingTime}`,
+    });
+  }
   if (range) {
     tags.push({
       name: range,
@@ -1697,9 +1766,7 @@ function castSpell(record, spell, dataPathToSpell, isOverlay = false) {
       abilityDescription: spellDescription,
       damage: damageString.toLowerCase(),
       healing: isHealing,
-      isRanged:
-        spell?.data?.range &&
-        (spell?.data?.range !== "Self" || spell?.data?.range !== "Touch"),
+      isRanged: isRangedSpell(range),
       isSpell: true,
     });
 
@@ -1743,8 +1810,10 @@ function castSpell(record, spell, dataPathToSpell, isOverlay = false) {
     }
   }
 
-  // Add damage/healing macros even if no defense (for spells that just do damage/healing)
-  if (!defense || (!defense.passive && !defense.save)) {
+  // Add damage/healing macros even if no defense (for spells that just do
+  // damage/healing). A defense whose attack and save are both empty is none
+  // (the converter's overlays with no defense: Heal (vs. Living)).
+  if (!defense?.passive?.statistic && !defense?.save?.statistic) {
     const damageMacro = getSpellDamageMacro(
       record,
       spell,
@@ -1758,7 +1827,12 @@ function castSpell(record, spell, dataPathToSpell, isOverlay = false) {
 
   // Only add healing macro if this is not a vitality/void dual-kind spell
   if (!isVitalityDualKindSpell(spell)) {
-    const healingMacro = getSpellHealingMacro(record, spell, dataPathToSpell);
+    const healingMacro = getSpellHealingMacro(
+      record,
+      spell,
+      dataPathToSpell,
+      spellCastingEntry?.data?.tradition || ""
+    );
     if (healingMacro) {
       macros.push(healingMacro);
     }

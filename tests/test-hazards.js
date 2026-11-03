@@ -65,7 +65,7 @@ section("The rolls");
 section("The card");
 {
   const card = ctx.getHazardDetectionCard(hazard(), ctx.getHazardDetectionResults(hazard(), [ezren, kyra], [14, 18]));
-  assert("only the GM sees it", [card.startsWith("[gm]"), card.endsWith("[/gm]")], [true, true]);
+  assert("only the GM sees it: each line in its own [gm] tags", card.split("\n").every((line) => line.startsWith("[gm]") && line.endsWith("[/gm]")), true);
   assertIncludes("the DC and the rank", card, "Perception vs Stealth DC 23 (trained)");
   assertIncludes("a roll", card, "- Ezren: 14 + 9 = 23, [color=green]notices it[/color]");
   assertIncludes("below the rank", card, "- Kyra: can't find it (needs trained Perception)");
@@ -88,6 +88,16 @@ section("The Detect button");
   state.messages = [];
   ctx.detectHazard(hazard());
   assertIncludes("the party rolls", state.messages[0], "- Valeros: 11 + 6 = 17");
+  {
+    // Sent private, so players don't see the hazard's name as the sender
+    const send = ctx.api.sendMessage;
+    let sentRoll;
+    ctx.api.sendMessage = (message, roll) => { sentRoll = roll; };
+    rolls = [10, 11];
+    ctx.detectHazard(hazard());
+    ctx.api.sendMessage = send;
+    assert("the card is a private message", sentRoll?.audience, "private");
+  }
   party = [];
   rolls = [9];
   ctx.api.getOtherTokens = () => [{ token: ezren }, { token: { _id: "gob", name: "Goblin", recordType: "npcs", data: {} } }];

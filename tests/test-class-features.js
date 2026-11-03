@@ -15,8 +15,9 @@ ctx.api.setValuesOnTokenById = (id, type, values, cb) => {
   sets.push([id, type, values]);
   if (cb) cb();
 };
-let d20s = [];
-ctx.api.rollInstant = () => ({ total: d20s.shift() });
+// api.roll calls: [formula, metadata, rollType]
+let rolls = [];
+ctx.api.roll = (formula, metadata, rollType) => rolls.push([formula, metadata, rollType]);
 const variables = { pf2eEncounter: { round: 2, participants: [] } };
 ctx.api.getCampaignVariable = (key) => variables[key];
 
@@ -35,12 +36,16 @@ const marked = (by = "tok-inv") => ({ token: { _id: "gob", name: "Goblin", recor
 section("Devise a Stratagem");
 {
   sets = [];
-  d20s = [14];
+  rolls = [];
   const token = investigator();
-  const line = ctx.getStratagemUse({ name: "Devise a Stratagem" }, token);
-  assert("using it rolls the d20 and keeps it", sets, [["tok-inv", "characters", { "data.stratagem": { value: 14, used: false } }]]);
-  assertIncludes("the card shows it", line, "**Stratagem d20: 14.**");
-  assert("another action: nothing", ctx.getStratagemUse({ name: "Recall Knowledge" }, token), "");
+  ctx.getStratagemUse({ name: "Devise a Stratagem" }, token);
+  assert("using it rolls a d20 everyone sees, as a flat check", rolls, [["1d20", { rollName: "Devise a Stratagem", stratagem: { tokenId: "tok-inv", recordType: "characters" } }, "flatCheck"]]);
+  const card = runHandler("flatCheck.js", { roll: { dice: [{ type: 20, value: 14 }], total: 14, metadata: rolls[0][1] } });
+  assert("the roll's result is kept on the investigator", sets, [["tok-inv", "characters", { "data.stratagem": { value: 14, used: false } }]]);
+  assertIncludes("the card says what it does", card, "uses 14 for its attack roll");
+  rolls = [];
+  ctx.getStratagemUse({ name: "Recall Knowledge" }, token);
+  assert("another action: no roll", rolls, []);
 
   const record = { _id: "inv", data: { stratagem: { value: 14, used: false } } };
   assert("a Strike against the marked creature takes it", ctx.getStratagemD20(record, marked(), token), 14);
@@ -65,6 +70,19 @@ section("The Strike takes the d20");
   assertIncludes("a stratagem 20 is a natural 20: 32 against DC 30 is a critical hit", crit, "CRITICAL");
   const plain = runHandler("attack.js", { roll: { dice: [{ type: 20, value: 5 }], total: 17, metadata: { dc: 20, attack: "Rapier", traits: [], damage: "1d6 piercing" } } });
   assertNotIncludes("no stratagem: as before", plain, "Devise a Stratagem");
+
+  // The card draws the dice from the rollString's @(...) values
+  const send = ctx.api.sendMessage;
+  let sent = null;
+  ctx.api.sendMessage = (message, roll) => (sent = roll);
+  runHandler("attack.js", { roll: { rollString: "1d20+7@(10)", dice: [{ type: 20, value: 10 }], total: 17, metadata: { dc: 15, attack: "Rapier", traits: [], damage: "1d6 piercing", stratagemD20: 6 } } });
+  ctx.api.sendMessage = send;
+  assert("the card's d20 is the stratagem's", [sent.rollString, sent.dice[0].value, sent.total], ["1d20+7@(6)", 6, 13]);
+  assert(
+    "only the d20 changes, with others in the roll",
+    [ctx.setD20InRollString("1d4+1d20+7@(3,10)", 10, 6), ctx.setD20InRollString("2d20kh1+7@(4,10)", 10, 6), ctx.setD20InRollString("1d20+7", 10, 6)],
+    ["1d4+1d20+7@(3,6)", "2d20kh1+7@(4,6)", "1d20+7"],
+  );
 }
 
 section("The Strike: from the sheet");
@@ -125,13 +143,18 @@ section("Overdrive");
 section("Unstable");
 {
   assert("DC 15, 13 legendary in Crafting", [ctx.getUnstableDC({ data: { crafting: "3" } }), ctx.getUnstableDC({ data: { crafting: "4" } })], [15, 13]);
-  assert("15 or more: it holds", ctx.getUnstableResult(15, 15, 5), { degree: 1, text: "it holds." });
-  assertIncludes("under 15: it malfunctions", ctx.getUnstableResult(9, 15, 5).text, "can't be used for unstable actions until you spend 10 minutes retuning it.");
-  assertIncludes("5 or less: and 2 fire damage at level 5", ctx.getUnstableResult(5, 15, 5).text, "You take 2 fire damage");
-  d20s = [12];
-  const line = ctx.getUnstableUse({ name: "Explode", data: { traits: ["Fire", "Inventor", "Manipulate", "Unstable"] } }, { _id: "t", data: { level: 5, crafting: "2" } });
-  assertIncludes("an unstable action rolls the check as it's used", line, "**Unstable (DC 15 flat check): [color=red]12[/color]**");
-  assert("not unstable: nothing", ctx.getUnstableUse({ name: "Overdrive", data: { traits: ["Inventor"] } }, { _id: "t", data: {} }), "");
+  rolls = [];
+  ctx.getUnstableUse({ name: "Explode", data: { traits: ["Fire", "Inventor", "Manipulate", "Unstable"] } }, { _id: "t", data: { level: 5, crafting: "2" } });
+  const [formula, metadata, rollType] = rolls[0];
+  assert("an unstable action rolls the DC 15 flat check everyone sees", [formula, metadata.dc, rollType], ["1d20", 15, "flatCheck"]);
+  const check = (natural) => runHandler("flatCheck.js", { roll: { dice: [{ type: 20, value: natural }], total: natural, metadata } });
+  assertNotIncludes("15: it holds", check(15), "malfunctions");
+  assertIncludes("12: it malfunctions", check(12), "can't be used for unstable actions until you spend 10 minutes retuning it.");
+  assertNotIncludes("... no fire damage", check(12), "fire damage");
+  assertIncludes("5: and 2 fire damage at level 5", check(5), "You also take 2 fire damage");
+  rolls = [];
+  ctx.getUnstableUse({ name: "Overdrive", data: { traits: ["Inventor"] } }, { _id: "t", data: {} });
+  assert("not unstable: no roll", rolls, []);
 }
 
 // --- Thaumaturge and psychic (the Dark Archive module's records) ----------------

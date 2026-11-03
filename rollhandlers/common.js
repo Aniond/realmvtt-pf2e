@@ -297,6 +297,26 @@ function getLabelForAbility(ability) {
   return ability;
 }
 
+// The chat card draws a roll's dice from the values in its rollString's
+// "@(...)" tail, not from roll.dice, so a d20 a handler changes (Devise a
+// Stratagem, a minimum roll) has to change there too: the d20 rolled `from`
+// becomes `to`. Unchanged when there's no tail or no such d20.
+function setD20InRollString(rollString, from, to) {
+  const [notation, tail] = String(rollString || "").split("@");
+  const values = tail?.match(/^\s*\(([^)]*)\)/);
+  if (!values) return rollString;
+  const list = values[1].split(",").map((value) => value.trim());
+  // Each die's size, in the order the values list them
+  const sizes = [];
+  for (const [, count, size] of notation.matchAll(/(\d*)d(\d+)/gi)) {
+    for (let i = 0; i < (parseInt(count, 10) || 1); i++) sizes.push(parseInt(size, 10));
+  }
+  const index = sizes.findIndex((size, i) => size === 20 && parseInt(list[i], 10) === from);
+  if (index === -1) return rollString;
+  list[index] = String(to);
+  return `${notation}@(${list.join(",")})${tail.slice(values[0].length)}`;
+}
+
 function getDamageType(rollString) {
   const regex = /(?:\d*d\d+|\+\d+)?(?:\s*\+?-?\s*\d+)?(?:\s+([\w-_]+))?/;
   const match = rollString.match(regex);
@@ -887,15 +907,18 @@ function getTargetSituationalAcModifiers(
   targetToken,
   attackerToken = null,
   targetIsOffGuardDueToFlanking = false,
+  attackContext = null,
 ) {
   if (!targetToken) return [];
   const results = [];
   REACTION_TRIGGERS.forEach((trigger) => {
-    const extra = { trigger };
+    const extra = { ...(attackContext || {}), trigger };
     const base = getArmorClassForToken(
       targetToken,
       targetIsOffGuardDueToFlanking,
       attackerToken,
+      null,
+      attackContext,
     );
     const names = [];
     const triggered = getArmorClassForToken(
@@ -919,7 +942,7 @@ function getTargetSituationalAcModifiers(
       )
         .filter((mod) => mod.active)
         .map((mod) => mod.name);
-    const before = new Set(lookup({}));
+    const before = new Set(lookup(attackContext || {}));
     lookup(extra).forEach((name) => {
       if (!before.has(name) && !names.includes(name)) names.push(name);
     });
@@ -3081,6 +3104,42 @@ function processDamageModifierCategories(
   };
 }
 
+// An immunity, weakness or resistance rule's exceptions, definition and
+// doubleVs (a feature modifier's data, or an effect rule's data): only those
+// it has
+function getIWRModifierDetails(data) {
+  const details = {};
+  if (!data || typeof data !== "object") return details;
+  if (data.exceptions) details.exceptions = data.exceptions;
+  if (data.definition) details.definition = data.definition;
+  if (data.doubleVs) details.doubleVs = data.doubleVs;
+  return details;
+}
+
+// An effect rule's degree of success adjustment ({ all, success, failure,
+// criticalFailure }): rule.data.adjustment, or the rule's value as an object
+// or JSON text. null without one.
+function getEffectRuleAdjustment(rule) {
+  let raw = rule?.data?.adjustment || rule?.value;
+  if (typeof raw === "string") {
+    try {
+      raw = JSON.parse(raw);
+    } catch (e) {
+      raw = null;
+    }
+  }
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const adjustment = {
+    all: raw.all || "none",
+    success: raw.success || "none",
+    failure: raw.failure || "none",
+    criticalFailure: raw.criticalFailure || "none",
+  };
+  return Object.values(adjustment).some((value) => value !== "none")
+    ? adjustment
+    : null;
+}
+
 // Get all effects and modifiers for a speicifc token that match the given types, field, itemId, and appliedById
 function getEffectsAndModifiersForToken(
   target,
@@ -3151,6 +3210,32 @@ function getEffectsAndModifiersForToken(
       }
 
       const ruleType = rule?.type || "";
+      // A degree of success adjustment, as a feature modifier's: the
+      // adjustment from the rule's data, or its value ({ success:
+      // "one-degree-better" }, as an object or JSON text). Applies unless its
+      // predicate fails.
+      if (ruleType === "adjustDegreeOfSuccess") {
+        const adjustment = getEffectRuleAdjustment(rule);
+        if (adjustment) {
+          results.push({
+            name: effect.name || "Effect",
+            value: adjustment,
+            active: active,
+            modifierType: ruleType,
+            type: "",
+            field: field,
+            valueType: "object",
+            isPenalty: false,
+            isEffect: true,
+            appliedBy: getEffectAppliedBy(target, effect),
+            slug: rule.slug || "",
+            predicate: rule.data?.predicate || "",
+            effectPredicate: rule.data?.predicate || undefined,
+          });
+        }
+        return;
+      }
+
       const isPenalty = ruleType.toLowerCase().includes("penalty");
       let value = rule.value || "";
       let bonusPenaltyType = "";
@@ -3208,7 +3293,31 @@ function getEffectsAndModifiersForToken(
         if (tokenPenalty) value = asPenaltyValue(value);
       }
       if (value !== 0 && (valueType === "number" || valueType === "string")) {
+        // A roll-prompt rule whose predicate fails only on atoms this roll
+        // can't know (the action, target, effect source or terrain) is
+        // offered as an opt-in, as a feature modifier's is (Safe Passage's
+        // save bonus against hazards)
+        let situational = null;
+        const baseType = ruleType.replace(/-(circumstance|item|status)$/, "");
+        if (
+          !active &&
+          rule.data?.predicate &&
+          SITUATIONAL_MODIFIER_TYPES.has(baseType)
+        ) {
+          const parsedPredicate = parseModifierPredicate(rule.data.predicate);
+          if (
+            evaluateEffectPredicate(parsedPredicate, traitsSet, target, {
+              ...context,
+              __assumeSituational: true,
+            })
+          ) {
+            situational =
+              getSituationalLabel(parsedPredicate, traitsSet, context, target) ||
+              true;
+          }
+        }
         let name = effect.name || "Effect";
+        if (typeof situational === "string") name = `${name} (${situational})`;
         // If this is a stackable effect, add the effect per stack amount with a different name each time
         let times = 1;
         if (effect.stackable) {
@@ -3232,6 +3341,10 @@ function getEffectsAndModifiersForToken(
             // The rule's predicate, for consumers that probe why it failed
             // (getTargetSituationalAcModifiers)
             effectPredicate: rule.data?.predicate || undefined,
+            // Resistance, weakness and immunity: exceptions, definition and
+            // doubleVs from the rule's data, as a feature modifier's
+            ...getIWRModifierDetails(rule.data),
+            ...(situational ? { situational } : {}),
           });
         }
       } else if (rule.valueType === "api") {
@@ -3608,14 +3721,10 @@ function getEffectsAndModifiersForToken(
         if (failureOnly) {
           resultObj.failureOnly = true;
         }
-        // Resistance, weakness and immunity: Foundry's exceptions and
-        // definition (applyDamage reads them against the damage's source)
-        if (modifier.data?.exceptions) {
-          resultObj.exceptions = modifier.data.exceptions;
-        }
-        if (modifier.data?.definition) {
-          resultObj.definition = modifier.data.definition;
-        }
+        // Resistance, weakness and immunity: Foundry's exceptions,
+        // definition and doubleVs (applyDamage reads them against the
+        // damage's source)
+        Object.assign(resultObj, getIWRModifierDetails(modifier.data));
         // adjustModifier: the damage type the adjusted modifier deals
         // instead (Spirit Instinct: rage damage becomes spirit)
         if (ruleType === "adjustModifier" && modifier.data?.damageType) {
@@ -5475,7 +5584,9 @@ function getArmorClassTypeBest(type, isBonus, mods, raisedShieldBonus) {
  * only apply against that attacker count (Outwit: origin:mark:hunted-prey);
  * reasons, if given an array, receives the names of those modifiers.
  * extraContext adds to the predicate context ({ trigger: "movement" }: the
- * attack is a reaction to the creature's movement).
+ * attack is a reaction to the creature's movement; { attackRange: "ranged" }:
+ * the attack is a ranged one, for "+2 AC against ranged attacks" predicated
+ * on origin:item:ranged).
  */
 function getArmorClassForToken(
   token,
@@ -5493,10 +5604,16 @@ function getArmorClassForToken(
     armorItem = inventory.find((item) => item._id === bestArmor.armor.armorId);
   }
   const baseContext = armorItem ? { item: armorItem } : {};
-  // Against a known attacker, its atoms join the predicate context
-  const originAtoms = attackerToken
+  // Against a known attacker, its atoms join the predicate context, and
+  // against a known attack whether it's melee or ranged
+  // (extraContext.attackRange: origin:item:melee, origin:item:ranged)
+  let originAtoms = attackerToken
     ? getOriginAtoms(token, attackerToken)
     : null;
+  const attackRange = String(extraContext?.attackRange || "").toLowerCase();
+  if (attackRange === "melee" || attackRange === "ranged") {
+    originAtoms = [...(originAtoms || []), `origin:item:${attackRange}`];
+  }
   const context = {
     ...baseContext,
     ...(originAtoms ? { originAtoms } : {}),
@@ -13467,11 +13584,14 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber) {
       // AC against us: modifiers that only apply against this attacker
       // (Outwit) are named on the card
       const acReasons = [];
+      // Whether the Strike is melee or ranged, for AC against ranged attacks
+      const attackContext = { attackRange: isMelee && !isThrown ? "melee" : "ranged" };
       let targetAc = getArmorClassForToken(
         target?.token,
         targetIsOffGuardDueToFlanking,
         ourToken,
         acReasons,
+        attackContext,
       );
       // AC bonuses only against a reaction to the target's movement
       // (Blessed Swiftness): unticked, for a Reactive Strike
@@ -13479,6 +13599,7 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber) {
         target?.token,
         ourToken,
         targetIsOffGuardDueToFlanking,
+        attackContext,
       ).forEach((mod) => modifiers.push(mod));
 
       // Check if we have a critical specialization effect
@@ -14870,6 +14991,16 @@ function getIWR(target, armorSpecDetails = null, roll = null) {
     }
     const exceptionWords =
       exceptions && exceptions.words.length > 0 ? exceptions.words : null;
+    // Damage the entry counts double against (words, as on the record's
+    // IWR lists)
+    const doubleVsList = (
+      Array.isArray(modifier.doubleVs)
+        ? modifier.doubleVs
+        : String(modifier.doubleVs || "").split(",")
+    )
+      .map((word) => String(word).trim().toLowerCase())
+      .filter(Boolean);
+    const doubleVs = doubleVsList.length > 0 ? doubleVsList : null;
 
     if (!damageType) {
       return; // Skip empty values
@@ -14881,7 +15012,7 @@ function getIWR(target, armorSpecDetails = null, roll = null) {
       if (!immunitiesMap[damageType]) {
         immunitiesMap[damageType] = {
           type: damageType,
-          doubleVs: null,
+          doubleVs,
           exceptions: exceptionWords,
         };
       }
@@ -14894,7 +15025,7 @@ function getIWR(target, armorSpecDetails = null, roll = null) {
         weaknessesMap[damageType] = {
           type: damageType,
           value: numericValue,
-          doubleVs: null,
+          doubleVs,
           exceptions: exceptionWords,
         };
       }
@@ -14907,7 +15038,7 @@ function getIWR(target, armorSpecDetails = null, roll = null) {
         resistancesMap[damageType] = {
           type: damageType,
           value: numericValue,
-          doubleVs: null,
+          doubleVs,
           exceptions: exceptionWords,
         };
       }
@@ -15713,6 +15844,17 @@ function applyDamage(
         // Minimum 1 healing if there was any healing to begin with
         healingAmount = Math.max(1, healingAmount);
       }
+      // The healing the target receives changes by its healingReceived
+      // modifiers, as on a healing card (dying.js: Angelic Halo on heal)
+      let healingReceivedNames = [];
+      if (healingAmount > 0) {
+        const received = getHealingReceivedAdjustment(target, {
+          isSpell: roll.metadata?.isSpell === true,
+          damageSource: roll.metadata?.damageSource || null,
+        });
+        healingAmount = Math.max(0, healingAmount + received.amount);
+        healingReceivedNames = received.names;
+      }
 
       // Remove converted damage types from damageByType
       damageTypesToRemove.forEach((type) => {
@@ -16293,7 +16435,9 @@ function applyDamage(
       if (damage < 0) {
         // Healing message
         const healAmount = Math.abs(damage);
-        message = `${targetName} was healed ${healAmount} HP.`;
+        message = `${targetName} was healed ${healAmount} HP${
+          healingReceivedNames.length > 0 ? ` (${healingReceivedNames.join(", ")})` : ""
+        }.`;
       } else {
         // Damage message
         message = isApplyingSplash
@@ -16541,6 +16685,48 @@ function replaceWithDamageMacro() {
   );
 }
 
+// The math in a damage formula worked out before it's rolled, so the dice
+// parser sees plain counts ("(2)d10" would roll one die): Foundry's
+// ternary/gte/... (evaluateFormula) and {...} first, then each innermost
+// parenthesis or floor/ceil/min/max/abs call with only numbers in it, again
+// until nothing changes (nested ones too). Then products of
+// plain numbers ("5*8" -> "40"), and the parentheses around a dice group
+// that stands on its own ("(1d6+1) cold" -> "1d6+1 cold"). Fractions left
+// are rounded down.
+function resolveDamageFormulaMath(formula) {
+  let value = evaluateFormula(String(formula || ""));
+  value = value.replace(/\{([^{}]+)\}/g, (_match, expression) =>
+    String(evaluateMath(expression)),
+  );
+  const group = /(floor|ceil|min|max|abs)?\(([^()]*)\)/gi;
+  let previous = null;
+  for (let i = 0; i < 50 && value !== previous; i++) {
+    previous = value;
+    value = value.replace(group, (match, fn, inner) => {
+      // Dice or words inside: not math to work out here
+      if (!/^[\d\s+\-*/.,]+$/.test(inner) || !/\d/.test(inner)) return match;
+      if (!fn && inner.includes(",")) return match;
+      const result = evaluateMath(fn ? `${fn.toLowerCase()}(${inner})` : `(${inner})`);
+      if (typeof result !== "number" || !isFinite(result)) return match;
+      return String(result);
+    });
+  }
+  value = value.replace(
+    /(^|[^\dd.])(\d+(?:\s*[*/]\s*\d+)+)(?![\d.]|\s*d\d)/gi,
+    (match, before, expression) => {
+      const result = evaluateMath(expression);
+      if (typeof result !== "number" || !isFinite(result)) return match;
+      return `${before}${Math.floor(result)}`;
+    },
+  );
+  value = value.replace(
+    /(^|[\s+])\(([^()]*\d*d\d+[^()]*)\)(?=$|[\s+-])/gi,
+    (_match, before, inner) => `${before}${inner.replace(/\s+/g, "")}`,
+  );
+  // Fractions are rounded down once everything is worked out
+  return value.replace(/(\d+)\.\d+/g, "$1");
+}
+
 /**
  * Creates a damage macro for a given formula and category
  * @param {string} formula - Damage formula like "1d6 fire" or "2d4 + 3 bludgeoning"
@@ -16577,16 +16763,9 @@ function executeDamageMacro(
     itemLevel,
   );
 
-  // Then evaluate any mathematical expressions like floor(2/2), (3), etc.
-  // This handles cases like: floor(@item.level/2) -> floor(2/2) -> 1
-  // or (@item.level) -> (2) -> 2
-  processedFormula = processedFormula.replace(
-    /\(([0-9+\-*/.]+)\)|floor\([^)]+\)|ceil\([^)]+\)|min\([^)]+\)|max\([^)]+\)|abs\([^)]+\)/gi,
-    (match) => {
-      const evaluated = evaluateMath(match);
-      return String(evaluated);
-    },
-  );
+  // Then work out the dice counts and flat amounts: "(5 -3)d6" -> "2d6",
+  // "(floor(5/2))d10" -> "2d10", ternary(...) and {...} too
+  processedFormula = resolveDamageFormulaMath(processedFormula);
 
   // Check for formulas with both standard and persistent damage
   // Example: "5d6 bludgeoning and 2d8 persistent electricity damage"

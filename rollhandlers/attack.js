@@ -94,6 +94,7 @@ if (modifiedRoll.dice) {
   modifiedRoll.dice = modifiedRoll.dice.map((d) => {
     let value = parseInt(d.value, 10);
     if (d.type === 20 && d.reason !== "dropped") {
+      const rolled = value;
       if (Number.isFinite(stratagemD20)) {
         stratagemNote = `Devise a Stratagem: the d20 is ${stratagemD20} (rolled ${value}).`;
         modifiedRoll.total += stratagemD20 - value;
@@ -102,6 +103,10 @@ if (modifiedRoll.dice) {
       if (minRoll && value < minRoll) {
         modifiedRoll.total += minRoll - value;
         value = minRoll;
+      }
+      // The die the card shows is the one used
+      if (value !== rolled) {
+        modifiedRoll.rollString = setD20InRollString(modifiedRoll.rollString, rolled, value);
       }
     }
     return {
