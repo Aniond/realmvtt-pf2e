@@ -739,6 +739,57 @@
       "hideFromCompendium": false
     },
     {
+      "name": "Shield Attack List",
+      "type": "shield_attack_list",
+      "isList": true,
+      "minX": 500,
+      "minY": 250,
+      "tabs": [
+        {
+          "name": "Main",
+          "file": "attack-list.html",
+          "fields": []
+        }
+      ],
+      "icon": "",
+      "showAddButton": false,
+      "showDeleteButton": false,
+      "addButtonText": "",
+      "allowedListTypes": [],
+      "newItemName": "",
+      "newItemUnidentifiedName": "",
+      "stackDuplicates": false,
+      "countFieldName": "",
+      "emptyListText": " ",
+      "orderCriteria": [
+        {
+          "field": "hideFromList",
+          "descending": false
+        },
+        {
+          "field": "namefield",
+          "descending": false
+        }
+      ],
+      "maxLength": 0,
+      "singleRow": false,
+      "filterCriteria": [
+        {
+          "field": "type",
+          "operator": "equals",
+          "value": "shield"
+        },
+        {
+          "field": "carried",
+          "operator": "equals",
+          "value": "equipped",
+          "isOr": false
+        }
+      ],
+      "disableDrop": false,
+      "hideFromCompendium": false
+    },
+    {
       "name": "Attack Stowed List",
       "type": "attack_stowed_list",
       "isList": true,

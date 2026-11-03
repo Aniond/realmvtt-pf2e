@@ -4724,6 +4724,10 @@ function onItemInvested(value) {
 
 // Returns the proper fields object for the given item
 function getItemFields(item) {
+  // A shield's attack row shows the controls for the weapon it Strikes as
+  // (armor-traits.js), with no hand choice
+  const isShield = item?.data?.type === "shield";
+  item = getShieldWeapon(item) || item;
   const traits = item.data?.traits || [];
   const hasInvestedTrait = traits
     .map((trait) => trait.toLowerCase())
@@ -4792,7 +4796,7 @@ function getItemFields(item) {
         !hasArmorResilientRune,
     },
     useBtn: { hidden: !isConsumable && !hasUseBtn },
-    handBtn: { hidden: isTwoHanded },
+    handBtn: { hidden: isTwoHanded || isShield },
     rangeToggleBtn: { hidden: !(isMelee && isThrown) },
     rangeToggleBtnDisabled: { hidden: isMelee },
     meleeToggleBtnDisabled: { hidden: !isMelee || (isMelee && isThrown) },
@@ -4820,6 +4824,10 @@ function getItemFields(item) {
 
 // On the given, item, and valuesToSet, set the items fields as needed
 function setItemFields(item, itemDataPath, valuesToSet) {
+  // A shield's attack row shows the controls for the weapon it Strikes as
+  // (armor-traits.js), with no hand choice
+  const isShield = item?.data?.type === "shield";
+  item = getShieldWeapon(item) || item;
   const itemFields = item.fields || {};
   const traits = item.data?.traits || [];
   const hasInvestedTrait = traits
@@ -4887,8 +4895,11 @@ function setItemFields(item, itemDataPath, valuesToSet) {
   if ((isConsumable || hasUseBtn) && itemFields?.useBtn?.hidden !== false) {
     valuesToSet[`${itemDataPath}.fields.useBtn.hidden`] = false;
   }
-  if (!isTwoHanded && itemFields?.handBtn?.hidden !== false) {
+  if (!isTwoHanded && !isShield && itemFields?.handBtn?.hidden !== false) {
     valuesToSet[`${itemDataPath}.fields.handBtn.hidden`] = false;
+  }
+  if (isShield && itemFields?.handBtn?.hidden !== true) {
+    valuesToSet[`${itemDataPath}.fields.handBtn.hidden`] = true;
   }
   // Show toggle button only for melee throwing weapons
   if (isMelee && isThrown && itemFields?.rangeToggleBtn?.hidden !== false) {
@@ -12249,8 +12260,9 @@ function hasArmorSpecializationEffect(record, item) {
 }
 
 function performAttackRoll(record, weapon, weaponDataPath, attackNumber) {
-  // Feats and effects can change the die size or traits for this Strike
-  weapon = getAlteredWeapon(record, weapon);
+  // Feats and effects can change the die size or traits for this Strike; a
+  // shield Strikes as a weapon (armor-traits.js)
+  weapon = getAlteredWeapon(record, getShieldWeapon(weapon) || weapon);
   // The creature's attacks this turn (attack-log.js). The button clicked
   // sets the multiple attack penalty; without a button, the log sets it.
   const attackerToken = api.getToken();
@@ -13649,8 +13661,9 @@ function performDamageRoll(record, weapon, weaponDataPath, isCritical) {
     console.error(`Weapon not found for data path: ${weaponDataPath}`);
     return;
   }
-  // Feats and effects can change the die size or traits for this Strike
-  weapon = getAlteredWeapon(record, weapon);
+  // Feats and effects can change the die size or traits for this Strike; a
+  // shield Strikes as a weapon (armor-traits.js)
+  weapon = getAlteredWeapon(record, getShieldWeapon(weapon) || weapon);
 
   // Get weapon damage info using helper function
   const weaponDamageInfo = getWeaponDamageInfo(record, weapon);

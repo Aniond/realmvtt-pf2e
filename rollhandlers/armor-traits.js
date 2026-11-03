@@ -114,6 +114,8 @@ function getPonderousModifier(record, bestArmor) {
 //     least N; the Raise a Shield card says so
 //   - Destroyed at 0 Hit Points: the damage card says so and the shield is
 //     lowered (applyDamage)
+//   - Shield Strikes: an equipped shield has its own attack row, and the
+//     attack code treats it as a weapon (getShieldWeapon)
 
 // Whether a creature has Shield Block: a character's feat, or an NPC's
 // ability of that name
@@ -149,4 +151,51 @@ function getRaiseShieldNote(creature) {
   const strength = parseInt(creature?.data?.str, 10) || 0;
   if (strength >= hefty) return "";
   return `Hefty ${hefty}: raising it takes 2 actions (Strength ${strength >= 0 ? "+" : ""}${strength}, under +${hefty}).`;
+}
+
+const SHIELD_DAMAGE_TYPES = { b: "bludgeoning", p: "piercing", s: "slashing" };
+
+// A shield as the weapon it Strikes with, as Foundry's
+// ShieldPF2e.generateWeapon (Attacking with a Shield, Player Core pg. 277): a
+// martial weapon in the shield group doing 1d4 bludgeoning, or its integrated
+// weapon's damage ("Integrated-1d6-S-Versatile-P"), with Shield Throw N as
+// Thrown N. Built when it's used, so nothing is written to the inventory; it
+// keeps the shield's _id and data (its versatile choice, thrown toggle and
+// count). Null for anything but a shield.
+function getShieldWeapon(item) {
+  if (item?.data?.type !== "shield") return null;
+  let damage = { dice: 1, die: "d4", damageType: "bludgeoning" };
+  const traits = [];
+  (Array.isArray(item.data.traits) ? item.data.traits : []).forEach((trait) => {
+    const name = `${trait}`.trim();
+    const lower = name.toLowerCase();
+    const integrated = lower.match(/^integrated[-\s](\d+)d(\d+)[-\s]([bps])(?:[-\s]versatile[-\s]([bps]))?$/);
+    const shieldThrow = lower.match(/^shield[-\s]throw[-\s](\d+)$/);
+    if (integrated) {
+      damage = {
+        dice: parseInt(integrated[1], 10),
+        die: `d${integrated[2]}`,
+        damageType: SHIELD_DAMAGE_TYPES[integrated[3]],
+      };
+      if (integrated[4]) traits.push(`Versatile-${integrated[4].toUpperCase()}`);
+    } else if (shieldThrow) {
+      traits.push(`Thrown-${shieldThrow[1]}`);
+    } else if (!/^hefty[-\s]*\d+$/.test(lower)) {
+      traits.push(name);
+    }
+  });
+  return {
+    ...item,
+    data: {
+      ...item.data,
+      type: "weapon",
+      itemCategory: "Martial",
+      group: "Shield",
+      damage,
+      traits,
+      range: null,
+      usage: "held-in-one-hand",
+      runes: { potency: 0, striking: 0, property: [] },
+    },
+  };
 }
