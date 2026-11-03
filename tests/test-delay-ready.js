@@ -94,6 +94,13 @@ section("A whole round");
   assert("the same round, returned, or not delaying: nothing", sets, []);
 }
 
+section("The encounter's end");
+{
+  reset();
+  ctx.clearEncounterDelays([goblin("a", "Goblin A", 20, { delaying: { round: 3, returned: false } }), goblin("c", "Goblin C", 10)]);
+  assert("a delay doesn't carry into the next encounter", sets, [["a", { "data.delaying": null }]]);
+}
+
 section("The turn's end");
 {
   const end = (delaying, turnRound) => ctx.getDelayTurnEnd(goblin("a", "Goblin A", 20, delaying ? { delaying } : {}), turnRound);

@@ -8,9 +8,10 @@
 //     don't run again on the turn it returns to in that round. A creature
 //     that stays out a whole round loses the delayed turn's actions and keeps
 //     its initiative. The delay is kept on the token (data.delaying: { round,
-//     returned }), cleared at the end of the turn it returns to or when its
-//     turn comes round again; Realm can't take a token out of the tracker,
-//     so it stays there and the GM ends the delayed turn
+//     returned }), cleared at the end of the turn it returns to, when its
+//     turn comes round again, or at the encounter's end. Realm can't take a
+//     token out of the tracker, so it stays there and the GM ends the
+//     delayed turn
 //   - Return: the delaying creature's initiative goes just after the
 //     creature whose turn it is, so the tracker's next turn is its own
 //     (checked live: the tracker orders turns by initiative as they change)
@@ -119,6 +120,15 @@ function endFullRoundDelay(token, round) {
     [],
     token,
   );
+}
+
+// A delay doesn't carry into the next encounter
+function clearEncounterDelays(tokens) {
+  (tokens || []).forEach((token) => {
+    if (getDelayState(token)) {
+      api.setValuesOnTokenById(token._id, "tokens", { "data.delaying": null });
+    }
+  });
 }
 
 // At the end of a creature's turn, what the turn hooks do:
