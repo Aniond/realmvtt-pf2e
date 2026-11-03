@@ -17,6 +17,15 @@
 //     raises the condition by 1, up to the maximum (2, 3 with Major Curse, 4
 //     with Extreme Curse); at the maximum the card says so and leaves it to
 //     the GM. Refocus reduces it by 1
+//   - Devise a Stratagem (Player Core 2 pg. 103): using it rolls the d20,
+//     kept on the investigator until the start of their next turn; the first
+//     Strike against the creature they mark takes it as its attack roll
+//   - Overdrive (Guns & Gears pg. 16): using it rolls Crafting against the
+//     standard DC for your level, with the module's effect for the result to
+//     apply, and on a critical failure the fire damage and a 1d4-round
+//     recharge
+//   - Unstable (Guns & Gears): using an unstable action rolls the DC 15 flat
+//     check (13 if legendary in Crafting) and says what happens
 //
 // The ruleset assists the GM and doesn't police the action economy (#27): no
 // warnings for concentrate actions while raging or attacks after a finisher.
@@ -255,4 +264,113 @@ function removeCursebound(token, callback) {
   // Without an instance index Realm removes every instance: the last one only
   api.removeEffectById(found.effect._id, token, callback, { instanceIndex: Math.max(current - 1, 0) });
   return current > 1 ? ` Cursebound ${current - 1}.` : " No longer cursebound.";
+}
+
+// ---------------------------------------------------------------- Investigator and inventor
+
+function isActionNamed(action, name) {
+  return String(action?.name || "").trim().toLowerCase() === name.toLowerCase();
+}
+
+// Devise a Stratagem: the d20 rolled when it's used, kept on the investigator
+// (data.stratagem: { value, round, used }) for the first Strike against the
+// creature they mark. The module's action and effect add the Intelligence
+// modifier and Strategic Strike against the mark; a skill stratagem uses the
+// effect's toggle, not the d20.
+function getStratagemUse(action, token = api.getToken()) {
+  if (!isActionNamed(action, "Devise a Stratagem") || !token?._id) return "";
+  const value = parseInt(api.rollInstant("1d20")?.total, 10) || 1;
+  const round = getEncounterState()?.round || 0;
+  api.setValuesOnTokenById(token._id, token.recordType, { "data.stratagem": { value, round, used: false } });
+  return `\n**Stratagem d20: ${value}.** Attack stratagem: the first Strike against the creature you mark, before your next turn, uses ${value} for its attack roll (a natural 20 or 1 counts). Skill stratagem: you can't Strike it until your next turn, and get +1 to a check about it instead.`;
+}
+
+// Whether a creature carries a token mark this attacker applied (Devise a
+// Stratagem, Hunt Prey), as the target:mark trait reads it
+function hasOwnTokenMark(target, mark, attackerToken, record) {
+  const token = target?.token || target;
+  return (token?.effects || []).some((effect) =>
+    (effect?.rules || []).some((rule) => {
+      if (rule?.type !== "tokenMark" || toSlug(String(rule.value || "")) !== mark) return false;
+      const appliedBy = token?.effectValues?.[effect._id]?.tokenId;
+      return !appliedBy || appliedBy === attackerToken?._id || appliedBy === record?._id;
+    }),
+  );
+}
+
+// The d20 a Strike takes: the investigator's unused stratagem roll, when the
+// target carries their Devise a Stratagem mark; else null
+function getStratagemD20(record, target, attackerToken = api.getToken()) {
+  const stratagem = record?.data?.stratagem ?? attackerToken?.data?.stratagem;
+  const value = parseInt(stratagem?.value, 10);
+  if (!stratagem || stratagem.used || !Number.isFinite(value)) return null;
+  return hasOwnTokenMark(target, "devise-a-stratagem", attackerToken, record) ? value : null;
+}
+
+// The stratagem ends at the start of the investigator's next turn, and with
+// the encounter
+function clearStratagem(token) {
+  if (token?._id && (token.data?.stratagem ?? token.record?.data?.stratagem)) {
+    api.setValuesOnTokenById(token._id, token.recordType, { "data.stratagem": null });
+  }
+}
+
+// Overdrive's results: the module's effect to apply for each, by degree
+const OVERDRIVE_EFFECTS = { 2: "Overdrive (Critical Success)", 1: "Overdrive (Success)", 0: "Overdrive (Failure)" };
+
+function getCreatureLevel(creature) {
+  return parseInt((creature?.data || creature?.record?.data || {}).level, 10) || 1;
+}
+
+// The notes the Crafting check shows for each result, with the buttons
+function getOverdriveNotes(token) {
+  const fence = "```";
+  const apply = (effect) =>
+    `\n${getChatButton(`Apply_${effect.replace(/[^A-Za-z]+/g, "_").replace(/_+$/, "")}`, token, `api.addEffect(${JSON.stringify(effect)}, token)`)}`;
+  const selfDamage = Math.max(1, Math.ceil(getCreatureLevel(token) / 2));
+  const damage = `\n${fence}Take_${selfDamage}_Fire_Damage\napplyDamage(null, { total: ${selfDamage}, types: [{ type: "fire", value: ${selfDamage} }], dice: [], metadata: { rollName: "Overdrive", damageType: "fire" } }, false);\n${fence}`;
+  const recharge = `\n${getChatButton("Start_Recharge_(1d4_rounds)", token, 'startRecharge(token, "Overdrive", "1d4")')}`;
+  return [
+    { name: "Critical overdrive", text: `your Strikes deal extra damage equal to your Intelligence modifier for 1 minute.${apply(OVERDRIVE_EFFECTS[2])}`, outcome: [2] },
+    { name: "Overdrive", text: `your Strikes deal extra damage equal to half your Intelligence modifier for 1 minute.${apply(OVERDRIVE_EFFECTS[1])}`, outcome: [1] },
+    { name: "Overdrive", text: `your Strikes deal 1 extra fire damage for 1 minute; it doesn't change an Overdrive already active.${apply(OVERDRIVE_EFFECTS[0])}`, outcome: [0] },
+    { name: "Overdrive", text: `you take ${selfDamage} fire damage (half your level), an active Overdrive ends, and you can't use Overdrive for 1d4 rounds.${damage}${recharge}`, outcome: [-1] },
+  ];
+}
+
+// Overdrive: the Crafting check against the standard DC for the inventor's
+// level, rolled as it's used
+function getOverdriveUse(action, token = api.getToken()) {
+  if (!isActionNamed(action, "Overdrive") || !token?._id) return "";
+  const level = getCreatureLevel(token);
+  const dc = getDCForLevel(level);
+  rollSkill(token, "crafting", dc, false, 0, 1, "int", true, false, undefined, {
+    action: "Overdrive",
+    targetNotes: getOverdriveNotes(token),
+  });
+  return `\nCrafting against DC ${dc}, the standard DC for level ${level}.`;
+}
+
+// The unstable flat check: DC 15, or 13 legendary in Crafting
+function getUnstableDC(creature) {
+  return (parseInt((creature?.data || creature?.record?.data || {}).crafting, 10) || 0) >= 4 ? 13 : 15;
+}
+
+// What an unstable check's d20 means: { degree, text }
+function getUnstableResult(natural, dc, level) {
+  const degree = natural >= dc + 10 ? 2 : natural >= dc ? 1 : natural <= dc - 10 ? -1 : 0;
+  if (degree >= 1) return { degree, text: "it holds." };
+  const malfunction = "your innovation malfunctions harmlessly (smoke, sparks) and can't be used for unstable actions until you spend 10 minutes retuning it.";
+  if (degree === 0) return { degree, text: malfunction };
+  return { degree, text: `${malfunction} You take ${Math.max(1, Math.floor((parseInt(level, 10) || 1) / 2))} fire damage (half your level; a minion innovation takes it instead).` };
+}
+
+// An unstable action: the flat check, rolled as it's used
+function getUnstableUse(action, token = api.getToken()) {
+  if (!getTraitNameList(action?.data?.traits).includes("unstable") || !token) return "";
+  const dc = getUnstableDC(token);
+  const natural = parseInt(api.rollInstant("1d20")?.total, 10) || 1;
+  const result = getUnstableResult(natural, dc, getCreatureLevel(token));
+  const color = result.degree >= 1 ? "green" : "red";
+  return `\n**Unstable (DC ${dc} flat check): [color=${color}]${natural}[/color]**, ${result.text}`;
 }

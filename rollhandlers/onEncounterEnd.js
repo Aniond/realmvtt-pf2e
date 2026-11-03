@@ -2,6 +2,9 @@
 // (combat-riders.js)
 clearEncounterRecharges(data?.tokens);
 
+// Nor does a stratagem (class-extras.js)
+(data?.tokens || []).forEach(clearStratagem);
+
 // Nor does a delay (delay-ready.js)
 clearEncounterDelays(data?.tokens);
 

@@ -61,6 +61,10 @@ const tokenId = data?.roll?.metadata?.tokenId;
 const targetId = data?.roll?.metadata?.targetId;
 const isRanged = data?.roll?.metadata?.isRanged;
 const minRoll = data?.roll?.metadata?.minRoll;
+// Devise a Stratagem: the investigator's d20 in place of the one rolled
+// (class-extras.js)
+const stratagemD20 = parseInt(data?.roll?.metadata?.stratagemD20, 10);
+let stratagemNote = "";
 const wasOffGuard = data?.roll?.metadata?.isOffGuard;
 
 const weaponGroup = data?.roll?.metadata?.weaponGroup || "";
@@ -90,6 +94,11 @@ if (modifiedRoll.dice) {
   modifiedRoll.dice = modifiedRoll.dice.map((d) => {
     let value = parseInt(d.value, 10);
     if (d.type === 20 && d.reason !== "dropped") {
+      if (Number.isFinite(stratagemD20)) {
+        stratagemNote = `Devise a Stratagem: the d20 is ${stratagemD20} (rolled ${value}).`;
+        modifiedRoll.total += stratagemD20 - value;
+        value = stratagemD20;
+      }
       if (minRoll && value < minRoll) {
         modifiedRoll.total += minRoll - value;
         value = minRoll;
@@ -238,6 +247,9 @@ if (dc > 0) {
 // this result (rollNote)
 if (fortificationText) {
   message += `\n\n${fortificationText}`;
+}
+if (stratagemNote) {
+  message += `\n\n${stratagemNote}`;
 }
 message += getRollNotesText(data?.roll?.metadata?.notes, noteDegree);
 
