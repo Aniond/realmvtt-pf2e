@@ -5758,7 +5758,15 @@ function updateAttribute({
   if (dexCap !== undefined && (dexCap > 0 || dexValue < 0)) {
     ac += Math.min(dexValue, dexCap);
   }
-  const shieldBroken = record.data?.shieldBroken === true;
+  // Broken follows the equipped shield's HP, so a swapped or unequipped shield
+  // doesn't keep the flag (written with the shield values below). With no
+  // shield, bestArmor.shield is a placeholder with no id; a shield with no Hit
+  // Points filled in isn't broken.
+  const shieldMaxHp = parseInt(bestArmor?.shield?.hp?.max, 10) || 0;
+  const shieldBroken =
+    bestArmor?.shield?.shieldId != null &&
+    shieldMaxHp > 0 &&
+    (parseInt(bestArmor.shield.hp.value, 10) || 0) <= Math.floor(shieldMaxHp / 2);
   // AC bonus is only if shield is equipped AND raised AND not broken
   if (
     bestArmor.shield &&
@@ -5999,6 +6007,9 @@ function updateAttribute({
     valuesToSet[`data.shieldHp`] = null;
     valuesToSet[`data.shieldMaxHp`] = null;
     valuesToSet[`data.shieldBt`] = null;
+  }
+  if (shieldBroken !== (record.data?.shieldBroken === true)) {
+    valuesToSet[`data.shieldBroken`] = shieldBroken;
   }
   if (bestArmor?.shield?.hardness !== undefined) {
     valuesToSet[`data.shieldHardness`] = bestArmor.shield.hardness;

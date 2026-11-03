@@ -38,6 +38,31 @@ section("Hefty");
   assert("not hefty: nothing", ctx.getRaiseShieldNote(pc({ inventory: [steelShield()], str: 0 })), "");
 }
 
+section("Broken follows the equipped shield");
+{
+  // What the sheet's recalculation writes
+  const recalc = (data) => {
+    const saved = ctx.api.setValuesOnRecord;
+    const written = {};
+    ctx.api.setValuesOnRecord = (rec, values) => Object.assign(written, values);
+    try {
+      ctx.updateAllAttributes(pc(data));
+    } finally {
+      ctx.api.setValuesOnRecord = saved;
+    }
+    return written;
+  };
+  assert("at the Broken Threshold: broken", recalc({ inventory: [steelShield(10)] })["data.shieldBroken"], true);
+  const fresh = recalc({ inventory: [steelShield(20)], shieldBroken: true, shieldRaised: "true" });
+  assert("a fresh shield in place of a broken one: not broken", fresh["data.shieldBroken"], false);
+  const lowered = recalc({ inventory: [steelShield(20)], shieldBroken: true, shieldRaised: "false" });
+  assert("... and raising it gives its AC", fresh["data.ac"] - lowered["data.ac"], 2);
+  assert("no shield: not broken", recalc({ inventory: [], shieldBroken: true })["data.shieldBroken"], false);
+  const noHp = { _id: "sh2", name: "Homebrew Shield", data: { type: "shield", carried: "equipped", acBonus: 2 } };
+  assert("a shield with no Hit Points filled in: not broken", recalc({ inventory: [noHp], shieldBroken: true })["data.shieldBroken"], false);
+  assert("unchanged: not written", "data.shieldBroken" in recalc({ inventory: [steelShield(20)] }), false);
+}
+
 section("Shield Block damage: broken, destroyed");
 {
   let sets = [];
