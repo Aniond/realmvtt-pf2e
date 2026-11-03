@@ -273,15 +273,14 @@ function isActionNamed(action, name) {
 }
 
 // Devise a Stratagem: the d20 rolled when it's used, kept on the investigator
-// (data.stratagem: { value, round, used }) for the first Strike against the
+// (data.stratagem: { value, used }) for the first Strike against the
 // creature they mark. The module's action and effect add the Intelligence
 // modifier and Strategic Strike against the mark; a skill stratagem uses the
 // effect's toggle, not the d20.
 function getStratagemUse(action, token = api.getToken()) {
   if (!isActionNamed(action, "Devise a Stratagem") || !token?._id) return "";
   const value = parseInt(api.rollInstant("1d20")?.total, 10) || 1;
-  const round = getEncounterState()?.round || 0;
-  api.setValuesOnTokenById(token._id, token.recordType, { "data.stratagem": { value, round, used: false } });
+  api.setValuesOnTokenById(token._id, token.recordType, { "data.stratagem": { value, used: false } });
   return `\n**Stratagem d20: ${value}.** Attack stratagem: the first Strike against the creature you mark, before your next turn, uses ${value} for its attack roll (a natural 20 or 1 counts). Skill stratagem: you can't Strike it until your next turn, and get +1 to a check about it instead.`;
 }
 
@@ -296,6 +295,13 @@ function hasOwnTokenMark(target, mark, attackerToken, record) {
       return !appliedBy || appliedBy === attackerToken?._id || appliedBy === record?._id;
     }),
   );
+}
+
+// Whether a weapon can take the stratagem's d20: a melee weapon, unarmed
+// attack or thrown weapon needs agile or finesse; another ranged weapon can
+function isStratagemWeapon(weapon, isMelee, isThrown) {
+  const traits = getTraitNameList(weapon?.data?.traits);
+  return traits.includes("agile") || traits.includes("finesse") || (!isMelee && !isThrown);
 }
 
 // The d20 a Strike takes: the investigator's unused stratagem roll, when the
@@ -331,8 +337,8 @@ function getOverdriveNotes(token) {
   const damage = `\n${fence}Take_${selfDamage}_Fire_Damage\napplyDamage(null, { total: ${selfDamage}, types: [{ type: "fire", value: ${selfDamage} }], dice: [], metadata: { rollName: "Overdrive", damageType: "fire" } }, false);\n${fence}`;
   const recharge = `\n${getChatButton("Start_Recharge_(1d4_rounds)", token, 'startRecharge(token, "Overdrive", "1d4")')}`;
   return [
-    { name: "Critical overdrive", text: `your Strikes deal extra damage equal to your Intelligence modifier for 1 minute.${apply(OVERDRIVE_EFFECTS[2])}`, outcome: [2] },
-    { name: "Overdrive", text: `your Strikes deal extra damage equal to half your Intelligence modifier for 1 minute.${apply(OVERDRIVE_EFFECTS[1])}`, outcome: [1] },
+    { name: "Critical overdrive", text: `your Strikes deal extra damage equal to your Intelligence modifier for 1 minute. When it ends, you can't use Overdrive for 1 minute.${apply(OVERDRIVE_EFFECTS[2])}`, outcome: [2] },
+    { name: "Overdrive", text: `your Strikes deal extra damage equal to half your Intelligence modifier for 1 minute. When it ends, you can't use Overdrive for 1 minute.${apply(OVERDRIVE_EFFECTS[1])}`, outcome: [1] },
     { name: "Overdrive", text: `your Strikes deal 1 extra fire damage for 1 minute; it doesn't change an Overdrive already active.${apply(OVERDRIVE_EFFECTS[0])}`, outcome: [0] },
     { name: "Overdrive", text: `you take ${selfDamage} fire damage (half your level), an active Overdrive ends, and you can't use Overdrive for 1d4 rounds.${damage}${recharge}`, outcome: [-1] },
   ];

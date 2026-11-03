@@ -38,11 +38,11 @@ section("Devise a Stratagem");
   d20s = [14];
   const token = investigator();
   const line = ctx.getStratagemUse({ name: "Devise a Stratagem" }, token);
-  assert("using it rolls the d20 and keeps it", sets, [["tok-inv", "characters", { "data.stratagem": { value: 14, round: 2, used: false } }]]);
+  assert("using it rolls the d20 and keeps it", sets, [["tok-inv", "characters", { "data.stratagem": { value: 14, used: false } }]]);
   assertIncludes("the card shows it", line, "**Stratagem d20: 14.**");
   assert("another action: nothing", ctx.getStratagemUse({ name: "Recall Knowledge" }, token), "");
 
-  const record = { _id: "inv", data: { stratagem: { value: 14, round: 2, used: false } } };
+  const record = { _id: "inv", data: { stratagem: { value: 14, used: false } } };
   assert("a Strike against the marked creature takes it", ctx.getStratagemD20(record, marked(), token), 14);
   assert("... marked by the record's id too", ctx.getStratagemD20(record, marked("inv"), token), 14);
   assert("... not after it's used", ctx.getStratagemD20({ data: { stratagem: { value: 14, used: true } } }, marked(), token), null);
@@ -70,8 +70,10 @@ section("The Strike takes the d20");
 section("The Strike: from the sheet");
 {
   const rapier = { _id: "w1", name: "Rapier", recordType: "items", data: { type: "weapon", carried: "equipped", itemCategory: "martial", group: "sword", traits: ["Finesse"], usage: "held-in-one-hand", range: 0, damage: { dice: 1, die: "d6", damageType: "piercing" }, runes: { potency: 0, striking: 0, property: [] } } };
-  const strike = (stratagem) => {
-    const record = { _id: "inv", recordType: "characters", name: "Quinn", effects: [], effectIds: [], fields: {}, data: { level: 5, str: 0, dex: 3, int: 4, ancestries: [], classes: [], feats: [], bonusFeats: [], inventory: [rapier], stratagem } };
+  const longsword = { ...rapier, _id: "w2", name: "Longsword", data: { ...rapier.data, traits: ["Versatile-P"], damage: { dice: 1, die: "d8", damageType: "slashing" } } };
+  const shortbow = { ...rapier, _id: "w3", name: "Shortbow", data: { ...rapier.data, traits: ["Deadly-D10"], range: 60, group: "bow", ammo: 10 } };
+  const strike = (stratagem, weapon = rapier) => {
+    const record = { _id: "inv", recordType: "characters", name: "Quinn", effects: [], effectIds: [], fields: {}, data: { level: 5, str: 0, dex: 3, int: 4, ancestries: [], classes: [], feats: [], bonusFeats: [], inventory: [weapon], stratagem } };
     const saved = { getToken: ctx.api.getToken, getTargets: ctx.api.getTargets, promptRoll: ctx.api.promptRoll, setValues: ctx.api.setValues };
     let metadata = null;
     const written = {};
@@ -80,16 +82,24 @@ section("The Strike: from the sheet");
     ctx.api.promptRoll = (name, dice, mods, md) => (metadata = md);
     ctx.api.setValues = (values) => Object.assign(written, values);
     try {
-      ctx.performAttackRoll(record, rapier, "data.inventory.0", 1);
+      ctx.performAttackRoll(record, weapon, "data.inventory.0", 1);
     } finally {
       Object.assign(ctx.api, saved);
     }
     return { metadata: metadata || {}, written };
   };
-  const first = strike({ value: 14, round: 2, used: false });
+  const first = strike({ value: 14, used: false });
   assert("the first Strike against the mark takes the d20, used up in the attack's write", [first.metadata.stratagemD20, first.written["data.stratagem.used"]], [14, true]);
-  const second = strike({ value: 14, round: 2, used: true });
+  const second = strike({ value: 14, used: true });
   assert("the next one rolls as usual", [second.metadata.stratagemD20, "data.stratagem.used" in second.written], [undefined, false]);
+  const melee = strike({ value: 14, used: false }, longsword);
+  assert("a longsword (not agile or finesse): rolls as usual, and the stratagem isn't used up", [melee.metadata.stratagemD20, "data.stratagem.used" in melee.written], [undefined, false]);
+  assert("a shortbow (ranged, not thrown) takes it", strike({ value: 14, used: false }, shortbow).metadata.stratagemD20, 14);
+  assert(
+    "which weapons can: agile, finesse, or ranged and not thrown",
+    [ctx.isStratagemWeapon({ data: { traits: ["Agile"] } }, true, false), ctx.isStratagemWeapon({ data: { traits: [] } }, true, false), ctx.isStratagemWeapon({ data: { traits: [] } }, false, false), ctx.isStratagemWeapon({ data: { traits: ["Thrown-20"] } }, false, true)],
+    [true, false, true, false],
+  );
 }
 
 section("Overdrive");
@@ -103,6 +113,7 @@ section("Overdrive");
   assertIncludes("the card says the DC", line, "Crafting against DC 20, the standard DC for level 5.");
   const notes = rolled.extra.targetNotes;
   assert("a note for each result", notes.map((n) => n.outcome[0]), [2, 1, 0, -1]);
+  assertIncludes("a success and a critical success: the 1-minute lockout when it ends", notes[1].text + notes[0].text, "When it ends, you can't use Overdrive for 1 minute.");
   assertIncludes("a critical success applies the module's effect", notes[0].text, "Apply_Overdrive_Critical_Success\n");
   assertIncludes("... with the button", notes[0].text, 'api.addEffect("Overdrive (Critical Success)", token)');
   assertIncludes("a critical failure: 3 fire damage (half of 5, up)", notes[3].text, "Take_3_Fire_Damage");

@@ -13071,8 +13071,12 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber) {
     });
 
   // Devise a Stratagem: the first Strike against the marked creature takes
-  // the investigator's d20, used up in the same write (class-extras.js)
-  const stratagemD20 = isNPCAttack || isSpell ? null : getStratagemD20(record, targets?.[0], attackerToken);
+  // the investigator's d20, used up in the same write (class-extras.js), with
+  // an agile or finesse weapon or unarmed attack, or a ranged one that isn't
+  // thrown (Player Core 2; Foundry's SubstituteRoll predicate)
+  const stratagemWeapon = isStratagemWeapon(weapon, isMelee, hasThrownTrait);
+  const stratagemD20 =
+    isNPCAttack || isSpell || !stratagemWeapon ? null : getStratagemD20(record, targets?.[0], attackerToken);
   if (stratagemD20 !== null) valuesToSet["data.stratagem.used"] = true;
 
   if (Object.keys(valuesToSet).length > 0) {
