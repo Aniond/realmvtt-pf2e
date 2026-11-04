@@ -6481,6 +6481,12 @@ function promptForChoices(record, choicesToMake, index, depth = 0) {
       useQuery = false;
     }
   }
+  // Adopted Ancestry picks an ancestry (character-growth.js)
+  const adoptedAncestryQuery = getAdoptedAncestryQuery(feature, choiceObj);
+  if (adoptedAncestryQuery) {
+    optionsQuery = adoptedAncestryQuery;
+    useQuery = true;
+  }
 
   // Prompt the user for the choice
   const callback = (selectedOptions) => {
@@ -17774,7 +17780,13 @@ function getFeatSlotQuery(record, featSlotType, featSlotLevel) {
     record.data?.heritages?.[0]?.name || record.data?.heritageName || "";
 
   const seen = new Set();
-  const ancestryTraits = [ancestryName, heritageName, ...(record.data?.traits || [])]
+  // Adopted Ancestry opens another ancestry's feats (character-growth.js)
+  const ancestryTraits = [
+    ancestryName,
+    heritageName,
+    ...getAdoptedAncestries(record),
+    ...(record.data?.traits || []),
+  ]
     .filter((trait) => trait && trait.trim())
     .filter((trait) => {
       const lowerTrait = trait.toLowerCase();

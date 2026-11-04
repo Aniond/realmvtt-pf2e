@@ -738,6 +738,14 @@
           field="redistributeBtn"
           onclick="redistributeCurrency()"
         ></iconbutton>
+        <iconbutton
+          size="md"
+          variant="default"
+          hideonlocked="true"
+          options='[{"icon": "IconCoins", "label": "Starting Wealth", "value": "startingWealth"}]'
+          field="startingWealthBtn"
+          onclick="takeStartingWealth(record)"
+        ></iconbutton>
         <popover position="bottom" offset="4" witharrow="true">
           <popover.target>
             <iconbutton
