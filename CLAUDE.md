@@ -148,6 +148,10 @@ Animal companions are characters, as Foundry's PF2e Companion Compendia builds t
 
 `rollhandlers/concealment.js` (Player Core pg. 442-447): a Strike or spell attack against a concealed target (DC 5), or a hidden, invisible or undetected one (DC 11), or from a dazzled (DC 5) or blinded (DC 11) attacker, carries the worst flat check as `metadata.concealment`. `attack.js` shows it as a line and a Flat Check button; nothing is rolled or refused automatically. A hidden, invisible or undetected attacker makes its target off-guard, applied to the AC as flanking is. Effects aren't per observer, so a condition on a token counts against everyone; the GM removes it when it no longer applies.
 
+### Cover from creatures in the way
+
+`rollhandlers/cover.js` (Player Core pg. 424): Strike and spell attack prompts get `getCreatureCoverModifiers`, a ticked modifier ("Target AC +1 (Lesser Cover: Goblin in the way)", -1 to the roll) the GM can untick. `getCreaturesInTheWay` draws the line between the attacker's and the target's centers (`getTokenSpaceCenter`, shared with flanking) and counts a token whose space it crosses between leaving the attacker's space and reaching the target's, not through an edge or corner (`getLineSpanInSpace`, a space shrunk by 0.05). Dead creatures, hazards, vehicles and tokens hidden from the players (`visible: false`) don't count. A creature two or more sizes larger than both gives standard cover (+2). It adds only what it beats of the target's best circumstance bonus to AC (`getBestCircumstanceAcBonus`: modifiers, effects such as Cover, and `getRaisedShieldAcBonus`). Walls and terrain aren't checked; the Cover effect is for those.
+
 ### Immunities, weaknesses and resistances
 
 `applyDamage` reads them from `getIWR` and matches each damage type, then the roll's `metadata.damageCategories`. The categories follow Foundry's IWR types (`actor/data/iwr.ts`):

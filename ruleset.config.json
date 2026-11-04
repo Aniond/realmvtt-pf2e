@@ -5537,6 +5537,9 @@
         "Concealment": {
           "file": "rollhandlers/concealment.js"
         },
+        "Cover": {
+          "file": "rollhandlers/cover.js"
+        },
         "AnimalCompanions": {
           "file": "rollhandlers/animal-companions.js"
         },
