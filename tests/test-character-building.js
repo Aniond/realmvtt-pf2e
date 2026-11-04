@@ -25,6 +25,12 @@ ctx.api.showPrompt = (title, text, placeholder, options, query, callback) => {
   const answer = answers.shift();
   callback(answer === undefined ? [] : answer);
 };
+// The confirm takes the next queued answer: true confirms
+let confirms = [];
+ctx.api.showConfirm = (title, text, yes, no, onYes) => {
+  confirms.push(text);
+  if (answers.shift() === true) onYes();
+};
 ctx.api.setValuesOnRecord = (record, values, cb) => {
   sets.push(values);
   if (cb) cb(record);
@@ -142,7 +148,7 @@ section("Starting wealth");
   const pc = character({ level: 5, gp: 3 });
   assert("two options", ctx.getStartingWealthOptions(pc).map((option) => option.value), ["items", "lumpSum"]);
   assert("level 1 has only the coins", ctx.getStartingWealthOptions(character({ level: 1 })).map((option) => option.value), ["lumpSum"]);
-  assert("items: the currency added", ctx.getStartingWealthValues(pc, "items"), { "data.gp": 53, "data.startingWealth": { level: 5, option: "items" } });
+  assert("items: the currency added", ctx.getStartingWealthValues(pc, "items"), { "data.gp": 53, "data.startingWealth": { level: 5, option: "items" }, "fields.startingWealthBtn.hidden": true });
   assert("lump sum added", ctx.getStartingWealthValues(pc, "lumpSum")["data.gp"], 273);
   assert("an unknown option", ctx.getStartingWealthValues(pc, "other"), null);
   assertIncludes("lump sum card", ctx.getStartingWealthMessage(pc, "lumpSum"), "270 gp to buy common items of level 4 or lower");
@@ -154,14 +160,20 @@ section("Starting wealth");
     "already taken at level 5",
   );
 
-  reset([["lumpSum"]]);
+  confirms = [];
+  reset([["lumpSum"], true]);
   ctx.takeStartingWealth(pc);
-  assert("one write", sets, [{ "data.gp": 273, "data.startingWealth": { level: 5, option: "lumpSum" } }]);
+  assertIncludes("a confirm with the coins first", confirms[0], "Add 270 gp to");
+  assert("one write", sets, [{ "data.gp": 273, "data.startingWealth": { level: 5, option: "lumpSum" }, "fields.startingWealthBtn.hidden": true }]);
   assert("one card", state.messages.length, 1);
 
   reset();
   ctx.takeStartingWealth(pc);
   assert("cancel: nothing written", sets, []);
+
+  reset([["items"], false]);
+  ctx.takeStartingWealth(pc);
+  assert("the confirm cancelled: nothing written", sets, []);
 
   reset();
   ctx.takeStartingWealth(character({ level: 0 }));

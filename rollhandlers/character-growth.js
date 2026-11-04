@@ -18,9 +18,10 @@
 //     text, so only the common forms are checked; nothing is blocked
 //   - Adopted Ancestry (Player Core): its choice picks an ancestry, whose
 //     ancestry feats the feat picker then offers too
-//   - Starting wealth (GM Core pg. 61, Character Wealth): the Inventory tab's
-//     Starting Wealth button gives a character made above 1st level its
-//     items-and-currency or lump sum
+//   - Starting wealth (GM Core pg. 61, Character Wealth): the Starting Wealth
+//     icon with the Inventory tab's currency buttons gives a character made
+//     above 1st level its items-and-currency or lump sum, once confirmed; the
+//     icon hides once it's taken
 //
 // Languages are rows of data.languagesList, built as the wizard builds them
 // (buildLanguagesList).
@@ -570,6 +571,8 @@ function getStartingWealthValues(record, option) {
   return {
     "data.gp": (parseInt(record?.data?.gp || "0", 10) || 0) + gp,
     "data.startingWealth": { level, option },
+    // The currency row's button goes once it's taken
+    "fields.startingWealthBtn.hidden": true,
   };
 }
 
@@ -585,6 +588,15 @@ function getStartingWealthMessage(record, option) {
   }
   const items = wealth.items.length > 0 ? ` and permanent items: ${describeWealthItems(wealth.items)}` : "";
   return `**${name} takes starting wealth for level ${level}:** ${formatGp(wealth.currency)}${items}. Each item is a common item of that level or lower; runes and precious materials cost extra, and the GM may allow uncommon items.`;
+}
+
+// The confirm before it's added: the coins, and that it's for a new
+// character and taken once
+function getStartingWealthConfirmText(record, option) {
+  const level = parseInt(record?.data?.level, 10) || 0;
+  const wealth = getCharacterWealth(level);
+  const gp = option === "lumpSum" ? wealth.lumpSum : wealth.currency;
+  return `Add ${formatGp(gp)} to ${getCreatureName(record)}'s coins as level ${level} starting wealth? It's for a character made at this level, and the Starting Wealth button goes away once it's taken.`;
 }
 
 // The Inventory tab's Starting Wealth button
@@ -604,8 +616,10 @@ function takeStartingWealth(record) {
       const option = getPromptSelections(selected)[0];
       const values = getStartingWealthValues(record, option);
       if (!values) return;
-      api.setValuesOnRecord(record, values, () => {
-        api.sendMessage(getStartingWealthMessage(record, option), undefined, [], [], record);
+      api.showConfirm("Starting Wealth", getStartingWealthConfirmText(record, option), "Take", "Cancel", () => {
+        api.setValuesOnRecord(record, values, () => {
+          api.sendMessage(getStartingWealthMessage(record, option), undefined, [], [], record);
+        });
       });
     },
     "Take",
