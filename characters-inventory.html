@@ -738,6 +738,16 @@
           field="redistributeBtn"
           onclick="redistributeCurrency()"
         ></iconbutton>
+        <!-- Character Wealth for a new character above 1st level; hidden once
+             taken (character-growth.js) -->
+        <iconbutton
+          size="md"
+          variant="default"
+          hideonlocked="true"
+          options='[{"icon": "IconCoins", "label": "Starting Wealth", "value": "startingWealth"}]'
+          field="startingWealthBtn"
+          onclick="takeStartingWealth(record)"
+        ></iconbutton>
         <popover position="bottom" offset="4" witharrow="true">
           <popover.target>
             <iconbutton

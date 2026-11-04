@@ -68,11 +68,11 @@
       return;
     }
 
-    // Remind about the dedication rule, but let the GM decide
-    const dedicationWarning = getDedicationWarning(updatedRecord, feat);
-    if (dedicationWarning) {
-      api.showNotification(dedicationWarning, "yellow", "Dedication Feat");
-    }
+    // Remind about the dedication rule, lineage feats and prerequisites, but
+    // let the GM decide (character-growth.js)
+    getFeatWarnings(updatedRecord, feat, slotLevel).forEach((warning) =>
+      api.showNotification(warning.text, "yellow", warning.title),
+    );
 
     if (
       featSlotType === "general" &&

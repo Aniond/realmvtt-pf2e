@@ -12,6 +12,16 @@
 //     raises another, up to the level's rank cap. The card notes what the GM may want
 //     to check (lineage feats, feats that list the old one or the skill as a
 //     prerequisite); nothing is blocked
+//   - Feat prerequisites (Player Core, Feats): picking a feat warns about the
+//     dedication rule, a second lineage feat or one above 1st level, and the
+//     prerequisites the character doesn't seem to meet. Prerequisites are
+//     text, so only the common forms are checked; nothing is blocked
+//   - Adopted Ancestry (Player Core): its choice picks an ancestry, whose
+//     ancestry feats the feat picker then offers too
+//   - Starting wealth (GM Core pg. 61, Character Wealth): the Starting Wealth
+//     icon with the Inventory tab's currency buttons gives a character made
+//     above 1st level its items-and-currency or lump sum, once confirmed; the
+//     icon hides once it's taken
 //
 // Languages are rows of data.languagesList, built as the wizard builds them
 // (buildLanguagesList).
@@ -316,6 +326,303 @@ function promptSkillRetraining(record) {
       );
     },
     "OK",
+    "Cancel",
+    1,
+  );
+}
+
+// ---------------------------------------------------------------- Feat prerequisites
+
+const PREREQUISITE_RANKS = { trained: 1, expert: 2, master: 3, legendary: 4 };
+const PREREQUISITE_ATTRIBUTES = {
+  strength: "str",
+  dexterity: "dex",
+  constitution: "con",
+  intelligence: "int",
+  wisdom: "wis",
+  charisma: "cha",
+};
+// Lower-case words a feat or feature name can hold ("Shield of Reckoning")
+const PREREQUISITE_NAME_WORDS = new Set(["of", "the", "a", "an", "and", "to", "in", "on", "with", "for", "from"]);
+
+// The reminders for a feat picked into a slot of this level, each
+// { title, text }: the dedication rule, lineage feats and prerequisites
+function getFeatWarnings(record, feat, slotLevel) {
+  return [
+    { title: "Dedication Feat", text: getDedicationWarning(record, feat) },
+    { title: "Lineage Feat", text: getLineageWarning(record, feat, slotLevel) },
+    { title: "Feat Prerequisites", text: getPrerequisiteWarning(record, feat) },
+  ].filter((warning) => warning.text);
+}
+
+// Lineage feats: only one, and only at 1st level
+function getLineageWarning(record, feat, slotLevel) {
+  if (!hasFeatTrait(feat, "lineage")) return "";
+  const other = getChosenFeats(record).find((chosen) => chosen.name !== feat.name && hasFeatTrait(chosen, "lineage"));
+  if (other) {
+    return `You already have a lineage feat (${other.name}), and you can have only one. Your GM may waive this.`;
+  }
+  if ((parseInt(slotLevel, 10) || 1) > 1) {
+    return "A lineage feat can be taken only at 1st level. Your GM may waive this.";
+  }
+  return "";
+}
+
+// The prerequisites the character doesn't seem to meet, as a warning ("" when
+// none). Only the forms below are checked; anything else is left to the GM.
+function getPrerequisiteWarning(record, feat) {
+  const unmet = splitPrerequisites(feat?.data?.prerequisites).filter(
+    (part) => isPrerequisiteMet(record, part) === false,
+  );
+  if (unmet.length === 0) return "";
+  return `${feat.name} lists prerequisites you don't seem to meet: ${unmet.join("; ")}. Your GM may waive this.`;
+}
+
+// A feat's prerequisites text as its parts. A rank or an "or" list keeps its
+// commas ("trained in Arcana, Nature, or Religion").
+function splitPrerequisites(text) {
+  return `${text || ""}`
+    .replace(/<[^>]*>/g, " ")
+    .split(";")
+    .flatMap((piece) =>
+      /^\s*(trained|expert|master|legendary) in /i.test(piece) || /\bor\b/i.test(piece) ? [piece] : piece.split(","),
+    )
+    .map((part) => part.trim().replace(/\.$/, ""))
+    .filter((part) => part && !/^none$/i.test(part));
+}
+
+// Whether one prerequisite is met: true, false, or null when it can't be told
+// ("trained in Athletics", "expert in Arcana or Occultism", "Charisma +3", a
+// feat or feature by name, "Reactive Shield or Shield Block")
+function isPrerequisiteMet(record, part) {
+  const rank = part.match(/^(trained|expert|master|legendary) in (.+)$/i);
+  if (rank) {
+    const needed = PREREQUISITE_RANKS[rank[1].toLowerCase()];
+    const anyOf = /\bor\b/i.test(rank[2]);
+    const ranks = rank[2]
+      .split(/\s*,\s*(?:or\s+|and\s+)?|\s+or\s+|\s+and\s+/i)
+      .map((name) => getPrerequisiteRank(record, name));
+    const known = ranks.filter((value) => value !== null);
+    if (known.length === 0) return null;
+    const allKnown = known.length === ranks.length;
+    if (anyOf) return known.some((value) => value >= needed) ? true : allKnown ? false : null;
+    return known.some((value) => value < needed) ? false : allKnown ? true : null;
+  }
+  const attribute = part.match(/^(strength|dexterity|constitution|intelligence|wisdom|charisma) \+(\d+)$/i);
+  if (attribute) {
+    const modifier = parseInt(record?.data?.[PREREQUISITE_ATTRIBUTES[attribute[1].toLowerCase()]] || "0", 10) || 0;
+    return modifier >= parseInt(attribute[2], 10);
+  }
+  if (/\bor\b/i.test(part)) {
+    const results = part.split(/\s*,\s*(?:or\s+)?|\s+or\s+/i).map((alternative) => isPrerequisiteMet(record, alternative));
+    if (results.includes(true)) return true;
+    return results.every((result) => result === false) ? false : null;
+  }
+  return isPrerequisiteName(part) ? hasPrerequisiteNamed(record, part) : null;
+}
+
+// A character's rank in a skill, Perception, a save or a Lore by name, or
+// null when the name isn't one
+function getPrerequisiteRank(record, name) {
+  const data = record?.data || {};
+  const key = `${name || ""}`.trim().toLowerCase().replace(/\s+saves?$/, "");
+  const lores = Array.isArray(data.loreSkills) ? data.loreSkills : [];
+  const rankOf = (value) => parseInt(value || "0", 10) || 0;
+  const skills = Object.keys(getPathfinderSkills());
+  if (skills.includes(key) || ["perception", "fortitude", "reflex", "will"].includes(key)) {
+    return rankOf(data[key]);
+  }
+  if (/^(a|at least one) skill$/.test(key)) {
+    return Math.max(0, ...skills.map((skill) => rankOf(data[skill])), ...lores.map((lore) => rankOf(lore?.data?.rank)));
+  }
+  if (/^lore$|^(a|at least one) lore( skill)?$/.test(key)) {
+    return Math.max(0, ...lores.map((lore) => rankOf(lore?.data?.rank)));
+  }
+  if (/ lore$/.test(key)) {
+    const lore = lores.find((entry) => {
+      const loreName = `${entry?.name || ""}`.trim().toLowerCase();
+      return loreName === key || `${loreName} lore` === key;
+    });
+    return lore ? rankOf(lore.data?.rank) : 0;
+  }
+  return null;
+}
+
+// Whether a prerequisite reads as a feat or feature name: every word
+// capitalized but small ones ("Power Attack", "Shield of Reckoning")
+function isPrerequisiteName(part) {
+  const words = part.split(/\s+/);
+  return /^[A-Z]/.test(words[0]) && words.every((word) => /^[A-Z0-9]/.test(word) || PREREQUISITE_NAME_WORDS.has(word));
+}
+
+// A feat, a feature, or the character's ancestry, heritage, class or
+// background by name
+function hasPrerequisiteNamed(record, name) {
+  if (hasFeatNamed(record, name)) return true;
+  const wanted = name.trim().toLowerCase();
+  return [
+    ...(record?.data?.ancestries || []),
+    ...(record?.data?.heritages || []),
+    ...(record?.data?.classes || []),
+    ...(record?.data?.backgrounds || []),
+  ].some((origin) => `${origin?.name || ""}`.trim().toLowerCase() === wanted);
+}
+
+// ---------------------------------------------------------------- Adopted Ancestry
+
+const isAdoptedAncestry = (feat) => `${feat?.name || ""}`.trim().toLowerCase() === "adopted ancestry";
+
+// The ancestries Adopted Ancestry opened (Player Core): their ancestry feats
+// can be taken too. Its choice keeps the ancestry's name.
+function getAdoptedAncestries(record) {
+  return getChosenFeats(record)
+    .filter(isAdoptedAncestry)
+    .map((feat) => {
+      const picked = (feat.data?.choices || []).find((choice) => choice?.data?.flag === "ancestry")?.data?.choices?.[0];
+      if (!picked) return "";
+      try {
+        return JSON.parse(picked)?.name || "";
+      } catch (e) {
+        return `${picked}`;
+      }
+    })
+    .filter(Boolean);
+}
+
+// Adopted Ancestry's choice (flag ancestry) picks an ancestry; the module's
+// query lists features. Null for any other choice.
+function getAdoptedAncestryQuery(feature, choiceObj) {
+  return isAdoptedAncestry(feature) && choiceObj?.data?.flag === "ancestry" ? { type: "ancestry", query: {} } : null;
+}
+
+// ---------------------------------------------------------------- Starting wealth
+
+// Character Wealth (GM Core pg. 61), for a character made above 1st level:
+// permanent items as [item level, count] and currency in gp, or a lump sum in
+// gp for common items up to a level below the character's
+const CHARACTER_WEALTH = [
+  null,
+  { items: [], currency: 15, lumpSum: 15 },
+  { items: [[1, 1]], currency: 20, lumpSum: 30 },
+  { items: [[2, 1], [1, 2]], currency: 25, lumpSum: 75 },
+  { items: [[3, 1], [2, 2], [1, 1]], currency: 30, lumpSum: 140 },
+  { items: [[4, 1], [3, 2], [2, 1], [1, 2]], currency: 50, lumpSum: 270 },
+  { items: [[5, 1], [4, 2], [3, 1], [2, 2]], currency: 80, lumpSum: 450 },
+  { items: [[6, 1], [5, 2], [4, 1], [3, 2]], currency: 125, lumpSum: 720 },
+  { items: [[7, 1], [6, 2], [5, 1], [4, 2]], currency: 180, lumpSum: 1100 },
+  { items: [[8, 1], [7, 2], [6, 1], [5, 2]], currency: 250, lumpSum: 1600 },
+  { items: [[9, 1], [8, 2], [7, 1], [6, 2]], currency: 350, lumpSum: 2300 },
+  { items: [[10, 1], [9, 2], [8, 1], [7, 2]], currency: 500, lumpSum: 3200 },
+  { items: [[11, 1], [10, 2], [9, 1], [8, 2]], currency: 700, lumpSum: 4500 },
+  { items: [[12, 1], [11, 2], [10, 1], [9, 2]], currency: 1000, lumpSum: 6400 },
+  { items: [[13, 1], [12, 2], [11, 1], [10, 2]], currency: 1500, lumpSum: 9300 },
+  { items: [[14, 1], [13, 2], [12, 1], [11, 2]], currency: 2250, lumpSum: 13500 },
+  { items: [[15, 1], [14, 2], [13, 1], [12, 2]], currency: 3250, lumpSum: 20000 },
+  { items: [[16, 1], [15, 2], [14, 1], [13, 2]], currency: 5000, lumpSum: 30000 },
+  { items: [[17, 1], [16, 2], [15, 1], [14, 2]], currency: 7500, lumpSum: 45000 },
+  { items: [[18, 1], [17, 2], [16, 1], [15, 2]], currency: 12000, lumpSum: 69000 },
+  { items: [[19, 1], [18, 2], [17, 1], [16, 2]], currency: 20000, lumpSum: 112000 },
+];
+
+// The row for a level (1 to 20), or null
+function getCharacterWealth(level) {
+  return CHARACTER_WEALTH[parseInt(level, 10) || 0] || null;
+}
+
+const formatGp = (gp) => `${gp.toLocaleString("en-US")} gp`;
+
+// "one 4th-level item, two 3rd-level items"
+function describeWealthItems(items) {
+  const counts = { 1: "one", 2: "two" };
+  return items
+    .map(([level, count]) => `${counts[count] || count} ${getOrdinal(level)}-level item${count === 1 ? "" : "s"}`)
+    .join(", ");
+}
+
+// The ways to take it, for a prompt: items and currency, or the lump sum
+function getStartingWealthOptions(record) {
+  const wealth = getCharacterWealth(record?.data?.level);
+  if (!wealth) return [];
+  const lumpSum = { label: `Lump sum: ${formatGp(wealth.lumpSum)}`, value: "lumpSum" };
+  if (wealth.items.length === 0) return [lumpSum];
+  return [
+    { label: `Items and currency: ${describeWealthItems(wealth.items)}, and ${formatGp(wealth.currency)}`, value: "items" },
+    lumpSum,
+  ];
+}
+
+// The prompt's text, noting when starting wealth was already taken
+function getStartingWealthPromptText(record) {
+  const level = parseInt(record?.data?.level, 10) || 0;
+  const taken = record?.data?.startingWealth;
+  return (
+    `Character Wealth (GM Core pg. 61) for a new level ${level} character: permanent items by level plus currency, or one lump sum to spend on common items.` +
+    (taken?.level ? ` Starting wealth was already taken at level ${taken.level}.` : "")
+  );
+}
+
+// The coins and the note of what was taken, in one write; null for an
+// unknown option or level
+function getStartingWealthValues(record, option) {
+  const level = parseInt(record?.data?.level, 10) || 0;
+  const wealth = getCharacterWealth(level);
+  if (!wealth || !["items", "lumpSum"].includes(option)) return null;
+  const gp = option === "lumpSum" ? wealth.lumpSum : wealth.currency;
+  return {
+    "data.gp": (parseInt(record?.data?.gp || "0", 10) || 0) + gp,
+    "data.startingWealth": { level, option },
+    // The currency row's button goes once it's taken
+    "fields.startingWealthBtn.hidden": true,
+  };
+}
+
+// The chat card for what was taken
+function getStartingWealthMessage(record, option) {
+  const level = parseInt(record?.data?.level, 10) || 0;
+  const wealth = getCharacterWealth(level);
+  if (!wealth) return "";
+  const name = getCreatureName(record);
+  if (option === "lumpSum") {
+    const limit = level > 1 ? ` of level ${level - 1} or lower` : "";
+    return `**${name} takes starting wealth for level ${level}:** ${formatGp(wealth.lumpSum)} to buy common items${limit}.`;
+  }
+  const items = wealth.items.length > 0 ? ` and permanent items: ${describeWealthItems(wealth.items)}` : "";
+  return `**${name} takes starting wealth for level ${level}:** ${formatGp(wealth.currency)}${items}. Each item is a common item of that level or lower; runes and precious materials cost extra, and the GM may allow uncommon items.`;
+}
+
+// The confirm before it's added: the coins, and that it's for a new
+// character and taken once
+function getStartingWealthConfirmText(record, option) {
+  const level = parseInt(record?.data?.level, 10) || 0;
+  const wealth = getCharacterWealth(level);
+  const gp = option === "lumpSum" ? wealth.lumpSum : wealth.currency;
+  return `Add ${formatGp(gp)} to ${getCreatureName(record)}'s coins as level ${level} starting wealth? It's for a character made at this level, and the Starting Wealth button goes away once it's taken.`;
+}
+
+// The Inventory tab's Starting Wealth button
+function takeStartingWealth(record) {
+  const options = getStartingWealthOptions(record);
+  if (options.length === 0) {
+    api.showNotification("Starting wealth is for characters of level 1 to 20.", "yellow", "Starting Wealth");
+    return;
+  }
+  api.showPrompt(
+    "Starting Wealth",
+    getStartingWealthPromptText(record),
+    "Choose...",
+    options,
+    null,
+    (selected) => {
+      const option = getPromptSelections(selected)[0];
+      const values = getStartingWealthValues(record, option);
+      if (!values) return;
+      api.showConfirm("Starting Wealth", getStartingWealthConfirmText(record, option), "Take", "Cancel", () => {
+        api.setValuesOnRecord(record, values, () => {
+          api.sendMessage(getStartingWealthMessage(record, option), undefined, [], [], record);
+        });
+      });
+    },
+    "Take",
     "Cancel",
     1,
   );

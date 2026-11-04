@@ -882,10 +882,10 @@ ${getLevelUpSummary(gains)}`,
             next();
             return;
           }
-          const dedicationWarning = getDedicationWarning(latestRecord, feat);
-          if (dedicationWarning) {
-            api.showNotification(dedicationWarning, "yellow", "Dedication Feat");
-          }
+          // Reminders for the GM, never a block (character-growth.js)
+          getFeatWarnings(latestRecord, feat, newLevel).forEach((warning) =>
+            api.showNotification(warning.text, "yellow", warning.title),
+          );
           api.setValues(
             {
               [`data.feats.${slotIndex}`]: buildFilledFeatSlot(
