@@ -15,6 +15,12 @@
 
     const valuesToSet = {};
 
+    // Repair once the item has Hit Points (item-gear.js)
+    const repairHidden = isRepairButtonHidden(item, itemDataPath);
+    if ((item.fields?.repairBtn?.hidden ?? true) !== repairHidden) {
+      valuesToSet[`${fieldsPath}.repairBtn.hidden`] = repairHidden;
+    }
+
     // Check if traits is set
     if (
       item.data?.traits &&
@@ -235,6 +241,11 @@
     }
   }
 
+  // A shield's Repair button (item-gear.js)
+  function repairThisShield() {
+    repairInventoryItem(record, getNearestParentDataPath(dataPath));
+  }
+
   function onChangeShieldValue(value, field) {
     // If this is a nested item in an inventory, we adjust the parent's shield values
     if (dataPath.includes("inventory")) {
@@ -255,6 +266,11 @@
         brokenThreshold = Math.floor(value / 2);
         valuesToSet["data.shieldBt"] = brokenThreshold;
         maxHp = value;
+        // Filling in the HP shows the Repair button (item-gear.js)
+        valuesToSet[`${nearestParentDataPath}.fields.repairBtn.hidden`] = isRepairButtonHidden(
+          { data: { hp: { max: value } } },
+          nearestParentDataPath,
+        );
       } else if (field === "acBonus") {
         valuesToSet["data.shieldAC"] = value;
       } else if (field === "hardness") {
@@ -814,6 +830,18 @@
         placeholder="0"
         minvalue="0"
       ></numberfield>
+    </div>
+    <!-- Broken at or below half its HP; Repair rolls Crafting (item-gear.js) -->
+    <div style="display: flex; gap: 4px; margin-bottom: 4px">
+      <button
+        size="xs"
+        variant="light"
+        icon="IconTool"
+        field="repairBtn"
+        hidden="true"
+        label="Repair"
+        onclick="repairThisShield()"
+      ></button>
     </div>
   </box>
 

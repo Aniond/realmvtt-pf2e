@@ -42,6 +42,11 @@
   function sellItem() {
     sellInventoryItem(getNearestParentDataPath(dataPath));
   }
+
+  // Uses what's affixed to this item (item-gear.js)
+  function useAffixed() {
+    useAffixedItem(record, getNearestParentDataPath(dataPath));
+  }
 </script>
 
 <div
@@ -119,3 +124,19 @@
     ></dropdown>
   </div>
 </div>
+  <!-- What's affixed to it (talismans, spellhearts), with a Use button
+       (item-gear.js) -->
+  <box field="affixedBox" hidden="true" width="100%">
+    <div style="display: flex; gap: 4px; align-items: center; width: 100%">
+      <div style="margin-left: auto"></div>
+      <label size="xs" variant="bold" label="Affixed: "></label>
+      <label field="affixedLabel" size="xs"></label>
+      <button
+        size="xxs"
+        radius="xs"
+        variant="light"
+        label="Use"
+        onclick="useAffixed()"
+      ></button>
+    </div>
+  </box>

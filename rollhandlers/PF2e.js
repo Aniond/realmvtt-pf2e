@@ -2122,11 +2122,12 @@ function getArmorRuneDetails(runeName) {
 }
 
 // Returns the rune details above so we can collect their modifiers, with
-// what each rune does (property-runes.js)
-function getFeaturesFromRunes(items = []) {
+// what each rune does (property-runes.js). Only as many property runes as
+// the item's potency allows work; the rest are dormant (item-gear.js)
+function getFeaturesFromRunes(items = [], record = undefined) {
   const features = [];
   items.forEach((item) => {
-    const propertyRunes = item.data?.runes?.property || [];
+    const propertyRunes = getActivePropertyRunes(record, item);
 
     propertyRunes.forEach((rune) => {
       const isWeapon = item.data?.type === "weapon";

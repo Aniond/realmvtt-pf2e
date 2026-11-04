@@ -269,6 +269,9 @@ if (targets.length === 0) {
 const downtimeLines = [
   ...getEarnIncomeLines(data?.roll?.metadata?.earnIncome, noteDegree),
   ...getSubsistLines(data?.roll?.metadata?.subsist, noteDegree),
+  // Repair: the HP it restores, or the critical failure's damage
+  // (item-gear.js)
+  ...getRepairLines(data?.roll?.metadata?.repair, noteDegree),
 ];
 if (downtimeLines.length > 0) message += `\n\n${downtimeLines.join("\n")}`;
 
