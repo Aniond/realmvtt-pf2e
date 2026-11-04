@@ -524,4 +524,177 @@ section("The entry stays out of slots and the class's entries; rest refills its 
   ctx.record = { data: {}, fields: {}, type: "characters", _id: "test" };
 }
 
+
+// --- staves --------------------------------------------------------------------
+
+const IGNITION = { _id: "spell-ign", name: "Ignition", recordType: "spells", data: { level: 1, traditions: ["Arcane", "Primal"], traits: ["Cantrip", "Fire"] } };
+const BREATHE_FIRE = { _id: "spell-bf", name: "Breathe Fire", recordType: "spells", data: { level: 1, traditions: ["Arcane", "Primal"], traits: ["Fire"] } };
+const FIREBALL = { _id: "spell-fb", name: "Fireball", recordType: "spells", data: { level: 3, traditions: ["Arcane", "Primal"], traits: ["Fire"] } };
+Object.assign(spellsByName, { Ignition: IGNITION, "Breathe Fire": BREATHE_FIRE, Fireball: FIREBALL });
+const spellLink = (spell) =>
+  `<record-link recordlink="{&quot;value&quot;:{&quot;_id&quot;:&quot;module-${spell._id}&quot;,&quot;name&quot;:&quot;${spell.name}&quot;,&quot;recordType&quot;:&quot;spells&quot;},&quot;type&quot;:&quot;spells&quot;}">${spell.name}</record-link>`;
+// The module's Staff of Fire: its list in the description, by rank
+const STAFF_DESCRIPTION = `<p><strong>Activate</strong> Cast a Spell</p><hr /><ul>\n<li><strong>Cantrip</strong> ${spellLink(IGNITION)}</li>\n<li><strong>1st</strong> ${spellLink(BREATHE_FIRE)}</li>\n</ul><hr /><p><strong>Craft Requirements</strong> Supply one casting of all listed ranks.</p>`;
+const GREATER_DESCRIPTION = `<ul><li><strong>3rd</strong> ${spellLink(FIREBALL)}</li></ul>`;
+const staff = (data = {}) => ({
+  _id: "item-staff",
+  name: "Staff of Fire",
+  recordType: "items",
+  data: { type: "weapon", level: 3, traits: ["Common", "Magical", "Staff", "Two-Hand-D8"], description: STAFF_DESCRIPTION, carried: "equipped", ...data },
+});
+const staffItems = { "Staff of Fire": staff() };
+const spontaneous = (name, data) => entry(name, { type: "spontaneous", tradition: "Arcane", attribute: "cha", dc: 22, mod: 12, ...data });
+let answers = [];
+let prompts = [];
+ctx.api.showPrompt = (title, text, placeholder, options, query, callback) => {
+  prompts.push({ title, text, options });
+  const answer = answers.shift();
+  if (answer !== undefined) callback(answer);
+};
+const lookupByName = ctx.api.getRecordByTypeAndName;
+ctx.api.getRecordByTypeAndName = (type, name, cb) =>
+  type === "items" ? respond(cb, staffItems[name] ? copy(staffItems[name]) : null) : lookupByName(type, name, cb);
+
+section("Staves: the spells a staff holds");
+{
+  assert("a staff by its trait", ctx.getItemSpellKind(staff()), "staff");
+  assert(
+    "its list, by rank (Cantrip: 0)",
+    ctx.getStaffDescriptionSpells(staff()),
+    [{ _id: "module-spell-ign", name: "Ignition", rank: 0 }, { _id: "module-spell-bf", name: "Breathe Fire", rank: 1 }],
+  );
+  const beast = { name: "Beast Staff", data: { traits: ["Staff"], description: "<ul><li><strong>Cantrip</strong> <em>gouging claw</em></li><li><strong>1st</strong> <em>pest form</em>, <em>runic body</em></li><li><strong>4th</strong> <em>wall of fire</em><sup>PC1</sup></li></ul>" } };
+  assert(
+    "the Treasure Vault module's italic names, as the records name them",
+    ctx.getStaffDescriptionSpells(beast).map((spell) => `${spell.rank} ${spell.name}`),
+    ["0 Gouging Claw", "1 Pest Form", "1 Runic Body", "4 Wall of Fire"],
+  );
+  assert("a greater staff's lower versions", ctx.getStaffVersionNames("Beast Staff (Major)"), ["Beast Staff", "Beast Staff (Greater)"]);
+  assert("the base staff has none", ctx.getStaffVersionNames("Staff of Fire"), []);
+  let found = null;
+  ctx.getStaffSpells({ ...staff(), name: "Staff of Fire (Greater)", data: { ...staff().data, description: GREATER_DESCRIPTION } }, (spells) => {
+    found = spells;
+  });
+  assert("a greater staff: its own and the lower version's", found.map((spell) => `${spell.rank} ${spell.name}`), ["0 Ignition", "1 Breathe Fire", "3 Fireball"]);
+  assert("not prepared: no rows", ctx.getInventoryItemSpells(character([], {}, [staff()])), []);
+}
+
+section("Staves: preparing one at daily preparations");
+{
+  const wizard = entry("Arcane Prepared Spells", {
+    dc: 21,
+    mod: 11,
+    numSpells1: 3,
+    numSpells2: 3,
+    numSpells3: 2,
+    spells2: [{ _id: "row-res", name: "Resist Energy", data: { used: false } }],
+    spells3: [{ _id: "row-fb", name: "Fireball", data: { used: true } }],
+  });
+  const old = { ...staff(), _id: "item-old", name: "Old Staff", data: { ...staff().data, uses: { value: 2, max: 3 }, staffSpells: [{ name: "Ignition", rank: 0 }] } };
+  const pc = character([wizard], {}, [staff(), old]);
+  assert("the highest spell slot", ctx.getHighestSpellSlotRank(pc), 3);
+  assert(
+    "prepared spells not cast yet can be expended",
+    ctx.getStaffExpendOptions(pc).map((option) => [option.label, option.rank]),
+    [["Resist Energy (2nd rank, Arcane Prepared Spells)", 2]],
+  );
+  const spells = [{ name: "Ignition", rank: 0 }];
+  const prepared = ctx.getStaffPreparationValues(pc, "item-staff", spells, ctx.getStaffExpendOptions(pc)[0]);
+  assert("charges: the highest slot plus the spell expended", prepared.charges, 5);
+  assert("one write: the staff, the old one's charges gone, the spell expended", prepared.values, {
+    "data.inventory.0.data.uses.value": 5,
+    "data.inventory.0.data.uses.max": 5,
+    "data.inventory.0.data.staffSpells": spells,
+    "data.inventory.1.data.uses.value": 0,
+    "data.inventory.1.data.staffSpells": [],
+    "data.spells.0.data.spells2.0.data.used": true,
+    "data.spells.0.data.spells2.0.fields.nameUsedBox.hidden": false,
+    "data.spells.0.data.spells2.0.fields.nameBox.hidden": true,
+  });
+  assert("no staff picked: the old one's charges still go", Object.keys(ctx.getStaffPreparationValues(pc, null, []).values), ["data.inventory.1.data.uses.value", "data.inventory.1.data.staffSpells"]);
+
+  // The prompts, then the write and the Scrolls and Wands entry
+  open(character([wizard], {}, [staff()]));
+  answers = [["item-staff"], ["none"]];
+  prompts = [];
+  let next = 0;
+  ctx.promptStaffPreparation("pc", () => {
+    next += 1;
+  });
+  assert("asks which staff, then about expending a spell", prompts.map((prompt) => prompt.title), ["Prepare a Staff", "Prepare a Staff"]);
+  assert("3 charges", [stored().data.inventory[0].data.uses.value, stored().data.inventory[0].data.uses.max], [3, 3]);
+  assert(
+    "a row for each spell at its rank",
+    [itemEntry().data.cantrips.map((row) => row.name), itemEntry().data.spells1.map((row) => row.name)],
+    [["Ignition"], ["Breathe Fire"]],
+  );
+  assert("rows show the charges", itemEntry().data.spells1[0].data.uses, 3);
+  assertIncludes("a card", ctx.__state.messages[0], "prepares Staff of Fire:** 3 charges (3 for their highest spell slot), and 2 spells");
+  assert("then the next step", next, 1);
+
+  // No staff: straight on
+  open(character([wizard], {}, []));
+  prompts = [];
+  next = 0;
+  ctx.promptStaffPreparation("pc", () => {
+    next += 1;
+  });
+  assert("no staff: no prompt", [prompts.length, next], [0, 1]);
+}
+
+section("Staves: casting spends charges");
+{
+  const wizard = entry("Arcane Prepared Spells", { dc: 21, mod: 11, numSpells1: 3 });
+  const ready = staff({
+    uses: { value: 3, max: 3 },
+    staffSpells: [
+      { _id: "spell-ign", name: "Ignition", rank: 0 },
+      { _id: "spell-bf", name: "Breathe Fire", rank: 1 },
+      { _id: "spell-fb", name: "Fireball", rank: 3 },
+    ],
+  });
+  open(character([wizard], {}, [ready]));
+  ctx.syncItemSpells(ctx.record);
+  recordWrites = [];
+  castRow("data.spells.1.data.spells1.0");
+  assert("a 1st-rank spell: 1 charge, in the cast's one write", [recordWrites.length, stored().data.inventory[0].data.uses.value], [1, 2]);
+  assert("every row of the staff shows it", [itemEntry().data.cantrips[0].data.uses, itemEntry().data.spells3[0].data.uses], [2, 2]);
+  assertIncludes("the card says so", ctx.__state.messages[0], "*1 charge: 2 left.*");
+  ctx.__state.messages = [];
+  castRow("data.spells.1.data.cantrips.0");
+  assert("a cantrip: none", stored().data.inventory[0].data.uses.value, 2);
+  ctx.__state.messages = [];
+  castRow("data.spells.1.data.spells3.0");
+  assert("not enough for a 3rd-rank spell: it still casts, nothing spent", [ctx.__state.messages.length, stored().data.inventory[0].data.uses.value], [1, 2]);
+  assertIncludes("with a line", ctx.__state.messages[0], "**Not enough charges:** Staff of Fire has 2; this spell takes 3.");
+
+  // A spontaneous caster: charges, or 1 charge and a slot
+  const sorcerer = spontaneous("Arcane Spontaneous Spells", { numSpells3: 3, usedSpells3: 2, numSpells4: 1, usedSpells4: 0 });
+  open(character([sorcerer], {}, [ready]));
+  ctx.syncItemSpells(ctx.record);
+  answers = [["0:3"]];
+  prompts = [];
+  recordWrites = [];
+  castRow("data.spells.1.data.spells3.0");
+  assert(
+    "asked how to pay: charges, or a slot that has one left",
+    prompts[0]?.options.map((option) => option.label),
+    ["3 charges", "1 charge and a 3rd-rank slot (Arcane Spontaneous Spells, 2 left)"],
+  );
+  assert(
+    "1 charge and the slot, in one write",
+    [recordWrites.length, stored().data.inventory[0].data.uses.value, stored().data.spells[0].data.usedSpells3],
+    [1, 2, 1],
+  );
+  assertIncludes("the card", ctx.__state.messages[0], "*1 charge and a 3rd-rank slot (Arcane Spontaneous Spells): 2 left.*");
+  stored().data.inventory[0].data.uses.value = 3;
+  answers = [["charges"]];
+  prompts = [];
+  castRow("data.spells.1.data.spells3.0");
+  assert("or the charges", [stored().data.inventory[0].data.uses.value, stored().data.spells[0].data.usedSpells3], [0, 1]);
+  prompts = [];
+  castRow("data.spells.1.data.spells1.0");
+  assert("a 1st-rank spell costs 1 either way: not asked", prompts.length, 0);
+}
+
 process.exitCode = summary() > 0 ? 1 : 0;

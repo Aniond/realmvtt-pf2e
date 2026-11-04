@@ -19,6 +19,13 @@
 //   - a scroll is used up; a wand spends its once-a-day use, which comes back
 //     at daily preparations (its row too). A spent wand still casts, with a
 //     short overcharge line. Nothing here refuses a cast: the GM decides.
+//   - staves and coda instruments (GM Core pg. 278; Treasure Vault pg. 136):
+//     at daily preparations the character prepares one staff (charges equal
+//     to their highest spell slot's rank, plus a prepared spell expended for
+//     its rank). The prepared staff's spells (its list and its lower
+//     versions') get rows at their ranks; a cast spends charges equal to the
+//     rank (cantrips none), or for a spontaneous caster 1 charge and a slot
+//     of that rank or higher. Not enough charges is a line on the card.
 // Loaded as one of the ruleset's scripts (ruleset.config.json,
 // otherSettings.scripts), so it shares common.js's scope at runtime.
 
@@ -43,6 +50,9 @@ function getItemSpellKind(item) {
   const category = String(item?.data?.itemCategory || "").trim().toLowerCase();
   if (traits.includes("wand") || category === "wand") return "wand";
   if (traits.includes("scroll") || category === "scroll") return "scroll";
+  // Magic staves and coda instruments have the staff trait (GM Core pg. 278,
+  // Treasure Vault pg. 136)
+  if (traits.includes("staff")) return "staff";
   return null;
 }
 
@@ -183,21 +193,24 @@ function getItemSpellCasting(record, spell) {
 }
 
 // The scrolls and wands in the inventory that hold a spell, whether carried,
-// equipped or dropped: [{ item, index, kind, ref }]
+// equipped or dropped, and each spell of a prepared staff:
+// [{ item, index, kind, ref, rank }] (rank: a staff spell's)
 function getInventoryItemSpells(record) {
-  return (record?.data?.inventory || [])
-    .map((item, index) => {
-      const kind = getItemSpellKind(item);
-      const ref = kind ? getItemSpellRef(item) : null;
-      return ref ? { item, index, kind, ref } : null;
-    })
-    .filter(Boolean);
+  return (record?.data?.inventory || []).flatMap((item, index) => {
+    const kind = getItemSpellKind(item);
+    if (kind === "staff") {
+      return getPreparedStaffSpells(item).map((ref) => ({ item, index, kind, ref, rank: ref.rank }));
+    }
+    const ref = kind ? getItemSpellRef(item) : null;
+    return ref ? [{ item, index, kind, ref }] : [];
+  });
 }
 
 // What a row shows as its uses: a wand's use for the day, or how many
 // scrolls are left
 function getItemSpellRowUses(item, kind) {
-  if (kind === "wand") {
+  // A staff's rows show its charges (item-spells.js, staves)
+  if (kind === "wand" || kind === "staff") {
     return {
       uses: parseInt(item?.data?.uses?.value, 10) || 0,
       maxUses: parseInt(item?.data?.uses?.max, 10) || 0,
@@ -210,9 +223,11 @@ function getItemSpellRowUses(item, kind) {
 // A row of the Scrolls and Wands entry for one scroll or wand: its spell,
 // its uses, and which item it is (data.itemSpell), so a cast from the row
 // spends that item
-function buildItemSpellRow(item, index, kind, spell) {
+function buildItemSpellRow(item, index, kind, spell, rank = null) {
+  // A staff has a row per spell and rank
+  const staffKey = kind === "staff" ? `-${getStaffSpellSlug(spell.name)}-${rank}` : "";
   return {
-    _id: `itemspell-${item?._id || index}`,
+    _id: `itemspell-${item?._id || index}${staffKey}`,
     name: spell.name,
     portrait: spell.portrait,
     recordType: "spells",
@@ -220,7 +235,14 @@ function buildItemSpellRow(item, index, kind, spell) {
       type: "spell",
       ...(spell.data || {}),
       ...getItemSpellRowUses(item, kind),
-      itemSpell: { itemId: item?._id || "", itemIndex: index, itemName: item?.name || "", kind, spellId: spell._id || "" },
+      itemSpell: {
+        itemId: item?._id || "",
+        itemIndex: index,
+        itemName: item?.name || "",
+        kind,
+        spellId: spell._id || "",
+        ...(kind === "staff" ? { rank } : {}),
+      },
     },
     fields: {
       spellDetails: { hidden: false },
@@ -249,12 +271,19 @@ function getItemSpellKey(item, index) {
   return item?._id || `#${index}`;
 }
 
+// The key of one of getInventoryItemSpells' entries: the item's, and for a
+// staff, its spell and rank too
+function getItemSpellEntryKey({ item, index, kind, ref, rank }) {
+  const key = getItemSpellKey(item, index);
+  return kind === "staff" ? `${key}|${String(ref?.name || "").trim().toLowerCase()}|${rank}` : key;
+}
+
 // The Scrolls and Wands entry as the inventory has it, given each item's
 // spell ({ [getItemSpellKey]: spell }): a row per scroll and wand at the
 // item's rank, and the caster's numbers for the first one (every cast works
 // them out again for its own spell). null when there are none.
 function buildItemSpellsEntry(record, spellsByItem) {
-  const listed = getInventoryItemSpells(record).filter(({ item, index }) => spellsByItem[getItemSpellKey(item, index)]);
+  const listed = getInventoryItemSpells(record).filter((found) => spellsByItem[getItemSpellEntryKey(found)]);
   if (listed.length === 0) return null;
   const entries = record?.data?.spells || [];
   const current =
@@ -270,8 +299,15 @@ function buildItemSpellsEntry(record, spellsByItem) {
   SPELL_RANK_LISTS.forEach((list) => {
     data[list] = [];
   });
-  listed.forEach(({ item, index, kind }) => {
-    const spell = spellsByItem[getItemSpellKey(item, index)];
+  listed.forEach((found) => {
+    const { item, index, kind } = found;
+    const spell = spellsByItem[getItemSpellEntryKey(found)];
+    // A staff's spell at its rank on the staff's list (0: a cantrip)
+    if (kind === "staff") {
+      const list = found.rank > 0 ? `spells${Math.min(10, found.rank)}` : "cantrips";
+      data[list].push(buildItemSpellRow(item, index, kind, spell, found.rank));
+      return;
+    }
     const rank = Math.min(10, getItemSpellRank(item) || parseInt(spell?.data?.level, 10) || 1);
     data[`spells${rank}`].push(buildItemSpellRow(item, index, kind, spell));
   });
@@ -282,7 +318,7 @@ function buildItemSpellsEntry(record, spellsByItem) {
     }
   });
   const first = listed[0];
-  Object.assign(data, getItemSpellCasting(record, spellsByItem[getItemSpellKey(first.item, first.index)]).casting);
+  Object.assign(data, getItemSpellCasting(record, spellsByItem[getItemSpellEntryKey(first)]).casting);
   return { ...current, data, fields };
 }
 
@@ -328,20 +364,22 @@ function syncItemSpells(record, callback) {
     const rows = SPELL_RANK_LISTS.flatMap((list) => entry?.data?.[list] || []);
     const spellsByItem = {};
     const missing = [];
-    items.forEach(({ item, index, ref }) => {
+    items.forEach((found) => {
+      const { item, ref, kind, rank } = found;
       const row = rows.find(
         (r) =>
           r?.data?.itemSpell?.itemId === (item._id || "") &&
-          String(r?.name || "").trim().toLowerCase() === String(ref.name || "").trim().toLowerCase(),
+          String(r?.name || "").trim().toLowerCase() === String(ref.name || "").trim().toLowerCase() &&
+          (kind !== "staff" || r?.data?.itemSpell?.rank === rank),
       );
-      if (row) spellsByItem[getItemSpellKey(item, index)] = getItemSpellFromRow(row);
-      else missing.push({ item, index, ref });
+      if (row) spellsByItem[getItemSpellEntryKey(found)] = getItemSpellFromRow(row);
+      else missing.push(found);
     });
     if (missing.length === 0) return writeItemSpells(current, spellsByItem, done);
     let pending = missing.length;
-    missing.forEach(({ item, index, ref }) =>
-      findItemSpell(ref, (spell) => {
-        if (spell) spellsByItem[getItemSpellKey(item, index)] = spell;
+    missing.forEach((found) =>
+      findItemSpell(found.ref, (spell) => {
+        if (spell) spellsByItem[getItemSpellEntryKey(found)] = spell;
         pending -= 1;
         if (pending === 0) read((latest) => writeItemSpells(latest, spellsByItem, done));
       }),
@@ -417,7 +455,8 @@ function findItemSpellItem(record, itemSpell, spellName) {
 // The values that spend a scroll (one fewer) or a wand's use for the day,
 // and the card's line for an overcharge, or "": { values, line, left,
 // destroy, bulk }. A scroll at 0 that auto-destroys is removed (destroy).
-function getItemSpellUseValues(item, itemPath, kind) {
+function getItemSpellUseValues(item, itemPath, kind, rank = 0, payment = null, record = null) {
+  if (kind === "staff") return getStaffChargeValues(item, itemPath, rank, payment, record);
   if (kind === "wand") {
     const left = parseInt(item?.data?.uses?.value, 10);
     if (left > 0) {
@@ -459,12 +498,23 @@ function getItemSpellCast(record, spell, rowPath, entryPath, isOverlay = false) 
   if (found) {
     itemName = found.item.name || itemName;
     use = {
-      ...getItemSpellUseValues(found.item, `data.inventory.${found.index}`, found.kind),
+      ...getItemSpellUseValues(
+        found.item,
+        `data.inventory.${found.index}`,
+        found.kind,
+        parseInt(spell?.data?.itemSpell?.rank, 10) || 0,
+        spell?.staffPayment || null,
+        record,
+      ),
       itemIndex: found.index,
       itemId: found.item._id || "",
     };
     Object.assign(values, use.values);
     values[`${rowPath}.data.uses`] = use.left;
+    // Every row of a staff shows its charges
+    if (found.kind === "staff") {
+      Object.assign(values, getStaffRowUsesValues(entry, entryPath, found.item._id || "", use.left));
+    }
   }
   const lines = [
     `*From ${itemName}: ${casting.tradition} spell DC ${casting.dc}, attack +${casting.mod}*`,
@@ -556,4 +606,350 @@ function getWandRecharges(record) {
     });
   });
   return values;
+}
+
+// ---------------------------------------------------------------- Staves
+
+// Staves (GM Core pg. 278) and coda instruments (Treasure Vault pg. 136,
+// staves a bard prepares):
+//   - Preparing a staff at daily preparations gives it charges equal to the
+//     rank of the character's highest spell slot. A prepared caster can
+//     expend one prepared spell to add its rank. Preparing one removes the
+//     charges any staff had (they last 24 hours), and only one is prepared
+//   - The prepared staff keeps its spells (data.staffSpells, its list and
+//     its lower versions': a greater staff lists only what it adds), and
+//     the Scrolls and Wands entry has a row for each at its rank
+//   - Casting one spends charges equal to the rank (cantrips none). A
+//     spontaneous caster can pay 1 charge and a slot of that rank or higher
+//     instead (asked first). Not enough charges is a line on the card; the
+//     cast goes ahead, as every item cast here does
+
+// A greater staff holds its lower versions' spells too
+const STAFF_VERSION_GRADES = ["", "Greater", "Major", "True"];
+
+// A spell's name as the records have it, from a staff's italic text
+// ("gouging claw" -> "Gouging Claw", "wall of fire" -> "Wall of Fire")
+const STAFF_SPELL_NAME_SMALL_WORDS = new Set(["a", "an", "and", "at", "for", "from", "in", "of", "on", "or", "the", "to", "with"]);
+
+function getStaffSpellTitle(text) {
+  return String(text || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word, i) =>
+      i > 0 && STAFF_SPELL_NAME_SMALL_WORDS.has(word.toLowerCase())
+        ? word.toLowerCase()
+        : word.charAt(0).toUpperCase() + word.slice(1),
+    )
+    .join(" ");
+}
+
+// The spells a staff's description lists, by rank: [{ _id, name, rank }]
+// (rank 0: a cantrip). The GM Core module lists them as
+// <li><strong>1st</strong> and the spells' links; the Treasure Vault module
+// as italic names (<em>gouging claw</em>), looked up by name
+function getStaffDescriptionSpells(item) {
+  const description = String(item?.data?.description || "").replace(/&quot;/g, '"');
+  const spells = [];
+  for (const entry of description.matchAll(/<li>([\s\S]*?)<\/li>/gi)) {
+    const label = (entry[1].match(/<strong>\s*([^<]*?)\s*<\/strong>/i)?.[1] || "").trim();
+    const rank = /^cantrips?$/i.test(label) ? 0 : parseInt(label, 10);
+    if (!(rank >= 0 && rank <= 10)) continue;
+    const before = spells.length;
+    for (const link of entry[1].matchAll(/recordlink="(\{.*?\})"/g)) {
+      try {
+        const value = JSON.parse(link[1])?.value || {};
+        if (value.recordType === "spells" && (value._id || value.name)) {
+          spells.push({ _id: value._id || "", name: value.name || "", rank });
+        }
+      } catch (e) {
+        // a link we can't read
+      }
+    }
+    if (spells.length > before) continue;
+    for (const named of entry[1].matchAll(/<em>([\s\S]*?)<\/em>/gi)) {
+      const name = getStaffSpellTitle(named[1].replace(/<[^>]+>/g, ""));
+      if (name) spells.push({ _id: "", name, rank });
+    }
+  }
+  return spells;
+}
+
+// The names of a staff's lower versions: "Beast Staff (Major)" -> "Beast
+// Staff", "Beast Staff (Greater)"
+function getStaffVersionNames(name) {
+  const match = String(name || "").match(/^(.*?) \((Greater|Major|True)\)$/);
+  if (!match) return [];
+  return STAFF_VERSION_GRADES.slice(0, STAFF_VERSION_GRADES.indexOf(match[2])).map((grade) =>
+    grade ? `${match[1]} (${grade})` : match[1],
+  );
+}
+
+// Spells merged, one per spell and rank, by rank then name
+function mergeStaffSpells(lists) {
+  const seen = new Set();
+  return lists
+    .flat()
+    .filter((spell) => {
+      const key = `${String(spell.name || "").trim().toLowerCase()}|${spell.rank}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((a, b) => a.rank - b.rank || String(a.name).localeCompare(String(b.name)));
+}
+
+// A staff's spells with its lower versions' (looked up by name), then
+// callback(spells)
+function getStaffSpells(item, callback) {
+  const names = getStaffVersionNames(item?.name);
+  const lists = [getStaffDescriptionSpells(item)];
+  const next = () => {
+    if (names.length === 0) return callback(mergeStaffSpells(lists));
+    api.getRecordByTypeAndName("items", names.shift(), (version) => {
+      if (version) lists.push(getStaffDescriptionSpells(version));
+      next();
+    });
+  };
+  next();
+}
+
+// The spells of a staff prepared today, or none
+function getPreparedStaffSpells(item) {
+  const spells = item?.data?.staffSpells;
+  return Array.isArray(spells) ? spells.filter((spell) => spell?.name) : [];
+}
+
+function getStaffSpellSlug(name) {
+  return String(name || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
+// The charges a cast from a staff spends (GM Core pg. 278): its rank, or 1
+// with a spontaneous caster's slot (payment: { entryIndex, slotRank }). Not
+// enough charges spends nothing, with a line. { values, line, left }
+function getStaffChargeValues(item, itemPath, rank, payment = null, record = null) {
+  const left = parseInt(item?.data?.uses?.value, 10) || 0;
+  if (rank <= 0) return { values: {}, line: "", left };
+  const cost = payment?.slotRank ? 1 : rank;
+  if (left < cost) {
+    return {
+      values: {},
+      line: `**Not enough charges:** ${item?.name || "the staff"} has ${left}; this spell takes ${cost}.`,
+      left,
+    };
+  }
+  const values = { [`${itemPath}.data.uses.value`]: left - cost };
+  let paid = `${cost} charge${cost === 1 ? "" : "s"}`;
+  if (payment?.slotRank) {
+    const entry = record?.data?.spells?.[payment.entryIndex];
+    const slots = parseInt(entry?.data?.[`usedSpells${payment.slotRank}`], 10) || 0;
+    values[`data.spells.${payment.entryIndex}.data.usedSpells${payment.slotRank}`] = Math.max(0, slots - 1);
+    paid += ` and a ${getOrdinal(payment.slotRank)}-rank slot (${entry?.name || "spontaneous"})`;
+  }
+  return { values, line: `*${paid}: ${left - cost} left.*`, left: left - cost };
+}
+
+// Every row of a staff shows its charges: the values for the rows that
+// change
+function getStaffRowUsesValues(entry, entryPath, itemId, left) {
+  const values = {};
+  SPELL_RANK_LISTS.forEach((list) => {
+    (entry?.data?.[list] || []).forEach((row, rowIndex) => {
+      if (row?.data?.itemSpell?.kind === "staff" && row.data.itemSpell.itemId === itemId && row.data.uses !== left) {
+        values[`${entryPath}.data.${list}.${rowIndex}.data.uses`] = left;
+      }
+    });
+  });
+  return values;
+}
+
+// A spontaneous caster's slots that can pay for a staff spell of the rank:
+// the same rank or higher, with one left
+function getStaffSlotOptions(record, rank) {
+  return getCastingEntries(record)
+    .filter(({ entry }) => entry?.data?.type === "spontaneous")
+    .flatMap(({ entry, index }) => {
+      const options = [];
+      for (let slotRank = rank; slotRank <= 10; slotRank++) {
+        const left = parseInt(entry.data?.[`usedSpells${slotRank}`], 10) || 0;
+        if (left > 0) options.push({ entryIndex: index, entryName: entry.name, slotRank, left });
+      }
+      return options;
+    });
+}
+
+// castSpell's first step for a staff's spell: a spontaneous caster with a
+// slot picks charges or 1 charge and a slot, then it casts again with that
+// (staffPayment). Returns true when it asked.
+function promptStaffPayment(record, spell, dataPathToSpell, isOverlay) {
+  if (isOverlay || spell?.staffPayment) return false;
+  const itemSpell = spell?.data?.itemSpell;
+  const rank = parseInt(itemSpell?.rank, 10) || 0;
+  if (itemSpell?.kind !== "staff" || rank <= 1) return false;
+  const slots = getStaffSlotOptions(record, rank);
+  if (slots.length === 0) return false;
+  api.showPrompt(
+    `Cast ${spell.name} from ${itemSpell.itemName || "the staff"}`,
+    "A spontaneous caster can pay with 1 charge and one of their spell slots (GM Core pg. 278).",
+    "Select...",
+    [
+      { label: `${rank} charges`, value: "charges" },
+      ...slots.map((slot) => ({
+        label: `1 charge and a ${getOrdinal(slot.slotRank)}-rank slot (${slot.entryName}, ${slot.left} left)`,
+        value: `${slot.entryIndex}:${slot.slotRank}`,
+      })),
+    ],
+    null,
+    (selected) => {
+      const choice = getPromptSelections(selected)[0];
+      if (!choice) return;
+      const [entryIndex, slotRank] = choice === "charges" ? [] : choice.split(":").map((part) => parseInt(part, 10));
+      const staffPayment = choice === "charges" ? { charges: true } : { entryIndex, slotRank };
+      castSpell(record, { ...spell, staffPayment }, dataPathToSpell, isOverlay);
+    },
+    "Cast",
+    "Cancel",
+    1,
+  );
+  return true;
+}
+
+// The rank of the character's highest spell slot, in any prepared or
+// spontaneous entry
+function getHighestSpellSlotRank(record) {
+  let highest = 0;
+  getCastingEntries(record).forEach(({ entry }) => {
+    for (let rank = 1; rank <= 10; rank++) {
+      if ((parseInt(entry?.data?.[`numSpells${rank}`], 10) || 0) > 0) highest = Math.max(highest, rank);
+    }
+  });
+  return highest;
+}
+
+// The character's staves and coda instruments: [{ item, index }]
+function getInventoryStaves(record) {
+  return (record?.data?.inventory || [])
+    .map((item, index) => ({ item, index }))
+    .filter(({ item }) => getItemSpellKind(item) === "staff");
+}
+
+// A prepared caster's prepared spells not cast yet, to expend into a staff:
+// [{ label, value, rank, path }]
+function getStaffExpendOptions(record) {
+  return getCastingEntries(record)
+    .filter(({ entry }) => (entry?.data?.type || "prepared") === "prepared")
+    .flatMap(({ entry, index }) =>
+      SPELL_RANK_LISTS.slice(1).flatMap((list, listIndex) =>
+        (entry.data?.[list] || [])
+          .map((row, rowIndex) => ({ row, rowIndex }))
+          .filter(({ row }) => row?.name && row.data?.used !== true)
+          .map(({ row, rowIndex }) => ({
+            label: `${row.name} (${getOrdinal(listIndex + 1)} rank, ${entry.name})`,
+            value: `data.spells.${index}.data.${list}.${rowIndex}`,
+            rank: listIndex + 1,
+          })),
+      ),
+    );
+}
+
+// The one write that prepares a staff (or none: staffId null): its charges
+// and spells, every other staff's charges gone, and the prepared spell
+// expended into it (expend: one of getStaffExpendOptions, or null)
+function getStaffPreparationValues(record, staffId, spells, expend = null) {
+  const charges = staffId ? getHighestSpellSlotRank(record) + (expend?.rank || 0) : 0;
+  const values = {};
+  getInventoryStaves(record).forEach(({ item, index }) => {
+    const path = `data.inventory.${index}.data`;
+    if (item._id === staffId) {
+      values[`${path}.uses.value`] = charges;
+      values[`${path}.uses.max`] = charges;
+      values[`${path}.staffSpells`] = spells;
+    } else if ((parseInt(item.data?.uses?.value, 10) || 0) > 0 || getPreparedStaffSpells(item).length > 0) {
+      values[`${path}.uses.value`] = 0;
+      values[`${path}.staffSpells`] = [];
+    }
+  });
+  if (staffId && expend) {
+    values[`${expend.value}.data.used`] = true;
+    values[`${expend.value}.fields.nameUsedBox.hidden`] = false;
+    values[`${expend.value}.fields.nameBox.hidden`] = true;
+  }
+  return { values, charges };
+}
+
+function isBardCharacter(record) {
+  return (record?.data?.classes || []).some((cls) => /^bard\b/i.test(cls?.name || ""));
+}
+
+// Daily preparations: which staff to prepare (charges for the highest spell
+// slot), and for a prepared caster a prepared spell to expend into it; then
+// the write, the Scrolls and Wands entry brought up to date, and next()
+function promptStaffPreparation(recordId, next) {
+  const finish = () => {
+    if (next) next();
+  };
+  api.getRecord("characters", recordId, (record) => {
+    const staves = record ? getInventoryStaves(record) : [];
+    const highest = record ? getHighestSpellSlotRank(record) : 0;
+    if (staves.length === 0 || highest === 0) return finish();
+    const write = (staffId, spells, expend) => {
+      const { values, charges } = getStaffPreparationValues(record, staffId, spells, expend);
+      if (Object.keys(values).length === 0) return finish();
+      api.setValuesOnRecord(record, values, (updated) => {
+        syncItemSpells(updated || record, () => {
+          const staff = staves.find(({ item }) => item._id === staffId)?.item;
+          if (staff) {
+            const extra = expend ? `, ${expend.rank} from expending ${expend.label}` : "";
+            api.sendMessage(
+              `**${getCreatureName(record)} prepares ${staff.name}:** ${charges} charge${charges === 1 ? "" : "s"} (${highest} for their highest spell slot${extra}), and ${spells.length} spell${spells.length === 1 ? "" : "s"} to cast from it.`,
+            );
+          }
+          finish();
+        });
+      });
+    };
+    const coda = (item) => itemHasTrait(item, "coda") && !isBardCharacter(record);
+    api.showPrompt(
+      "Prepare a Staff",
+      `A staff you prepare gains ${highest} charge${highest === 1 ? "" : "s"} (your highest spell slot's rank). Only one staff a day; charges from before are lost.`,
+      "Select...",
+      [
+        { label: "Don't prepare a staff", value: "none" },
+        ...staves.map(({ item }) => ({
+          label: coda(item) ? `${item.name} (a coda instrument: bards prepare these)` : item.name,
+          value: item._id,
+        })),
+      ],
+      null,
+      (selected) => {
+        const choice = getPromptSelections(selected)[0];
+        if (!choice || choice === "none") return write(null, [], null);
+        const staff = staves.find(({ item }) => item._id === choice)?.item;
+        if (!staff) return finish();
+        const prepare = (expend) => getStaffSpells(staff, (spells) => write(staff._id, spells, expend));
+        const options = getStaffExpendOptions(record);
+        if (options.length === 0) return prepare(null);
+        api.showPrompt(
+          "Prepare a Staff",
+          "A prepared spellcaster can expend one prepared spell to add charges equal to its rank.",
+          "Select...",
+          [{ label: "Don't expend a spell", value: "none" }, ...options.map(({ label, value }) => ({ label, value }))],
+          null,
+          (picked) => {
+            const value = getPromptSelections(picked)[0];
+            prepare(options.find((option) => option.value === value) || null);
+          },
+          "OK",
+          "Skip",
+          1,
+        );
+      },
+      "Prepare",
+      "Skip",
+      1,
+    );
+  });
 }
