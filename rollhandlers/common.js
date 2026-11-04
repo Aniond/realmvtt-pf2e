@@ -3487,11 +3487,9 @@ function getEffectsAndModifiersForToken(
         : item.data?.carried === "equipped") &&
       (!requiresInvestment(item) || item.data?.invested === "true"),
   );
-  // A broken item grants no bonuses (item-gear.js)
-  const bonusItems = getUnbrokenItems(equippedItems);
-
-  // Get and modifiers from runes
-  const runeModifiers = getFeaturesFromRunes(bonusItems, target);
+  // Get and modifiers from runes; a broken item's runes grant nothing
+  // (item-gear.js)
+  const runeModifiers = getFeaturesFromRunes(getUnbrokenItems(equippedItems), target);
 
   // Determine if we're using a weapon that has ammo, and add effects for that ammo
   let ammoEffects = [];
@@ -3524,7 +3522,8 @@ function getEffectsAndModifiersForToken(
       .filter((item) => item.data?.ammoSelect && item.data.ammoSelect !== item._id)
       .map((item) => item.data.ammoSelect),
   );
-  const modifierItems = bonusItems.filter(
+  // A broken item keeps its penalties, not its bonuses (item-gear.js)
+  const modifierItems = getItemModifierSources(equippedItems).filter(
     (item) => !isAmmunitionItem(item) && !selectedAmmoIds.has(item._id),
   );
 

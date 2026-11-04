@@ -45,6 +45,21 @@
     if ((item?.fields?.etchBtn?.hidden ?? true) === showEtch) {
       api.setHidden("etchBtn", !showEtch);
     }
+    // Repair once the item has Hit Points
+    const repairHidden = isRepairButtonHidden(item, itemDataPath);
+    if ((item?.fields?.repairBtn?.hidden ?? true) !== repairHidden) {
+      api.setHidden("repairBtn", repairHidden);
+    }
+  }
+
+  // Filling in the HP shows the Repair button (item-gear.js)
+  function onChangeItemHpMax(value) {
+    const itemDataPath = getNearestParentDataPath(dataPath);
+    const item = itemDataPath ? api.getValue(itemDataPath) : record;
+    api.setHidden(
+      "repairBtn",
+      isRepairButtonHidden({ ...item, data: { ...item?.data, hp: { ...item?.data?.hp, max: value } } }, itemDataPath),
+    );
   }
 
   // Property runes past the potency value are dormant: a notice
@@ -431,14 +446,18 @@
       label="HP (Max)"
       placeholder="0"
       minvalue="0"
+      onchange="onChangeItemHpMax(value)"
     ></numberfield>
   </div>
-  <!-- Broken at or below half its HP; Repair rolls Crafting (item-gear.js) -->
+  <!-- Broken at or below half its HP; Repair rolls Crafting, shown once it
+       has HP (item-gear.js) -->
   <div style="display: flex; gap: 4px; margin-bottom: 4px">
     <button
       size="xs"
       variant="light"
       icon="IconTool"
+      field="repairBtn"
+      hidden="true"
       label="Repair"
       onclick="repairThisItem()"
     ></button>

@@ -117,6 +117,22 @@ section("Broken items");
     names(lookup(character([{ ...cloak, data: { ...cloak.data, hp: { value: 6, max: 10 } } }]), ["skillBonus"], "stealth")),
     ["Cloak of Elvenkind"],
   );
+  const cursed = gear("Cursed Cloak", {
+    carried: "equipped",
+    hp: { value: 1, max: 10 },
+    modifiers: [
+      { data: { type: "skillBonus", modifierType: "item", value: 1, valueType: "number", field: "stealth" } },
+      { data: { type: "skillPenalty", modifierType: "status", value: 2, valueType: "number", field: "stealth" } },
+    ],
+  });
+  assert("a broken item still imposes its penalties", names(lookup(character([cursed]), ["skillBonus", "skillPenalty"], "stealth")), ["Cursed Cloak"]);
+  assert(
+    "... only the penalty",
+    lookup(character([cursed]), ["skillBonus", "skillPenalty"], "stealth").filter((mod) => mod.active).map((mod) => mod.value),
+    [-2],
+  );
+  assert("a negative number counts as a penalty", ctx.isPenaltyModifier({ data: { type: "skillBonus", value: -1, valueType: "number" } }), true);
+  assert("ignoreRangePenalty isn't one", ctx.isPenaltyModifier({ data: { type: "ignoreRangePenalty", value: "", valueType: "string" } }), false);
   const flaming = weapon("Longsword", { runes: { potency: 1, property: ["flaming"] }, hp: { value: 2, max: 20 } });
   assert("nor its property runes", ctx.getFeaturesFromRunes(ctx.getUnbrokenItems([flaming])).length, 0);
   assert("a broken weapon can't Strike", ctx.getBrokenStrikeWarning(flaming), "Longsword is broken: it can't be used to Strike.");
@@ -125,6 +141,9 @@ section("Broken items");
 
 section("Repair");
 {
+  assert("the Repair button: an inventory item with HP", ctx.isRepairButtonHidden(armor("Hide", { hp: { value: 1, max: 36 } }), "data.inventory.0"), false);
+  assert("... hidden with no HP", ctx.isRepairButtonHidden(armor("Hide"), "data.inventory.0"), true);
+  assert("... and outside an inventory", ctx.isRepairButtonHidden(armor("Hide", { hp: { value: 1, max: 36 } }), ""), true);
   assert("success, trained: 10", ctx.getRepairHp(1, 1), 10);
   assert("success, master: 20", ctx.getRepairHp(3, 1), 20);
   assert("critical success, expert: 30", ctx.getRepairHp(2, 2), 30);
@@ -340,8 +359,37 @@ section("Runes: transferring");
   const values = ctx.getRuneTransferValues(pc, project.data.transfer);
   assert("off the sword", values["data.inventory"][0].data.runes.property, []);
   assert("onto the axe", values["data.inventory"][1].data.runes.property, ["greaterFlaming"]);
-  const potency = ctx.getRuneTransferValues(pc, { sourceId: sword._id, targetId: axe._id, kind: "potency", value: 1 });
+  const club = weapon("Club", { runes: { potency: "", striking: "", property: [] } });
+  const withClub = character([sword, club]);
+  const potency = ctx.getRuneTransferValues(withClub, { sourceId: sword._id, targetId: club._id, kind: "potency", target: "weapon", value: 1 });
   assert("a potency rune", [potency["data.inventory"][0].data.runes.potency, potency["data.inventory"][1].data.runes.potency], ["", "1"]);
+  const strong = weapon("Greatsword", { runes: { potency: "1", striking: "2", property: [] } });
+  assert(
+    "never a downgrade: Striking onto Greater Striking moves nothing",
+    ctx.getRuneTransferValues(character([sword, strong]), { sourceId: sword._id, targetId: strong._id, kind: "striking", target: "weapon", value: 1 }),
+    {},
+  );
+  assert(
+    "nor a rune it already has",
+    ctx.getRuneTransferValues(character([sword, weapon("Rapier", { runes: { potency: "1", property: ["greaterFlaming"] } })]), { ...project.data.transfer, targetId: "weapon-Rapier" }),
+    {},
+  );
+
+  // A melee weapon rune only to a melee weapon (GM Core pg. 225: anything
+  // else is an automatic critical failure)
+  const animatedSword = weapon("Shortsword", { runes: { potency: "1", property: ["animated"] } });
+  const bow = weapon("Longbow", { range: 100 });
+  const animated = ctx.getItemRunes(animatedSword)[1];
+  const animatedRecord = gear("Animated", { usage: "etched-onto-melee-weapon", level: 13 });
+  const melee = character([animatedSword, bow, axe]);
+  assert("by the rune item's usage: melee only", ctx.getTransferTargets(melee, animatedSword, animated, animatedRecord).map((item) => item.name), ["Battle Axe"]);
+  assert("without the rune item: any weapon", ctx.getTransferTargets(melee, animatedSword, animated).map((item) => item.name), ["Longbow", "Battle Axe"]);
+
+  // The prompt gives Etch's notice instead of starting the project
+  reset([["weapon-Longsword"], ["1"], ["weapon-Greatsword"]]);
+  ctx.api.getRecordsByQuery = (type, query, cb) => cb([gear("Striking", { usage: "etched-onto-a-weapon", level: 4, price: { value: { gp: 65 } } })]);
+  ctx.promptRuneTransfer(character([sword, strong], { gp: 100 }));
+  assert("a downgrade: the notice, no project", [notifications.map((n) => n.text), sets.length], [["Greatsword already has an equal or better striking rune."], 0]);
   assert("an item gone: nothing", ctx.getRuneTransferValues(pc, { sourceId: "x", targetId: axe._id, kind: "potency", value: 1 }), {});
 
   const withProject = character([sword, axe], { craftingProjects: [project] });

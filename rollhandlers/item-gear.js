@@ -6,13 +6,14 @@
 //
 //   - Broken (Player Core pg. 442; GM Core pg. 244, Item Damage): an item
 //     with Hit Points is broken at or below its Broken Threshold, half its
-//     HP. A broken item grants no bonuses (its modifiers and property runes
-//     are left out), and a broken weapon can't Strike. Broken armor keeps its
+//     HP. A broken item grants no bonuses (its bonus modifiers and property
+//     runes are left out) but still imposes its penalties, and a broken
+//     weapon can't Strike. Broken armor keeps its
 //     item bonus to AC (potency too) but loses its resilient rune, and takes
 //     a status penalty to AC: -1 light, -2 medium, -3 heavy, 1 less for
 //     laminar armor (Treasure Vault pg. 220)
-//   - Repair (Player Core pg. 236): the item sheet's Repair button rolls
-//     Crafting against the item's Craft DC. The card restores 5 + 5 per rank
+//   - Repair (Player Core pg. 236): the item sheet's Repair button (shown
+//     once the item has HP) rolls Crafting against the item's Craft DC. The card restores 5 + 5 per rank
 //     (success) or 10 + 10 per rank (critical success), or on a critical
 //     failure rolls 2d6 damage to the item, less its Hardness
 //   - Talismans and spellhearts (GM Core pg. 263; Secrets of Magic pg. 170):
@@ -28,7 +29,8 @@
 //     A rune item's Etch button puts it on a weapon, armor or shield the
 //     character has (and takes it out of the inventory). The Crafting tab's
 //     Transfer a Rune button starts a 1-day Craft project at the rune's level
-//     DC for 10% of its Price; finishing it moves the rune
+//     DC for 10% of its Price, to an item that can take the rune (as Etch);
+//     finishing it moves the rune
 //
 // Item HP and Hardness are the item's otherProperties fields; the modules
 // leave them empty for most gear, so these rules apply once the GM fills them
@@ -91,6 +93,30 @@ function getBrokenArmorModifier(record, bestArmor) {
 // Items whose bonuses count: a broken item grants none (Player Core pg. 442)
 function getUnbrokenItems(items) {
   return (items || []).filter((item) => !isItemBroken(item));
+}
+
+// A penalty modifier: a penalty type, or a negative number
+function isPenaltyModifier(modifier) {
+  const type = (modifier?.data?.type || "").toLowerCase();
+  if (type.includes("penalty") && type !== "ignorerangepenalty") return true;
+  const value = parseFloat(modifier?.data?.value);
+  return modifier?.data?.valueType === "number" && !isNaN(value) && value < 0;
+}
+
+// Items as sources of modifiers: a broken one keeps only its penalties ("A
+// broken item still imposes penalties and limitations normally incurred by
+// carrying, holding, or wearing it", Player Core pg. 442)
+function getItemModifierSources(items) {
+  return (items || []).map((item) =>
+    isItemBroken(item)
+      ? { ...item, data: { ...item.data, modifiers: (item.data?.modifiers || []).filter(isPenaltyModifier) } }
+      : item,
+  );
+}
+
+// The Repair button shows for an inventory item with Hit Points
+function isRepairButtonHidden(item, itemDataPath) {
+  return !itemDataPath || !((parseInt(item?.data?.hp?.max, 10) || 0) > 0);
 }
 
 // The Strike refusal for a broken weapon or shield, or ""
@@ -744,8 +770,14 @@ function getRuneItemName(displayName) {
   return graded ? `${graded[2]} (${graded[1]})` : displayName;
 }
 
-// The items a rune can move to: the same kind of item, not the one it's on
-function getTransferTargets(record, source, rune) {
+// The items a rune can move to, not the one it's on. With the rune item,
+// the ones its usage allows, as Etch (a melee weapon rune can't go on a
+// ranged weapon: an automatic critical failure, GM Core pg. 225); without
+// it, the same kind of item
+function getTransferTargets(record, source, rune, runeRecord = null) {
+  if (/^etched/.test(runeRecord?.data?.usage || "")) {
+    return getEtchHosts(record, runeRecord, rune).filter((item) => item._id !== source._id);
+  }
   return (record?.data?.inventory || []).filter((item) => {
     if (item._id === source._id) return false;
     const isWeapon = item.data?.type === "weapon" || !!item.data?.handwraps;
@@ -779,29 +811,36 @@ function buildRuneTransferProject(record, source, target, rune, runeRecord) {
     output: "runeTransfer",
   });
   project.name = `Transfer ${rune.name} to ${target.name}`;
-  project.data.transfer = { sourceId: source._id, targetId: target._id, kind: rune.kind, value: rune.value, name: rune.name };
+  project.data.transfer = {
+    sourceId: source._id,
+    targetId: target._id,
+    kind: rune.kind,
+    target: rune.target,
+    value: rune.value,
+    name: rune.name,
+  };
   return project;
 }
 
-// Finishing a transfer: the rune comes off its item and goes on the other.
-// The inventory write, or {} when either item is gone
+// Finishing a transfer: the rune comes off its item and goes on the other,
+// as Etch puts it on (getEtchedHostData). The inventory write, or {} when
+// either item is gone or the other item can't take it any more (it has the
+// rune, or an equal or better one)
 function getRuneTransferValues(record, transfer) {
   const inventory = record?.data?.inventory || [];
   const source = inventory.find((item) => item._id === transfer?.sourceId);
   const target = inventory.find((item) => item._id === transfer?.targetId);
   if (!source || !target) return {};
+  const etched = getEtchedHostData(target, transfer);
+  if (etched.problem) return {};
   const removed =
     transfer.kind === "property"
       ? { "runes.property": getPropertyRuneList(source).filter((value) => value !== transfer.value) }
       : { [`runes.${transfer.kind}`]: "" };
-  const added =
-    transfer.kind === "property"
-      ? { "runes.property": [...getPropertyRuneList(target).filter((value) => value !== transfer.value), transfer.value] }
-      : { [`runes.${transfer.kind}`]: `${transfer.value}` };
   return {
     "data.inventory": inventory.map((item) => {
       if (item._id === source._id) return { ...item, data: setDataPaths(item.data, removed) };
-      if (item._id === target._id) return { ...item, data: setDataPaths(item.data, added) };
+      if (item._id === target._id) return { ...item, data: etched.data };
       return item;
     }),
   };
@@ -825,15 +864,23 @@ function promptRuneTransfer(record) {
     const runes = getItemRunes(source);
     choose("Transfer a Rune", `Which rune comes off ${source.name}?`, runes.map((rune, i) => ({ label: rune.name, value: `${i}` })), (runeIndex) => {
       const rune = runes[parseInt(runeIndex, 10)];
-      const targets = getTransferTargets(record, source, rune);
-      if (targets.length === 0) {
-        api.showNotification(`There's no other ${rune.target} to move ${rune.name} to.`, "yellow", "Transfer a Rune");
-        return;
-      }
-      choose("Transfer a Rune", `Move ${rune.name} to which item?`, targets.map((item) => ({ label: item.name, value: item._id })), (targetId) => {
-        const target = targets.find((item) => item._id === targetId);
-        api.getRecordsByQuery("items", { name: rune.name }, (records) => {
-          startRuneTransfer(record._id, source, target, rune, (records || [])[0]);
+      // The rune item: its level and Price, and the items its usage allows
+      api.getRecordsByQuery("items", { name: rune.name }, (records) => {
+        const runeRecord = (records || [])[0] || null;
+        const targets = getTransferTargets(record, source, rune, runeRecord);
+        if (targets.length === 0) {
+          api.showNotification(`There's nothing else in the inventory that can take ${rune.name}.`, "yellow", "Transfer a Rune");
+          return;
+        }
+        choose("Transfer a Rune", `Move ${rune.name} to which item?`, targets.map((item) => ({ label: item.name, value: item._id })), (targetId) => {
+          const target = targets.find((item) => item._id === targetId);
+          // The same notice as Etch: it has the rune, or an equal or better one
+          const problem = getEtchedHostData(target, rune).problem;
+          if (problem) {
+            api.showNotification(problem, "yellow", "Transfer a Rune");
+            return;
+          }
+          startRuneTransfer(record._id, source, target, rune, runeRecord);
         });
       });
     });
