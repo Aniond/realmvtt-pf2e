@@ -34,6 +34,42 @@
     ) {
       api.setHidden("animationProps", true);
     }
+
+    // Affix for talismans and other affixed items, Etch for rune items
+    // (item-gear.js)
+    const showAffix = isAffixableItem(item);
+    if ((item?.fields?.affixBtn?.hidden ?? true) === showAffix) {
+      api.setHidden("affixBtn", !showAffix);
+    }
+    const showEtch = /^etched/.test(item?.data?.usage || "");
+    if ((item?.fields?.etchBtn?.hidden ?? true) === showEtch) {
+      api.setHidden("etchBtn", !showEtch);
+    }
+  }
+
+  // Property runes past the potency value are dormant: a notice
+  // (item-gear.js)
+  function noteDormantRunes(item, field, value) {
+    const runes = { ...(item?.data?.runes || {}), [field.replace("runes.", "")]: value };
+    const creature = getNearestParentDataPath(dataPath) ? record : null;
+    const warning = getDormantRuneWarning(creature, { ...item, data: { ...item.data, runes } });
+    if (warning) {
+      api.showNotification(warning, "yellow", "Dormant Rune");
+    }
+  }
+
+  // Repair, Affix and Etch work on an item in a character's inventory
+  // (item-gear.js)
+  function repairThisItem() {
+    repairInventoryItem(record, getNearestParentDataPath(dataPath));
+  }
+
+  function affixThisItem() {
+    promptAffixItem(record, getNearestParentDataPath(dataPath));
+  }
+
+  function etchThisItem() {
+    promptEtchRune(record, getNearestParentDataPath(dataPath));
   }
 
   function onChangeRunes(value, field) {
@@ -41,6 +77,10 @@
     const item = itemDataPath ? api.getValue(itemDataPath) : record;
     const dataPrefix = itemDataPath ? `${itemDataPath}.data` : "data";
     const valuesToSet = {};
+
+    if (field === "runes.property" || field === "runes.potency") {
+      noteDormantRunes(item, field, value);
+    }
 
     // Set item fields in case invested is required now
     if (dataPath.includes("inventory")) {
@@ -57,6 +97,10 @@
     const item = itemDataPath ? api.getValue(itemDataPath) : record;
     const dataPrefix = itemDataPath ? `${itemDataPath}.data` : "data";
     const valuesToSet = {};
+
+    if (field === "potency") {
+      noteDormantRunes(item, "runes.potency", value);
+    }
 
     // Set item fields in case invested is required now
     setItemFields(item, itemDataPath, valuesToSet);
@@ -84,70 +128,14 @@
     const valuesToSet = {};
 
     if (field === "runes.reinforcing") {
-      const runeValue = parseInt(value || 0, 10);
-
-      // Store base values if not already stored (first time applying a rune)
-      // These represent the shield's stats without any rune bonuses
-      if (!item.data?.baseHardness && item.data?.hardness !== undefined) {
-        valuesToSet[`${dataPrefix}.baseHardness`] = item.data.hardness;
-      }
-      if (!item.data?.baseHp && item.data?.hp?.max !== undefined) {
-        valuesToSet[`${dataPrefix}.baseHp`] = item.data.hp.max;
-      }
-
-      // Get the base values (either stored or current if no rune was previously applied)
-      const baseHardness = item.data?.baseHardness || item.data?.hardness || 0;
-      const baseHpMax = item.data?.baseHp || item.data?.hp?.max || 0;
-      const currentHpValue = item.data?.hp?.value || 0;
-
-      // Define rune bonuses based on reinforcing level
-      const runeBonuses = {
-        0: { hardness: 0, hp: 0, maxHardness: null, maxHp: null }, // No rune
-        1: { hardness: 3, hp: 44, maxHardness: 8, maxHp: 64 }, // Minor
-        2: { hardness: 3, hp: 52, maxHardness: 10, maxHp: 80 }, // Lesser
-        3: { hardness: 3, hp: 64, maxHardness: 13, maxHp: 104 }, // Moderate
-        4: { hardness: 5, hp: 80, maxHardness: 15, maxHp: 120 }, // Greater
-        5: { hardness: 5, hp: 84, maxHardness: 17, maxHp: 136 }, // Major
-        6: { hardness: 7, hp: 108, maxHardness: 20, maxHp: 160 }, // Supreme
-      };
-
-      const bonus = runeBonuses[runeValue] || runeBonuses[0];
-
-      // Calculate new values with rune bonuses
-      let newHardness = baseHardness + bonus.hardness;
-      let newHpMax = baseHpMax + bonus.hp;
-
-      // Apply maximum caps if they exist
-      if (bonus.maxHardness !== null && newHardness > bonus.maxHardness) {
-        newHardness = bonus.maxHardness;
-      }
-      if (bonus.maxHp !== null && newHpMax > bonus.maxHp) {
-        newHpMax = bonus.maxHp;
-      }
-
-      // Calculate the HP difference to adjust current HP proportionally
-      const hpDifference = newHpMax - (item.data?.hp?.max || 0);
-      let newHpValue = currentHpValue + hpDifference;
-
-      // Make sure current HP doesn't exceed new max
-      if (newHpValue > newHpMax) {
-        newHpValue = newHpMax;
-      }
-      // Don't let it go below 0
-      if (newHpValue < 0) {
-        newHpValue = 0;
-      }
-
-      // Set the new values
-      valuesToSet[`${dataPrefix}.hardness`] = newHardness;
-      valuesToSet[`${dataPrefix}.hp.max`] = newHpMax;
-      valuesToSet[`${dataPrefix}.hp.value`] = newHpValue;
-
-      // If removing the rune (value is 0 or empty), clear the base values
-      if (runeValue === 0) {
-        valuesToSet[`${dataPrefix}.baseHardness`] = null;
-        valuesToSet[`${dataPrefix}.baseHp`] = null;
-      }
+      // The shield's Hardness and HP with the rune, its own values kept in
+      // baseHardness and baseHp (item-gear.js, shared with Etch). The
+      // dropdown has already saved the rune itself
+      const runeData = getReinforcingRuneData(item, value);
+      delete runeData["runes.reinforcing"];
+      Object.entries(runeData).forEach(([key, runeValue]) => {
+        valuesToSet[`${dataPrefix}.${key}`] = runeValue;
+      });
 
       api.setValues(valuesToSet, (recordUpdated) => {
         // Then, if this is a nested item in an inventory, we adjust the parent's values
@@ -177,6 +165,7 @@
       field="runes.potency"
       label="Potency"
       placeholder="Select..."
+      onchange="onChangeRunes(value, 'runes.potency')"
       options='[
         {"label": "Weapon Potency +1", "value": "1"},
         {"label": "Weapon Potency +2", "value": "2"},
@@ -333,6 +322,7 @@
       placeholder="Select Property Runes..."
       searchable="true"
       multiselect="4"
+      onchange="onChangeRunes(value, 'runes.property')"
       options='[
         {"label": "Acid Resistant", "value": "acidResistant"},
         {"label": "Advancing", "value": "advancing"},
@@ -443,6 +433,16 @@
       minvalue="0"
     ></numberfield>
   </div>
+  <!-- Broken at or below half its HP; Repair rolls Crafting (item-gear.js) -->
+  <div style="display: flex; gap: 4px; margin-bottom: 4px">
+    <button
+      size="xs"
+      variant="light"
+      icon="IconTool"
+      label="Repair"
+      onclick="repairThisItem()"
+    ></button>
+  </div>
 
   <div style="display: flex; flex-direction: row; width: 100%; gap: 8px">
     <dropdown
@@ -546,6 +546,28 @@
     ]'
   >
   </dropdown>
+</div>
+
+<!-- A talisman affixed to gear, a rune etched onto it (item-gear.js) -->
+<div style="display: flex; gap: 4px; margin-bottom: 4px">
+  <button
+    size="xs"
+    variant="light"
+    icon="IconPaperclip"
+    field="affixBtn"
+    hidden="true"
+    label="Affix"
+    onclick="affixThisItem()"
+  ></button>
+  <button
+    size="xs"
+    variant="light"
+    icon="IconSparkles"
+    field="etchBtn"
+    hidden="true"
+    label="Etch"
+    onclick="etchThisItem()"
+  ></button>
 </div>
 
 <dropdown

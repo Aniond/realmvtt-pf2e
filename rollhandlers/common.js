@@ -3478,14 +3478,20 @@ function getEffectsAndModifiersForToken(
     return traits.map((trait) => trait.toLowerCase()).includes("invested");
   };
 
+  // A spellheart works while it's affixed to an equipped item instead
+  // (item-gear.js)
   const equippedItems = items.filter(
     (item) =>
-      item.data?.carried === "equipped" &&
+      (itemHasTrait(item, "spellheart")
+        ? isAffixedItemActive(target, item)
+        : item.data?.carried === "equipped") &&
       (!requiresInvestment(item) || item.data?.invested === "true"),
   );
+  // A broken item grants no bonuses (item-gear.js)
+  const bonusItems = getUnbrokenItems(equippedItems);
 
   // Get and modifiers from runes
-  const runeModifiers = getFeaturesFromRunes(equippedItems);
+  const runeModifiers = getFeaturesFromRunes(bonusItems, target);
 
   // Determine if we're using a weapon that has ammo, and add effects for that ammo
   let ammoEffects = [];
@@ -3518,7 +3524,7 @@ function getEffectsAndModifiersForToken(
       .filter((item) => item.data?.ammoSelect && item.data.ammoSelect !== item._id)
       .map((item) => item.data.ammoSelect),
   );
-  const modifierItems = equippedItems.filter(
+  const modifierItems = bonusItems.filter(
     (item) => !isAmmunitionItem(item) && !selectedAmmoIds.has(item._id),
   );
 
@@ -3793,8 +3799,12 @@ function getEffectsAndModifiersForToken(
   // Ponderous armor's initiative penalty (armor-traits.js)
   const ponderous = getPonderousModifier(target, bestArmor);
   if (ponderous) results.push(ponderous);
+  // Broken armor: a status penalty to AC, and its resilient rune is a bonus
+  // it no longer grants (item-gear.js)
+  const brokenArmor = getBrokenArmorModifier(target, bestArmor);
+  if (brokenArmor) results.push(brokenArmor);
   // Automatic Bonus Progression replaces resilient runes with potency bonuses
-  const resilientBonus = isAbpCharacter(target)
+  const resilientBonus = isAbpCharacter(target) || brokenArmor
     ? null
     : getResilientArmorBonus(target, bestArmor);
   if (checkPenalty) {
@@ -4670,6 +4680,14 @@ function useInventoryItem(itemDataPath) {
   if (sickenedWarning) {
     api.showNotification(sickenedWarning, "yellow", "Sickened");
   }
+  // A talisman works while affixed, alone (item-gear.js)
+  const affixedWarning = getAffixedUseWarning(
+    typeof record !== "undefined" ? record : null,
+    item,
+  );
+  if (affixedWarning) {
+    api.showNotification(affixedWarning, "yellow", "Talisman");
+  }
 
   const traits = item.data?.traits || [];
   const hasConsumableTrait = traits
@@ -4802,6 +4820,9 @@ performDamageRollForSpellOrItem("${record._id}","${record.recordType}", "${itemD
 
     const shouldDestroy = autoDestroy && finalCount <= 0;
 
+    // A talisman used up isn't affixed any more (item-gear.js)
+    Object.assign(valuesToSet, getUsedTalismanValues(record, item, itemDataPath));
+
     if (!shouldDestroy || finalCount > 0) {
       api.setValues(valuesToSet, () => {
         // Re-query the record to get the latest data
@@ -4814,6 +4835,13 @@ performDamageRollForSpellOrItem("${record._id}","${record.recordType}", "${itemD
         // Re-query the record to get the latest data
         api.getRecord(record.recordType, record._id, (updatedRecord) => {
           updateTotalBulk(updatedRecord, true, true);
+          // The item it was affixed to no longer lists it (item-gear.js)
+          const affixValues = item.data?.affixedTo
+            ? getAffixDisplayValues(updatedRecord?.data?.inventory || [])
+            : {};
+          if (Object.keys(affixValues).length > 0) {
+            api.setValuesOnRecord(updatedRecord, affixValues);
+          }
         });
       });
     }
@@ -12396,11 +12424,16 @@ function hasArmorSpecializationEffect(record, item) {
 }
 
 function performAttackRoll(record, weapon, weaponDataPath, attackNumber) {
-  // A broken shield can't be used to Strike (a broken item can't be used for
-  // its normal function; Foundry leaves it out of the Strikes)
+  // A broken weapon or shield can't be used to Strike (a broken item can't
+  // be used for its normal function; Foundry leaves it out of the Strikes)
   const isShieldStrike = weapon?.data?.type === "shield";
-  if (isShieldStrike && isShieldBroken(weapon.data.hp)) {
-    api.showNotification(`${weapon.name} is broken: it can't be used to Strike.`, "red", "Broken Shield");
+  const brokenStrike = getBrokenStrikeWarning(weapon);
+  if (brokenStrike) {
+    api.showNotification(
+      brokenStrike,
+      "red",
+      isShieldStrike ? "Broken Shield" : "Broken Weapon",
+    );
     return;
   }
   // Feats and effects can change the die size or traits for this Strike; a
@@ -19238,7 +19271,10 @@ function getCraftProjectCompletion(record, projectIndex, note = "") {
   if (!project) return {};
   projects.splice(projectIndex, 1);
   const values = { "data.craftingProjects": projects };
-  if (project.data?.output === "formula") {
+  if (project.data?.output === "runeTransfer") {
+    // A rune transfer moves the rune instead (item-gear.js)
+    Object.assign(values, getRuneTransferValues(record, project.data.transfer));
+  } else if (project.data?.output === "formula") {
     values["data.craftingItems"] = [
       ...(record.data?.craftingItems || []),
       buildFormulaEntry(project.data.item),
@@ -19620,7 +19656,9 @@ function completeCraftProject(record, projectId) {
     api.showNotification(
       project.data?.output === "formula"
         ? `${project.name} added to your formula book.`
-        : `${project.name} added to your inventory.`,
+        : project.data?.output === "runeTransfer"
+          ? `${project.name}: done.`
+          : `${project.name} added to your inventory.`,
       "green",
       "Crafting",
     );

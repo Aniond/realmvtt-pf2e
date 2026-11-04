@@ -68,11 +68,12 @@ const weapon = (name, property = [], extra = {}) => ({
 });
 
 // Worn armor with the given property runes; invested unless said otherwise
+// A +2 breastplate, with room for two property runes (more are dormant)
 const armor = (property, { invested = "true", carried = "equipped" } = {}) => ({
   _id: `armor-${property.join("-")}`,
   name: "Breastplate",
   recordType: "items",
-  data: { type: "armor", carried, invested, itemCategory: "medium", runes: { potency: 1, resilient: 0, property } },
+  data: { type: "armor", carried, invested, itemCategory: "medium", runes: { potency: 2, resilient: 0, property } },
 });
 
 // A target for api.getTargets
