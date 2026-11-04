@@ -2717,7 +2717,8 @@
           "field": "tempHp",
           "label": "Temp HP",
           "type": "number",
-          "width": 70
+          "width": 70,
+          "editable": true
         },
         {
           "field": "level",
@@ -2795,7 +2796,7 @@
         {
           "field": "con",
           "label": "CON",
-          "type": "string",
+          "type": "number",
           "width": 50,
           "editable": false,
           "onChange": ""
@@ -2803,7 +2804,7 @@
         {
           "field": "int",
           "label": "INT",
-          "type": "string",
+          "type": "number",
           "width": 50,
           "editable": false,
           "onChange": ""
@@ -2811,7 +2812,7 @@
         {
           "field": "wis",
           "label": "WIS",
-          "type": "string",
+          "type": "number",
           "width": 50,
           "editable": false,
           "onChange": ""
@@ -2819,23 +2820,23 @@
         {
           "field": "cha",
           "label": "CHA",
-          "type": "string",
+          "type": "number",
           "width": 50,
           "editable": false,
           "onChange": ""
         },
         {
-          "field": "fortMod",
+          "field": "fortitudeMod",
           "label": "Fort",
-          "type": "string",
+          "type": "number",
           "width": 50,
           "editable": false,
           "onChange": ""
         },
         {
-          "field": "refMod",
+          "field": "reflexMod",
           "label": "Ref",
-          "type": "string",
+          "type": "number",
           "width": 50,
           "editable": false,
           "onChange": ""
@@ -2843,7 +2844,7 @@
         {
           "field": "willMod",
           "label": "Will",
-          "type": "string",
+          "type": "number",
           "width": 50,
           "editable": false,
           "onChange": ""
