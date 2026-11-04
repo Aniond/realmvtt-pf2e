@@ -11162,7 +11162,7 @@ function useAction(action, actionDataPath = null) {
 ${usesLine ? `${usesLine}\n` : ""}
 ---
 ${actionDescription}
-${effectMacros}${getActionHealingMacros(action)}${getFirstAidActionMacro(action)}${getSkillActionMacros(action)}${getRechargeButton(action)}${getFinisherButton(action)}${applyCursebound(action)}${getStratagemUse(action)}${getOverdriveUse(action)}${getUnstableUse(action)}${getExploitVulnerabilityUse(action)}${getUnleashPsycheUse(action)}
+${effectMacros}${getActionHealingMacros(action)}${getFirstAidActionMacro(action)}${getSkillActionMacros(action)}${getRechargeButton(action)}${getFinisherButton(action)}${applyCursebound(action)}${getStratagemUse(action)}${getOverdriveUse(action)}${getUnstableUse(action)}${getExploitVulnerabilityUse(action)}${getUnleashPsycheUse(action)}${getDrainBondedItemUse(action)}
 `;
 
   // Send the message

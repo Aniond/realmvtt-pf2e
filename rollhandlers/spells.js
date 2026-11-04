@@ -1482,6 +1482,9 @@ function castSpell(record, spell, dataPathToSpell, isOverlay = false) {
   // A signature spell asks for its rank first, then casts again with it
   // (check-tools.js)
   if (promptSignatureRank(record, spell, dataPathToSpell, isOverlay)) return;
+  // A spontaneous caster pays for a staff's spell with charges, or 1 charge
+  // and a slot: asked first, then cast again with it (item-spells.js)
+  if (promptStaffPayment(record, spell, dataPathToSpell, isOverlay)) return;
 
   // spellDamageType modifiers can change the damage type for this casting
   spell = getAlteredSpell(record, spell);

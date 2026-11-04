@@ -35,6 +35,10 @@
 //   - Unleash Psyche (Dark Archive pg. 12): using it adds the effect, unless
 //     stupefied or still recharging; when it ends, a card for the stupefied
 //     and the wait
+//   - Drain Bonded Item (Player Core pg. 197): its card's button casts a
+//     spell prepared today and already cast, without a slot
+//   - Spell Blending (Player Core pg. 195): at daily preparations, a wizard
+//     trades slots for a higher bonus slot or two cantrips
 //
 // The ruleset assists the GM and doesn't police the action economy (#27): no
 // warnings for concentrate actions while raging or attacks after a finisher.
@@ -651,4 +655,237 @@ function getPsycheSubsidesMessage(creature, changes) {
   if (!ended || !creature?._id) return "";
   const button = `\n${getChatButton("Stupefied_1_and_Wait_(2_rounds)", creature, 'api.addEffect("Stupefied", token, { value: 2, unit: "rounds" }); startRecharge(token, "Unleash Psyche", "2")')}`;
   return `**${getCreatureName(creature)}'s psyche subsides:** stupefied 1 for 2 rounds, and no Unleash Psyche for 2 rounds.${button}`;
+}
+
+// ---------------------------------------------------------------- Wizard
+
+// Wizard extras (Player Core pg. 195-197; the school's curriculum slot is in
+// spell-entries.js):
+//   - Drain Bonded Item: the action's card has a button that casts one spell
+//     prepared today and already cast, without a slot (castSpell marks a
+//     prepared row used again; it never refuses). Once a day is the action's
+//     frequency (limited-uses.js)
+//   - Spell Blending: at daily preparations, trade two slots of a rank for a
+//     bonus slot up to 2 ranks higher (a rank you can cast, each bonus slot a
+//     different rank), or one slot for two cantrips (once). The trades are
+//     kept on the entry (data.spellBlending) and undone first at the next
+//     preparations; the counts they change are the player's own on top of
+//     the table, so the sheet's sync keeps them
+
+// The wizard's spells prepared today and already cast: [{ label, value }]
+// with value the row's path
+function getSpentPreparedSpells(record) {
+  return getCastingEntries(record)
+    .filter(({ entry }) => (entry?.data?.type || "prepared") === "prepared")
+    .flatMap(({ entry, index }) =>
+      SPELL_RANK_LISTS.slice(1).flatMap((list, listIndex) =>
+        (entry.data?.[list] || [])
+          .map((row, rowIndex) => ({ row, rowIndex }))
+          .filter(({ row }) => row?.name && row.data?.used === true)
+          .map(({ row, rowIndex }) => ({
+            label: `${row.name} (${getOrdinal(listIndex + 1)} rank, ${entry.name})`,
+            value: `data.spells.${index}.data.${list}.${rowIndex}`,
+          })),
+      ),
+    );
+}
+
+// Drain Bonded Item's card: what it does, and the button that casts a spent
+// spell (by the character's id, so nothing needs selecting)
+function getDrainBondedItemUse(action, creature = typeof record !== "undefined" ? record : null) {
+  if (!isActionNamed(action, "Drain Bonded Item") || !creature?._id) return "";
+  const call = `castSpentPreparedSpell(${JSON.stringify(creature.recordType || "characters")}, ${JSON.stringify(creature._id)});`;
+  return `\nDuring this turn, you can cast one spell you prepared today and already cast, without spending a spell slot.\n\`\`\`Cast_a_Spent_Spell\n${call}\n\`\`\``;
+}
+
+// The button: pick a spent spell, then cast it as its row does
+function castSpentPreparedSpell(recordType, recordId) {
+  api.getRecord(recordType || "characters", recordId, (record) => {
+    const spent = record ? getSpentPreparedSpells(record) : [];
+    if (spent.length === 0) {
+      api.showNotification("No prepared spell has been cast yet today.", "yellow", "Drain Bonded Item");
+      return;
+    }
+    api.showPrompt(
+      "Drain Bonded Item",
+      "Cast which spell again, without a slot?",
+      "Select...",
+      spent,
+      null,
+      (selected) => {
+        const path = getPromptSelections(selected)[0];
+        const spell = path ? api.getValueOnRecord(record, path) : null;
+        if (spell) castSpell(record, spell, path);
+      },
+      "Cast",
+      "Cancel",
+      1,
+    );
+  });
+}
+
+function hasSpellBlending(record) {
+  return (
+    hasFeatNamed(record, "Spell Blending") ||
+    /spell-?blending/i.test(String(record?.data?.flags?.arcaneThesis || ""))
+  );
+}
+
+// The wizard's prepared entry: the one the class made, else an arcane
+// prepared one. { entry, index } or null
+function getSpellBlendingEntry(record) {
+  const prepared = getCastingEntries(record).filter(
+    ({ entry }) => (entry?.data?.type || "prepared") === "prepared",
+  );
+  return (
+    prepared.find(({ entry }) => entry?.data?.auto?.source === "class:wizard") ||
+    prepared.find(({ entry }) => String(entry?.data?.tradition || "").toLowerCase() === "arcane") ||
+    null
+  );
+}
+
+// An entry's slot counts: { numCantrips, numSpells1-10 }
+function getSlotCounts(entry) {
+  const counts = { numCantrips: parseInt(entry?.data?.numCantrips, 10) || 0 };
+  for (let rank = 1; rank <= 10; rank++) {
+    counts[`numSpells${rank}`] = parseInt(entry?.data?.[`numSpells${rank}`], 10) || 0;
+  }
+  return counts;
+}
+
+// The counts with a day's trades undone (blending: { trades: [{ from, to }],
+// cantrips: the rank traded for cantrips, or null })
+function undoSpellBlending(counts, blending) {
+  const result = { ...counts };
+  (blending?.trades || []).forEach(({ from, to }) => {
+    result[`numSpells${from}`] += 2;
+    result[`numSpells${to}`] = Math.max(0, result[`numSpells${to}`] - 1);
+  });
+  if (blending?.cantrips) {
+    result[`numSpells${blending.cantrips}`] += 1;
+    result.numCantrips = Math.max(0, result.numCantrips - 2);
+  }
+  return result;
+}
+
+// The highest rank the wizard can cast, before any trades
+function getHighestCountRank(counts) {
+  let highest = 0;
+  for (let rank = 1; rank <= 10; rank++) {
+    if (counts[`numSpells${rank}`] > 0) highest = rank;
+  }
+  return highest;
+}
+
+// The trades left to make: two slots of a rank for one up to 2 ranks
+// higher (a rank you can cast, not one you already traded for), or a slot
+// for two cantrips (once)
+function getSpellBlendingOptions(counts, highest, blending) {
+  const options = [];
+  for (let from = 1; from <= 9; from++) {
+    if (counts[`numSpells${from}`] < 2) continue;
+    for (let to = from + 1; to <= Math.min(from + 2, highest); to++) {
+      if ((blending.trades || []).some((trade) => trade.to === to)) continue;
+      options.push({
+        label: `Two ${getOrdinal(from)}-rank slots for a ${getOrdinal(to)}-rank slot`,
+        value: `trade:${from}:${to}`,
+      });
+    }
+  }
+  if (!blending.cantrips) {
+    for (let from = 1; from <= highest; from++) {
+      if (counts[`numSpells${from}`] < 1) continue;
+      options.push({ label: `A ${getOrdinal(from)}-rank slot for two cantrips`, value: `cantrips:${from}` });
+    }
+  }
+  return options;
+}
+
+// One trade made: { counts, blending }
+function applySpellBlendingChoice(counts, blending, choice) {
+  const [kind, from, to] = String(choice).split(":");
+  const next = { ...counts };
+  const made = { trades: [...(blending.trades || [])], cantrips: blending.cantrips || null };
+  if (kind === "trade") {
+    next[`numSpells${from}`] -= 2;
+    next[`numSpells${to}`] += 1;
+    made.trades.push({ from: parseInt(from, 10), to: parseInt(to, 10) });
+  } else if (kind === "cantrips") {
+    next[`numSpells${from}`] -= 1;
+    next.numCantrips += 2;
+    made.cantrips = parseInt(from, 10);
+  }
+  return { counts: next, blending: made };
+}
+
+// "two 1st-rank slots for a 3rd-rank slot; a 2nd-rank slot for two
+// cantrips"
+function describeSpellBlending(blending) {
+  return [
+    ...(blending.trades || []).map(
+      ({ from, to }) => `two ${getOrdinal(from)}-rank slots for a ${getOrdinal(to)}-rank slot`,
+    ),
+    ...(blending.cantrips ? [`a ${getOrdinal(blending.cantrips)}-rank slot for two cantrips`] : []),
+  ].join("; ");
+}
+
+// The write: the counts that changed, and the day's trades
+function getSpellBlendingValues(entry, entryIndex, counts, blending) {
+  const values = {};
+  const current = getSlotCounts(entry);
+  Object.entries(counts).forEach(([key, value]) => {
+    if (current[key] !== value) values[`data.spells.${entryIndex}.data.${key}`] = value;
+  });
+  const had = entry?.data?.spellBlending || null;
+  const has = (blending.trades || []).length > 0 || blending.cantrips ? blending : null;
+  if (JSON.stringify(had) !== JSON.stringify(has)) values[`data.spells.${entryIndex}.data.spellBlending`] = has;
+  return values;
+}
+
+// Daily preparations: yesterday's trades undone, then trades picked one at a
+// time until Done, then one write, then next()
+function promptSpellBlending(recordId, next) {
+  const finish = () => {
+    if (next) next();
+  };
+  api.getRecord("characters", recordId, (record) => {
+    if (!record || !hasSpellBlending(record)) return finish();
+    const found = getSpellBlendingEntry(record);
+    if (!found) return finish();
+    const base = undoSpellBlending(getSlotCounts(found.entry), found.entry.data?.spellBlending);
+    const highest = getHighestCountRank(base);
+    const write = (counts, blending) => {
+      const values = getSpellBlendingValues(found.entry, found.index, counts, blending);
+      if (Object.keys(values).length === 0) return finish();
+      api.setValuesOnRecord(record, values, () => {
+        const made = describeSpellBlending(blending);
+        if (made) {
+          api.sendMessage(`**${getCreatureName(record)}'s Spell Blending:** ${made}. Prepare spells in the new slots.`);
+        }
+        finish();
+      });
+    };
+    const ask = (counts, blending) => {
+      const options = getSpellBlendingOptions(counts, highest, blending);
+      if (options.length === 0) return write(counts, blending);
+      const made = describeSpellBlending(blending);
+      api.showPrompt(
+        "Spell Blending",
+        made ? `Traded so far: ${made}. Another?` : "Trade spell slots for today?",
+        "Select...",
+        [{ label: made ? "Done" : "No trades today", value: "done" }, ...options],
+        null,
+        (selected) => {
+          const choice = getPromptSelections(selected)[0];
+          if (!choice || choice === "done") return write(counts, blending);
+          const result = applySpellBlendingChoice(counts, blending, choice);
+          ask(result.counts, result.blending);
+        },
+        "OK",
+        "Cancel",
+        1,
+      );
+    };
+    ask(base, { trades: [], cantrips: null });
+  });
 }

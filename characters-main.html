@@ -1290,6 +1290,9 @@ ${getLevelUpSummary(gains)}`,
       if (wakesFatigued && !hadFatigued) {
         api.addEffect("Fatigued", record);
       }
+      // Daily preparations' choices: a staff (item-spells.js), then a
+      // wizard's Spell Blending (class-extras.js)
+      promptStaffPreparation(record._id, () => promptSpellBlending(record._id));
     };
     const doomedEffect = effects.find((effect) =>
       effect.name.toLowerCase().startsWith("doomed"),
