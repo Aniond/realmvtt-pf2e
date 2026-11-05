@@ -75,8 +75,8 @@ function runPicks(record, answer, fontSpells = [], levelUp = false) {
   };
   ctx.api.getRecordsByQuery = (type, query, cb) =>
     cb(fontSpells.filter((s) => (query.name?.$in || []).includes(s.name)));
-  ctx.api.showPrompt = (title, text, placeholder, options, query, cb, ok, skip, count) => {
-    const prompt = { title, text, options, query, count };
+  ctx.api.showPrompt = (title, text, placeholder, options, query, cb, ok, skip, count, repeats) => {
+    const prompt = { title, text, options, query, count, repeats };
     state.prompts.push(prompt);
     cb(answer(prompt));
   };
@@ -230,6 +230,46 @@ section("A wizard's spellbook at 1st level");
 
   const summary = ctx.getOpenSpellRowsSummary(synced(character("Wizard", 1)));
   assert("the wizard step's line", summary, ["Wizard Spells: 10 cantrips and 5 1st-rank spells for your spellbook"]);
+}
+
+section("The same spell in more than one slot");
+{
+  // A wizard's book, then its slots: picking Fear twice fills two 1st-rank slots
+  const book = (record) => record.data.spells.find((e) => e.data.auto?.source === "class:wizard");
+  const cantrips = Array.from({ length: 10 }, (_, i) => spell(`Cantrip ${i}`, 1, ["Cantrip"]));
+  const firsts = ["Fear", "Force Barrage", "Grease", "Sleep", "Mystic Armor"].map((n) => spell(n));
+  const state = runPicks(synced(character("Wizard", 1)), (prompt) => {
+    if (prompt.title === "Wizard Spells: Spellbook") return prompt.count === 10 ? cantrips : firsts;
+    if (prompt.title.endsWith("1st-Rank Spells")) {
+      const fear = prompt.options.find((o) => o.label === "Fear").value;
+      return Array.from({ length: prompt.count }, () => fear);
+    }
+    return [];
+  });
+  const byTitle = (end) => state.prompts.find((p) => p.title.endsWith(end));
+  const slots = byTitle("1st-Rank Spells");
+  assert("prepared slots allow repeats", slots.repeats, true);
+  assert("the text says so", slots.text.includes("Pick a spell again to prepare it in another slot."), true);
+  assert("the book doesn't", state.prompts.filter((p) => p.title === "Wizard Spells: Spellbook").map((p) => p.repeats), [false, false]);
+  assert("nor cantrips", byTitle("Cantrips").repeats, false);
+  const prepared = book(state.record).data.spells1.filter((r) => r.data?.type !== "slot");
+  assert("every slot holds Fear", [prepared.length, prepared.every((r) => r.name === "Fear")], [slots.count, true]);
+  assert("each row keeps its own id", new Set(prepared.map((r) => r._id)).size, prepared.length);
+
+  // A druid prepares from the compendium: the same record twice
+  const druid = synced(character("Druid", 1));
+  druid.data.spells[0].data.tradition = druid.data.spells[0].data.tradition || "Primal";
+  const druidRun = runPicks(druid, (prompt) =>
+    prompt.title.endsWith("1st-Rank Spells") ? Array.from({ length: prompt.count }, () => spell("Heal")) : [],
+  );
+  const druidSlots = druidRun.prompts.find((p) => p.title.endsWith("1st-Rank Spells"));
+  assert("a druid's slots allow repeats", druidSlots.repeats, true);
+  const druidRows = druidRun.record.data.spells[0].data.spells1.filter((r) => r.data?.type !== "slot");
+  assert("a druid's slots all hold it", druidRows.map((r) => r.name), Array(druidSlots.count).fill("Heal"));
+
+  // A repertoire holds a spell once
+  const repertoire = runPicks(sorcerer(), () => []).prompts.find((p) => p.title.endsWith("1st-Rank Spells"));
+  assert("a repertoire doesn't", [repertoire.repeats, repertoire.text.includes("again")], [false, false]);
 }
 
 section("Prepared casters at Level Up");

@@ -333,6 +333,14 @@ function getKnownSpellOptions(entry, rank) {
   });
 }
 
+// Whether a group's prompt lets a spell be picked more than once: prepared
+// slots of 1st rank and up (the same spell prepared in several slots). Not a
+// repertoire or a book, which hold a spell once, nor cantrips, which are cast
+// at will.
+function canRepeatSpellPicks(group) {
+  return !group.book && !group.font && group.entryType === "prepared" && group.rank > 0 && group.count > 1;
+}
+
 // The prompt's title and text for a group
 function getSpellPickPrompt(group) {
   const what = getSpellGroupWhat(group);
@@ -353,7 +361,8 @@ function getSpellPickPrompt(group) {
   }
   const spontaneous = group.entryType === "spontaneous";
   const title = `${group.entryName}: ${group.rank === 0 ? "Cantrips" : `${getOrdinal(group.rank)}-Rank Spells`}`;
-  const text = `${spontaneous ? "Add" : "Prepare"} up to ${what}${spontaneous ? " to your repertoire" : ""}.${later}`;
+  const again = canRepeatSpellPicks(group) ? " Pick a spell again to prepare it in another slot." : "";
+  const text = `${spontaneous ? "Add" : "Prepare"} up to ${what}${spontaneous ? " to your repertoire" : ""}.${again}${later}`;
   return { title, text };
 }
 
@@ -394,6 +403,9 @@ function promptSpellPicks(recordId, next, levelUp = false, done = []) {
     if (group.book) excludeNames = (entry.data?.knownSpells || []).map((spell) => spell?.name).filter(Boolean);
     else if (group.entryType === "spontaneous") excludeNames = getRankSpellNames(entry, group.list);
     const query = options === null ? getSpellSlotQuery(group.tradition, group.rank, excludeNames) : null;
+    // Prepared slots can hold the same spell more than once (picked again);
+    // a repertoire, a book and cantrips hold each once
+    const repeats = canRepeatSpellPicks(group);
     api.showPrompt(
       title,
       text,
@@ -409,6 +421,7 @@ function promptSpellPicks(recordId, next, levelUp = false, done = []) {
       "OK",
       "Skip",
       group.count,
+      repeats,
     );
   });
 }
