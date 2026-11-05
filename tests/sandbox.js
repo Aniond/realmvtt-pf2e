@@ -31,6 +31,7 @@ function createSandbox() {
     getTargets: () => [],
     getToken: () => null,
     getOtherTokens: () => [],
+    getCover: () => null,
     getSelectedTokens: () => [],
     getSelectedOwnedTokens: () => [],
     getSelectedOrDroppedToken: () => [],

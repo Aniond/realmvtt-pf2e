@@ -1417,10 +1417,9 @@ api.getRecord('${record.recordType}', '${record._id}', (record) => {
       const situationalAc = ${isAC}
         ? getTargetSituationalAcModifiers(targetToken, ourToken, targetIsOffGuardDueToFlanking, { attackRange: "${isMelee ? "melee" : "ranged"}" })
         : [];
-      // Cover from creatures in the way: ticked, for the GM to untick
-      // (cover.js)
+      // Cover from the map and creatures in the way, unticked (cover.js)
       const creatureCover = ${isAC}
-        ? getCreatureCoverModifiers(targetToken, ourToken, api.getOtherTokens(), { attackRange: "${isMelee ? "melee" : "ranged"}" })
+        ? getCoverModifiers(targetToken, ourToken, api.getOtherTokens(), { attackRange: "${isMelee ? "melee" : "ranged"}" })
         : [];
       const targetModifiers = [...modifiers, ...targetEffects, ...situationalAc, ...creatureCover];
   

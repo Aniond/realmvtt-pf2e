@@ -10330,35 +10330,6 @@ function getSizeInSquares(size) {
   return sizeMap[size?.toLowerCase()] || 1;
 }
 
-// The 3D renderer stores a multi-cell token's position as its footprint ANCHOR,
-// with the visual centre offset by (span - 1) / 2 cells on BOTH axes. The 2D
-// engine uses a different convention (odd sizes: position IS the centre; even
-// sizes: position is offset inward from a corner). `api.is3D` (undefined on
-// older 2D-only clients) tells us which convention the positions follow so the
-// flanking and cover geometry land on the real token centre in both renderers.
-function getTokenSpaceCenter(token) {
-  const is3D = !!(typeof api !== "undefined" && api && api.is3D);
-  const pos = token.position;
-  const size = token?.data?.size || token?.record?.data?.size || "medium";
-  const sizeSquares = getSizeInSquares(size);
-  if (sizeSquares <= 1) return pos;
-  if (is3D) {
-    // 3D: position is the footprint anchor; centre is offset on both axes.
-    const offset = (sizeSquares - 1) / 2;
-    return { x: pos.x + offset, y: pos.y + offset };
-  }
-  // 2D conventions:
-  if (sizeSquares % 2 === 1) {
-    return pos; // Odd: position is already the center
-  }
-  const offset = sizeSquares / 2 - 1;
-  const right = pos.x + offset + 0.5;
-  const left = right - sizeSquares;
-  const top = pos.y - offset - 0.5;
-  const bottom = top + sizeSquares;
-  return { x: (left + right) / 2, y: (top + bottom) / 2 };
-}
-
 // Helper function to check if a token is incapacitated and cannot act
 function isTokenIncapacitated(token) {
   if (!token) {
@@ -10614,8 +10585,36 @@ function isOffGuardDueToFlanking({
     targetToken?.data?.size || targetToken?.record?.data?.size || "medium";
   const targetSizeSquares = getSizeInSquares(targetSize);
 
-  // The centre of a token's space, in both renderers (getTokenSpaceCenter)
-  const getTokenCenter = getTokenSpaceCenter;
+  // The 3D renderer stores a multi-cell token's position as its footprint ANCHOR,
+  // with the visual centre offset by (span - 1) / 2 cells on BOTH axes. The 2D
+  // engine uses a different convention (odd sizes: position IS the centre; even
+  // sizes: position is offset inward from a corner). `api.is3D` (undefined on
+  // older 2D-only clients) tells us which convention the positions follow so the
+  // flanking geometry lands on the real token centre in both renderers.
+  const is3D = !!(typeof api !== "undefined" && api && api.is3D);
+
+  // Compute the center of a token's space from its position and size.
+  function getTokenCenter(token) {
+    const pos = token.position;
+    const size = token?.data?.size || token?.record?.data?.size || "medium";
+    const sizeSquares = getSizeInSquares(size);
+    if (sizeSquares <= 1) return pos;
+    if (is3D) {
+      // 3D: position is the footprint anchor; centre is offset on both axes.
+      const offset = (sizeSquares - 1) / 2;
+      return { x: pos.x + offset, y: pos.y + offset };
+    }
+    // 2D conventions:
+    if (sizeSquares % 2 === 1) {
+      return pos; // Odd: position is already the center
+    }
+    const offset = sizeSquares / 2 - 1;
+    const right = pos.x + offset + 0.5;
+    const left = right - sizeSquares;
+    const top = pos.y - offset - 0.5;
+    const bottom = top + sizeSquares;
+    return { x: (left + right) / 2, y: (top + bottom) / 2 };
+  }
 
   const sourcePos = getTokenCenter(sourceToken);
 
@@ -13645,9 +13644,8 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber) {
         targetIsOffGuardDueToFlanking,
         attackContext,
       ).forEach((mod) => modifiers.push(mod));
-      // Cover from creatures in the way: ticked, for the GM to untick
-      // (cover.js)
-      getCreatureCoverModifiers(
+      // Cover from the map and creatures in the way, unticked (cover.js)
+      getCoverModifiers(
         target?.token,
         ourToken,
         otherTokens,
