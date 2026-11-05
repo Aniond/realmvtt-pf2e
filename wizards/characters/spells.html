@@ -1,0 +1,54 @@
+<script>
+  // What's left to choose in the class's spell entries (spell-pickers.js)
+  function wizardOnSpellsStepLoad() {
+    api.getRecord("characters", record._id, (latestRecord) => {
+      const lines = getOpenSpellRowsSummary(latestRecord);
+      const hasEntries = (latestRecord.data?.spells || []).some(
+        (entry) => isManagedSpellcastingEntry(entry) && !isFocusEntry(entry),
+      );
+      api.setValues({
+        "data.wizard.spellsInfo":
+          lines.length > 0
+            ? `Still to choose: ${lines.join(". ")}.`
+            : hasEntries
+              ? "Your spells are chosen. You can change them from the Actions tab."
+              : "Your class doesn't cast spells at 1st level. Go on to Equipment.",
+        "fields.chooseSpells.hidden": lines.length === 0,
+      });
+    });
+  }
+
+  function wizardChooseSpells() {
+    promptSpellPicks(record._id, () => wizardOnSpellsStepLoad());
+  }
+</script>
+
+<p>
+  If your class casts spells, choose your cantrips and spells. A spontaneous
+  caster adds them to their repertoire. A wizard or magus first fills their
+  spellbook (a witch, their familiar), then prepares today's spells from it;
+  a wizard's school curriculum spells are dragged into it. A cleric or
+  druid prepares from their whole spell list. Prepared spells can change at
+  the next daily preparations.
+</p>
+
+<div style="display: flex; flex-direction: column; gap: 8px">
+  <label
+    field="spellsInfo"
+    size="sm"
+    width="100%"
+    textalign="left"
+    onload="wizardOnSpellsStepLoad()"
+  ></label>
+  <button
+    label="Choose Spells"
+    field="chooseSpells"
+    variant="filled"
+    onclick="wizardChooseSpells()"
+  ></button>
+</div>
+
+<p>
+  You can skip any of them: on the Actions tab, the wand on an empty spell row
+  picks a spell, or drag one in from the Spells compendium.
+</p>

@@ -250,12 +250,14 @@ const CLASS_SPELLCASTING = {
     cantrips: 5,
     table: "FULL3",
   },
+  // The familiar holds the witch's spells, as a spellbook does (spell-pickers.js)
   witch: {
     type: "prepared",
     tradition: { flag: "patron" },
     attribute: "int",
     cantrips: 5,
     table: "FULL3",
+    spellbook: { book: "your familiar", cantrips: 10, spells: 5, perLevel: 2 },
   },
   // An arcane school adds a cantrip and a slot at each rank 1-9 (curriculum
   // or school spells); Unified Magical Theory and the Core Rulebook's
@@ -268,6 +270,9 @@ const CLASS_SPELLCASTING = {
     attribute: "int",
     cantrips: 5,
     table: "FULL3",
+    // 10 cantrips and five 1st-rank spells, two more each level (Player
+    // Core pg. 192; spell-pickers.js)
+    spellbook: { book: "your spellbook", cantrips: 10, spells: 5, perLevel: 2 },
     schoolSlot: {
       flag: "arcaneSchool",
       none: /unified-magical-theory|universalist/,
@@ -294,16 +299,20 @@ const CLASS_SPELLCASTING = {
     legacy: { table: "FULL3", cantrips: 6, mysterySpells: false },
   },
   // Secrets of Magic: bounded casting, plus 2 studious spell slots of 2nd
-  // rank at 7th level, 3rd at 11th and 4th at 13th
+  // rank at 7th level, 3rd at 11th and 4th at 13th. The spellbook starts with
+  // 8 cantrips and five 1st-rank spells (Impossible Magic), four in Secrets
+  // of Magic; two more each level (spell-pickers.js).
   magus: {
     type: "prepared",
     tradition: "Arcane",
     attribute: "int",
     cantrips: 5,
     table: "TWO_NO10",
+    spellbook: { book: "your spellbook", cantrips: 8, spells: 5, perLevel: 2 },
     legacy: {
       table: "BOUNDED",
       studious: [0, 0, 0, 0, 0, 0, 2, 2, 2, 2, 3, 3, 4, 4, 4, 4, 4, 4, 4, 4],
+      spellbook: { book: "your spellbook", cantrips: 8, spells: 4, perLevel: 2 },
     },
   },
   // Secrets of Magic: bounded casting. The repertoire starts with two 1st-rank
