@@ -3,8 +3,12 @@
 //   - Level Up ends with them, after the class sync has added the level's new
 //     rows: one prompt per entry and rank with empty rows, for as many spells
 //     as there are rows (a spontaneous caster's new repertoire spells,
-//     cantrips, a prepared caster's new slots). The creation wizard's Spells
-//     step and 1st level from level 0 run the same prompts.
+//     cantrips). A prepared caster's slots wait for its daily preparations,
+//     but a book (a wizard's spellbook, a witch's familiar: the entry's
+//     Available Spells) gets the level's new spells.
+//   - The creation wizard's Spells step and 1st level from level 0 fill a
+//     book with what it starts with, then prepare its slots from it; a
+//     cleric's or druid's slots are prepared from the compendium.
 //   - The Divine Font's rows take heal or harm only: filled with the font the
 //     class feature chose, or the player picks one.
 //   - Each prompt can be skipped, and every row keeps its wand to pick one
@@ -105,22 +109,46 @@ function getSpellListRank(list) {
   return list === "cantrips" ? 0 : parseInt(`${list}`.replace("spells", ""), 10) || 0;
 }
 
+const isCantripSpell = (spell) =>
+  (spell?.data?.traits || [])
+    .map((trait) => `${typeof trait === "string" ? trait : trait?.name || ""}`.toLowerCase())
+    .includes("cantrip");
+
 const DIVINE_FONT_SPELLS = ["Heal", "Harm"];
 
 const isDivineFontEntry = (entry) => /:font$/.test(`${entry?.data?.auto?.source || ""}`);
 
+// An entry the pickers fill: one the sheet manages (not a focus or item
+// entry, nor one whose slots the player turned off or whose source is gone)
+function isPickableSpellEntry(entry) {
+  return (
+    isManagedSpellcastingEntry(entry) &&
+    !isFocusEntry(entry) &&
+    !isItemSpellsEntry(entry) &&
+    entry.data?.autoSlots !== false &&
+    !entry.data?.auto?.orphaned
+  );
+}
+
+// A prepared class entry's book, the Available Spells it prepares from (a
+// wizard's spellbook, a witch's familiar): what it holds at 1st level and
+// gains each level (CLASS_SPELLCASTING in spell-entries.js), or null. A
+// cleric or druid prepares from the whole common list and has none.
+function getSpellbookRules(entry) {
+  if ((entry?.data?.type || "prepared") !== "prepared") return null;
+  const match = /^class:([a-z-]+)$/.exec(`${entry?.data?.auto?.source || ""}`);
+  return (match && CLASS_SPELLCASTING[match[1]]?.spellbook) || null;
+}
+
 // The empty rows a picker can fill: one group per entry and rank, in the
-// sheet's order, for the entries the sheet manages (not focus or item
-// entries, nor one whose slots the player turned off or whose source is
-// gone). An entry still waiting on its tradition (a sorcerer before the
-// bloodline) is left out, except the Divine Font, whose spells are fixed.
+// sheet's order. An entry still waiting on its tradition (a sorcerer before
+// the bloodline) is left out, except the Divine Font, whose spells are fixed.
 // Each group: { key, entryIndex, entryName, entryType, list, rank,
-// rowIndexes, tradition, font }.
+// rowIndexes, count, tradition, font }.
 function getOpenSpellRowGroups(record) {
   const groups = [];
   (record?.data?.spells || []).forEach((entry, entryIndex) => {
-    if (!isManagedSpellcastingEntry(entry) || isFocusEntry(entry) || isItemSpellsEntry(entry)) return;
-    if (entry.data?.autoSlots === false || entry.data?.auto?.orphaned) return;
+    if (!isPickableSpellEntry(entry)) return;
     const font = isDivineFontEntry(entry);
     const tradition = `${entry.data?.tradition || ""}`.trim();
     if (!font && !tradition) return;
@@ -138,6 +166,7 @@ function getOpenSpellRowGroups(record) {
         list,
         rank: getSpellListRank(list),
         rowIndexes,
+        count: rowIndexes.length,
         tradition,
         font,
       });
@@ -146,21 +175,93 @@ function getOpenSpellRowGroups(record) {
   return groups;
 }
 
+// The spells a book gains (Wizard Spellcasting, Player Core pg. 192; the
+// witch's familiar the same). At 1st level (the creation wizard, 1st level
+// from level 0): the cantrips and 1st-rank spells it starts with that aren't
+// in it yet. At Level Up: the level's new spells, of any rank with slots.
+// Each group: { key, entryIndex, entryName, entryType, book, rank, count,
+// tradition, levelUp }.
+function getSpellbookGroups(record, levelUp = false) {
+  const groups = [];
+  (record?.data?.spells || []).forEach((entry, entryIndex) => {
+    const rules = getSpellbookRules(entry);
+    const tradition = `${entry.data?.tradition || ""}`.trim();
+    if (!rules || !tradition || !isPickableSpellEntry(entry)) return;
+    const group = {
+      entryIndex,
+      entryName: entry.name || "Spells",
+      entryType: "prepared",
+      book: rules.book,
+      tradition,
+      levelUp,
+    };
+    if (levelUp) {
+      const rank = Math.max(
+        0,
+        ...SPELL_RANK_LISTS.filter((list) => (entry.data?.[list] || []).length > 0).map(getSpellListRank),
+      );
+      if (rank > 0) groups.push({ ...group, key: `${entry._id}:book`, rank, count: rules.perLevel });
+      return;
+    }
+    const known = entry.data?.knownSpells || [];
+    const cantrips = known.filter(isCantripSpell).length;
+    const spells = known.length - cantrips;
+    if (rules.cantrips > cantrips) {
+      groups.push({ ...group, key: `${entry._id}:book:cantrips`, rank: 0, count: rules.cantrips - cantrips });
+    }
+    if (rules.spells > spells) {
+      groups.push({ ...group, key: `${entry._id}:book:spells1`, rank: 1, count: rules.spells - spells });
+    }
+  });
+  return groups;
+}
+
+// What the pickers offer, books first so their slots can be prepared from
+// them. At Level Up a prepared caster's slots are left for its daily
+// preparations (the Divine Font's are fixed, so they're filled); at 1st level
+// a book's slots are prepared from the book, and wait for the wand while it
+// has nothing of their rank.
+function getSpellPickGroups(record, levelUp = false) {
+  const slots = getOpenSpellRowGroups(record).filter((group) => {
+    if (group.font || group.entryType !== "prepared") return true;
+    if (levelUp) return false;
+    const entry = record.data.spells[group.entryIndex];
+    return !getSpellbookRules(entry) || getKnownSpellOptions(entry, group.rank).length > 0;
+  });
+  return [...getSpellbookGroups(record, levelUp), ...slots];
+}
+
+// A group's spells, as words ("5 cantrips", "2 1st-rank spells")
+function getSpellGroupWhat(group) {
+  const count = group.count;
+  return group.rank === 0
+    ? `${count} cantrip${count === 1 ? "" : "s"}`
+    : `${count} ${getOrdinal(group.rank)}-rank spell${count === 1 ? "" : "s"}`;
+}
+
 // What's left to choose, one line per entry ("Sorcerer Spells: 5 cantrips
-// and 2 1st-rank spells"), for the creation wizard's Spells step
+// and 2 1st-rank spells", "Wizard Spells: 10 cantrips and 5 1st-rank spells
+// for your spellbook"), for the creation wizard's Spells step
 function getOpenSpellRowsSummary(record) {
   const byEntry = new Map();
-  for (const group of getOpenSpellRowGroups(record)) {
-    const count = group.rowIndexes.length;
-    const what =
-      group.rank === 0
-        ? `${count} cantrip${count === 1 ? "" : "s"}`
-        : `${count} ${getOrdinal(group.rank)}-rank spell${count === 1 ? "" : "s"}`;
-    byEntry.set(group.entryName, [...(byEntry.get(group.entryName) || []), what]);
+  for (const group of getSpellPickGroups(record)) {
+    const parts = byEntry.get(group.entryName) || { book: null, books: [], slots: [] };
+    if (group.book) {
+      parts.book = group.book;
+      parts.books.push(getSpellGroupWhat(group));
+    } else {
+      parts.slots.push(getSpellGroupWhat(group));
+    }
+    byEntry.set(group.entryName, parts);
   }
+  const join = (list) =>
+    list.length > 1 ? `${list.slice(0, -1).join(", ")} and ${list[list.length - 1]}` : list[0];
   return [...byEntry.entries()].map(([name, parts]) => {
-    const list = parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}` : parts[0];
-    return `${name}: ${list}`;
+    const lines = [
+      ...(parts.books.length > 0 ? [`${join(parts.books)} for ${parts.book}`] : []),
+      ...(parts.slots.length > 0 ? [join(parts.slots)] : []),
+    ];
+    return `${name}: ${lines.join("; ")}`;
   });
 }
 
@@ -181,15 +282,25 @@ function getSpellPickValues(record, group, spells) {
   return valuesToSet;
 }
 
-// The names of the spells already in an entry: a repertoire learns a spell
-// once, so its picker leaves them out (prepared slots can repeat a spell)
-function getEntrySpellNames(entry) {
-  const names = [];
-  for (const list of SPELL_RANK_LISTS) {
-    for (const row of entry?.data?.[list] || []) {
-      if (isFilledSpellRow(row) && row.name) names.push(row.name);
-    }
-  }
+// The value that adds the chosen spells to a book (Available Spells), each a
+// copy with its own id, as a drop into the list makes
+function getSpellbookValues(record, group, spells) {
+  const entry = record.data.spells[group.entryIndex];
+  return {
+    [`data.spells.${group.entryIndex}.data.knownSpells`]: [
+      ...(entry.data.knownSpells || []),
+      ...spells.slice(0, group.count).map((spell) => ({ ...spell, _id: generateUuid() })),
+    ],
+  };
+}
+
+// The names of the spells in one of an entry's rank lists. A repertoire can
+// hold a spell at more than one rank (Player Core pg. 297), so the picker
+// only leaves out the ones already at this rank.
+function getRankSpellNames(entry, list) {
+  const names = (entry?.data?.[list] || [])
+    .filter((row) => isFilledSpellRow(row) && row.name)
+    .map((row) => row.name);
   return [...new Set(names)];
 }
 
@@ -197,48 +308,51 @@ function getEntrySpellNames(entry) {
 // those first, when there are any)
 function getKnownSpellOptions(entry, rank) {
   return (entry?.data?.knownSpells || []).filter((spell) => {
-    const traits = (spell?.data?.traits || []).map((trait) =>
-      `${typeof trait === "string" ? trait : trait?.name || ""}`.toLowerCase(),
-    );
-    const isCantrip = traits.includes("cantrip");
-    if (rank === 0) return isCantrip;
-    return !isCantrip && (parseInt(spell?.data?.level, 10) || 0) <= rank;
+    if (rank === 0) return isCantripSpell(spell);
+    return !isCantripSpell(spell) && (parseInt(spell?.data?.level, 10) || 0) <= rank;
   });
 }
 
 // The prompt's title and text for a group
 function getSpellPickPrompt(group) {
-  const count = group.rowIndexes.length;
+  const what = getSpellGroupWhat(group);
+  const later = " Skip to choose later: the wand on an empty row picks one.";
+  if (group.book) {
+    const which = group.levelUp
+      ? `${group.count} spell${group.count === 1 ? "" : "s"} of any rank you can cast`
+      : `up to ${what}`;
+    return {
+      title: `${group.entryName}: ${capitalize(group.book.replace(/^your /, ""))}`,
+      text: `Add ${which} to ${group.book}. Skip to choose later: drag spells into Available Spells.`,
+    };
+  }
   const spontaneous = group.entryType === "spontaneous";
-  const what =
-    group.rank === 0
-      ? `${count} cantrip${count === 1 ? "" : "s"}`
-      : `${count} ${getOrdinal(group.rank)}-rank spell${count === 1 ? "" : "s"}`;
   const title = `${group.entryName}: ${group.rank === 0 ? "Cantrips" : `${getOrdinal(group.rank)}-Rank Spells`}`;
-  const text = `${spontaneous ? "Add" : "Prepare"} up to ${what}${
-    spontaneous ? " to your repertoire" : ""
-  }. Skip to choose later: the wand on an empty row picks one.`;
+  const text = `${spontaneous ? "Add" : "Prepare"} up to ${what}${spontaneous ? " to your repertoire" : ""}.${later}`;
   return { title, text };
 }
 
-// Walks the empty rows, one prompt per group, then calls next. Reads the
-// record again before each, so each write lands on the rows as they are.
-// done holds the groups already offered (skipped or filled), so a skipped
-// group isn't asked again.
-function promptSpellPicks(recordId, next, done = []) {
+// Walks the groups, one prompt each, then calls next. Reads the record again
+// before each, so each write lands on the rows as they are. levelUp: Level
+// Up's picks (a book's new spells, no prepared slots). done holds the groups
+// already offered (skipped or filled), so a skipped group isn't asked again.
+function promptSpellPicks(recordId, next, levelUp = false, done = []) {
   api.getRecord("characters", recordId, (record) => {
-    const group = getOpenSpellRowGroups(record).find((g) => !done.includes(g.key));
+    const group = getSpellPickGroups(record, levelUp).find((g) => !done.includes(g.key));
     if (!record || !group) {
       if (next) next();
       return;
     }
-    const continueWith = () => promptSpellPicks(recordId, next, [...done, group.key]);
+    const continueWith = () => promptSpellPicks(recordId, next, levelUp, [...done, group.key]);
     const fill = (spells) => {
       if (spells.length === 0) {
         continueWith();
         return;
       }
-      api.setValues(getSpellPickValues(record, group, spells), () => continueWith());
+      const values = group.book
+        ? getSpellbookValues(record, group, spells)
+        : getSpellPickValues(record, group, spells);
+      api.setValues(values, () => continueWith());
     };
 
     if (group.font) {
@@ -247,18 +361,14 @@ function promptSpellPicks(recordId, next, done = []) {
     }
 
     const entry = record.data.spells[group.entryIndex];
-    const count = group.rowIndexes.length;
     const { title, text } = getSpellPickPrompt(group);
-    const known = group.entryType === "prepared" ? getKnownSpellOptions(entry, group.rank) : [];
+    const known =
+      !group.book && group.entryType === "prepared" ? getKnownSpellOptions(entry, group.rank) : [];
     const options = known.length > 0 ? known.map((spell) => ({ value: spell._id, label: spell.name })) : null;
-    const query =
-      options === null
-        ? getSpellSlotQuery(
-            group.tradition,
-            group.rank,
-            group.entryType === "spontaneous" ? getEntrySpellNames(entry) : [],
-          )
-        : null;
+    let excludeNames = [];
+    if (group.book) excludeNames = (entry.data?.knownSpells || []).map((spell) => spell?.name).filter(Boolean);
+    else if (group.entryType === "spontaneous") excludeNames = getRankSpellNames(entry, group.list);
+    const query = options === null ? getSpellSlotQuery(group.tradition, group.rank, excludeNames) : null;
     api.showPrompt(
       title,
       text,
@@ -269,13 +379,26 @@ function promptSpellPicks(recordId, next, done = []) {
         const spells = getPromptSelections(selected)
           .map((value) => (typeof value === "string" ? known.find((spell) => spell._id === value) : value))
           .filter((spell) => spell && typeof spell === "object");
-        fill(spells.slice(0, count));
+        fill(spells.slice(0, group.count));
       },
       "OK",
       "Skip",
-      count,
+      group.count,
     );
   });
+}
+
+// One spell per name, the remastered record when the compendium has both
+function getRemasterSpellsByName(spells, names) {
+  const byName = new Map();
+  for (const spell of spells || []) {
+    if (!names.includes(spell?.name)) continue;
+    const have = byName.get(spell.name);
+    if (!have || (spell.data?.publication?.remaster === true && have.data?.publication?.remaster !== true)) {
+      byName.set(spell.name, spell);
+    }
+  }
+  return names.map((name) => byName.get(name)).filter(Boolean);
 }
 
 // The Divine Font's rows: every one gets the font's spell. With the font
@@ -286,7 +409,7 @@ function promptDivineFontSpells(record, group, fill) {
   const filter = entry?.data?.auto?.spellFilter;
   const names = Array.isArray(filter) && filter.length === 1 ? [capitalize(filter[0])] : DIVINE_FONT_SPELLS;
   api.getRecordsByQuery("spells", { name: { $in: names } }, (spells) => {
-    const found = (spells || []).filter((spell) => names.includes(spell?.name));
+    const found = getRemasterSpellsByName(spells, names);
     const fillAll = (spell) => fill(spell ? group.rowIndexes.map(() => spell) : []);
     if (names.length === 1 || found.length === 1) {
       fillAll(found[0]);

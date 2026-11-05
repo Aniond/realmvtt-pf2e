@@ -1,7 +1,8 @@
 // Tests for the spell pickers (rollhandlers/spell-pickers.js): the empty rows
 // of the managed spellcasting entries, the prompts that fill them at Level Up
-// and in the creation wizard, the Divine Font's heal or harm, and the row and
-// query the spell list shares with them.
+// and in the creation wizard, a wizard's spellbook (Available Spells), the
+// Divine Font's heal or harm, and the row and query the spell list shares
+// with them.
 // Run: node tests/test-spell-pickers.js (or via tests/run-all.js)
 
 const fs = require("fs");
@@ -63,7 +64,7 @@ const emptyCount = (entry, list) => (entry.data[list] || []).filter((row) => row
 
 // Runs promptSpellPicks against a record held here: getRecord reads it,
 // setValues writes into it, and answer(prompt) picks for each prompt
-function runPicks(record, answer, fontSpells = []) {
+function runPicks(record, answer, fontSpells = [], levelUp = false) {
   const state = { record, prompts: [], writes: 0, nextCalls: 0 };
   const saved = { ...ctx.api };
   ctx.api.getRecord = (type, id, cb) => cb(JSON.parse(JSON.stringify(state.record)));
@@ -80,7 +81,7 @@ function runPicks(record, answer, fontSpells = []) {
     cb(answer(prompt));
   };
   try {
-    ctx.promptSpellPicks(record._id, () => state.nextCalls++);
+    ctx.promptSpellPicks(record._id, () => state.nextCalls++, levelUp);
   } finally {
     Object.assign(ctx.api, saved);
   }
@@ -151,8 +152,12 @@ section("Picking at Level Up");
   const cantrips = ["Shield", "Detect Magic", "Light", "Prestidigitation", "Ignition", "Telekinetic Hand"].map((n) =>
     spell(n, 1, ["Cantrip"]),
   );
-  const state = runPicks(record, (prompt) =>
-    prompt.title.endsWith("Cantrips") ? cantrips : [spell("Force Barrage"), spell("Fear"), spell("Sleep"), spell("Grease")],
+  const state = runPicks(
+    record,
+    (prompt) =>
+      prompt.title.endsWith("Cantrips") ? cantrips : [spell("Force Barrage"), spell("Fear"), spell("Sleep"), spell("Grease")],
+    [],
+    true,
   );
   const entry = state.record.data.spells[0];
   assert("a prompt per rank", state.prompts.map((p) => p.title), ["Sorcerer Spells: Cantrips", "Sorcerer Spells: 1st-Rank Spells"]);
@@ -167,11 +172,13 @@ section("Picking at Level Up");
   assert("the spells in order", entry.data.spells1.map((r) => r.name), ["Force Barrage", "Fear", "Sleep", "Grease"].slice(0, state.prompts[1].count));
   assert("extra picks are left out", entry.data.cantrips.map((r) => r.name).includes("Telekinetic Hand"), false);
 
-  // A repertoire learns a spell once
-  const second = sorcerer(2);
-  second.data.spells[0].data.spells1[0] = ctx.buildFilledSpellRow(second.data.spells[0].data.spells1[0], spell("Fear"), "spontaneous");
-  const queries = runPicks(second, () => []).prompts.map((p) => p.query.query.$and[2]);
-  assert("the repertoire's spells are left out", queries[1], { name: { $nin: ["Fear"] } });
+  // A repertoire can hold a spell at more than one rank (Player Core pg. 297)
+  const third = sorcerer(3);
+  third.data.spells[0].data.spells1[0] = ctx.buildFilledSpellRow(third.data.spells[0].data.spells1[0], spell("Fear"), "spontaneous");
+  const prompts = runPicks(third, () => [], [], true).prompts;
+  const excluded = (title) => prompts.find((p) => p.title.endsWith(title)).query.query.$and[2];
+  assert("the rank's own spells are left out", excluded("1st-Rank Spells"), { name: { $nin: ["Fear"] } });
+  assert("other ranks' aren't: Fear again at 2nd", excluded("2nd-Rank Spells"), undefined);
 
   const skipped = runPicks(sorcerer(), () => []);
   assert("skipping: every group asked once, nothing written", [skipped.prompts.length, skipped.writes, skipped.nextCalls], [2, 0, 1]);
@@ -183,19 +190,74 @@ section("Picking at Level Up");
   assert("not a caster: straight on", [none.prompts.length, none.nextCalls], [0, 1]);
 }
 
-section("Prepared casters");
+section("A wizard's spellbook at 1st level");
 {
+  const book = (record) => record.data.spells.find((e) => e.data.auto?.source === "class:wizard");
   const record = synced(character("Wizard", 1));
-  record.data.spells[0].data.knownSpells = [spell("Fear"), spell("Force Barrage"), spell("Shield", 1, ["Cantrip"]), spell("Darkness", 2)];
-  const state = runPicks(record, (prompt) => (prompt.options ? [prompt.options[0].value] : []));
-  const first = state.prompts.find((p) => p.title.endsWith("1st-Rank Spells"));
-  assert("the Available Spells of the rank are offered", first.options.map((o) => o.label), ["Fear", "Force Barrage"]);
-  assert("no compendium query then", first.query, null);
-  assert("the text says prepare", first.text.startsWith("Prepare up to"), true);
-  const entry = state.record.data.spells.find((e) => e.data.auto?.source === "class:wizard");
-  assert("the picked spell is prepared", entry.data.spells1[0].name, "Fear");
-  const noKnown = runPicks(synced(character("Wizard", 1)), () => []);
-  assert("without Available Spells: the compendium", noKnown.prompts.every((p) => p.query && !p.options), true);
+  const cantrips = Array.from({ length: 11 }, (_, i) => spell(`Cantrip ${i}`, 1, ["Cantrip"]));
+  const firsts = ["Fear", "Force Barrage", "Grease", "Sleep", "Mystic Armor", "Runic Weapon"].map((n) => spell(n));
+  const state = runPicks(record, (prompt) => {
+    if (prompt.title === "Wizard Spells: Spellbook") return prompt.count === 10 ? cantrips : firsts;
+    return prompt.options ? prompt.options.slice(0, prompt.count).map((o) => o.value) : [];
+  });
+  const titles = state.prompts.map((p) => p.title);
+  assert("the book first: 10 cantrips, then five 1st-rank spells", state.prompts.slice(0, 2).map((p) => [p.title, p.count, p.rank]), [
+    ["Wizard Spells: Spellbook", 10, undefined],
+    ["Wizard Spells: Spellbook", 5, undefined],
+  ]);
+  assert("the book's text", state.prompts[0].text, "Add up to 10 cantrips to your spellbook. Skip to choose later: drag spells into Available Spells.");
+  assert("from the compendium", state.prompts.slice(0, 2).every((p) => p.query && !p.options), true);
+  const entry = book(state.record);
+  assert("the book holds 10 cantrips and five spells", [entry.data.knownSpells.filter((s) => s.name.startsWith("Cantrip")).length, entry.data.knownSpells.length], [10, 15]);
+  assert("each a copy with its own id", entry.data.knownSpells.every((s) => s._id && !s._id.startsWith("spell-")), true);
+  assert("then the slots", titles.slice(2).every((t) => /Cantrips|Rank Spells/.test(t)), true);
+  const slots = state.prompts.filter((p) => p.title.endsWith("1st-Rank Spells"));
+  assert("prepared from the book", slots[0].options.map((o) => o.label), ["Fear", "Force Barrage", "Grease", "Sleep", "Mystic Armor"]);
+  assert("no compendium query then", slots[0].query, null);
+  assert("the text says prepare", slots[0].text.startsWith("Prepare up to"), true);
+  assert("the picked spells are prepared", entry.data.spells1.filter((r) => r.data?.type !== "slot").map((r) => r.name)[0], "Fear");
+
+  // Some already in the book
+  const started = synced(character("Wizard", 1));
+  book(started).data.knownSpells = [spell("Fear"), spell("Force Barrage"), spell("Shield", 1, ["Cantrip"]), spell("Darkness", 2)];
+  const rest = runPicks(started, () => []).prompts.filter((p) => p.title === "Wizard Spells: Spellbook");
+  assert("only what's missing", rest.map((p) => p.count), [9, 2]);
+  assert("the book's spells are left out", rest[1].query.query.$and[2], { name: { $nin: ["Fear", "Force Barrage", "Shield", "Darkness"] } });
+
+  // Skipped: the slots wait for the wand, never the compendium
+  const skipped = runPicks(synced(character("Wizard", 1)), () => []);
+  assert("an empty book: its slots aren't offered", skipped.prompts.map((p) => p.title), ["Wizard Spells: Spellbook", "Wizard Spells: Spellbook"]);
+
+  const summary = ctx.getOpenSpellRowsSummary(synced(character("Wizard", 1)));
+  assert("the wizard step's line", summary, ["Wizard Spells: 10 cantrips and 5 1st-rank spells for your spellbook"]);
+}
+
+section("Prepared casters at Level Up");
+{
+  const record = synced(character("Wizard", 3));
+  const wizard = record.data.spells.findIndex((e) => e.data.auto?.source === "class:wizard");
+  record.data.spells[wizard].data.knownSpells = [spell("Fear")];
+  const state = runPicks(record, () => [spell("Darkness", 2), spell("Grease"), spell("Sleep")], [], true);
+  assert("only the book is asked", state.prompts.map((p) => [p.title, p.count]), [["Wizard Spells: Spellbook", 2]]);
+  assert("the book's Level Up text", state.prompts[0].text, "Add 2 spells of any rank you can cast to your spellbook. Skip to choose later: drag spells into Available Spells.");
+  assert("any rank with slots", state.prompts[0].query.query.$or[0], { "data.level": { $lte: 2 } });
+  assert("not the book's own spells", state.prompts[0].query.query.$and[2], { name: { $nin: ["Fear"] } });
+  assert("two added, in one write", [state.record.data.spells[wizard].data.knownSpells.map((s) => s.name), state.writes], [["Fear", "Darkness", "Grease"], 1]);
+  assert("no slot prepared", ctx.getOpenSpellRowGroups(state.record).length, ctx.getOpenSpellRowGroups(record).length);
+
+  const druid = synced(character("Druid", 3));
+  druid.data.spells[0].data.tradition = druid.data.spells[0].data.tradition || "Primal";
+  const druidUp = runPicks(druid, () => [spell("Fear")], [], true);
+  assert("a druid has no book: nothing at Level Up", [druidUp.prompts.length, druidUp.writes, druidUp.nextCalls], [0, 0, 1]);
+  const druidNew = runPicks(synced(character("Druid", 1)), () => []);
+  assert("a druid at 1st level: slots from the compendium", druidNew.prompts.length > 0 && druidNew.prompts.every((p) => p.query && !p.options), true);
+
+  const witch = synced(character("Witch", 3));
+  const witchEntry = witch.data.spells.find((e) => e.data.auto?.source === "class:witch");
+  witchEntry.data.tradition = "Occult";
+  const witchUp = runPicks(witch, () => [], [], true);
+  assert("a witch's familiar", witchUp.prompts.map((p) => [p.title, p.count]), [[`${witchEntry.name}: Familiar`, 2]]);
+  assert("the familiar's text", witchUp.prompts[0].text.startsWith("Add 2 spells of any rank you can cast to your familiar."), true);
 }
 
 section("Divine Font");
@@ -216,13 +278,28 @@ section("Divine Font");
   assert("the pick fills every slot", fontOf(asked.record).data.spells1.every((r) => r.name === "Harm"), true);
   const missing = runPicks(synced(character("Cleric", 1, { flags: { divineFont: "heal" } })), () => [], []);
   assert("the spell isn't in the campaign: left empty", missing.writes, 0);
+
+  // A legacy and a remastered record of each
+  const legacy = (name) => ({ ...spell(name), _id: `legacy-${name}`, data: { ...spell(name).data, publication: { remaster: false } } });
+  const remaster = (name) => ({ ...spell(name), _id: `remaster-${name}`, data: { ...spell(name).data, publication: { remaster: true } } });
+  const both = [legacy("Heal"), remaster("Heal"), remaster("Harm"), legacy("Harm")];
+  const dupes = runPicks(synced(character("Cleric", 1)), (p) => (p.title === "Divine Font" ? [p.options[0].value] : []), both);
+  const dupePrompt = dupes.prompts.find((p) => p.title === "Divine Font");
+  assert("both in the compendium: each name once", dupePrompt.options.map((o) => o.label), ["Heal", "Harm"]);
+  assert("the remastered record", dupePrompt.options.map((o) => o.value), ["remaster-Heal", "remaster-Harm"]);
+  const chosen = runPicks(synced(character("Cleric", 1, { flags: { divineFont: "heal" } })), () => [], both);
+  assert("a chosen font takes the remastered one", fontOf(chosen.record).data.spells1[0].data.publication.remaster, true);
+
+  // At Level Up the font's slots are still filled: heal or harm only
+  const leveled = runPicks(synced(character("Cleric", 3, { flags: { divineFont: "heal" } })), () => [], [heal, harm], true);
+  assert("Level Up: the font, no other prepared slots", [leveled.prompts.length, fontOf(leveled.record).data.spells2.every((r) => r.name === "Heal")], [0, true]);
 }
 
 section("The sheet and the wizard use them");
 {
   const read = (file) => fs.readFileSync(`${__dirname}/../${file}`, "utf8");
   const sheet = read("characters-main.html");
-  assert("Level Up ends with the pickers", /promptSpellPicks\(record\._id, next\)\);\s*runLevelUpSteps\(steps, 0, newLevel\)/.test(sheet), true);
+  assert("Level Up ends with the pickers", /promptSpellPicks\(record\._id, next, true\)\);\s*runLevelUpSteps\(steps, 0, newLevel\)/.test(sheet), true);
   assert("1st level from level 0 too", /promptSpellPicks\(record\._id, next\)\);\s*runLevelUpSteps\(steps, 0, 1\)/.test(sheet), true);
   const list = read("spell-list.html");
   assert("a dropped spell's row", list.includes("buildFilledSpellRow("), true);

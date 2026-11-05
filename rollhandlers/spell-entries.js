@@ -250,12 +250,14 @@ const CLASS_SPELLCASTING = {
     cantrips: 5,
     table: "FULL3",
   },
+  // The familiar holds the witch's spells, as a spellbook does (spell-pickers.js)
   witch: {
     type: "prepared",
     tradition: { flag: "patron" },
     attribute: "int",
     cantrips: 5,
     table: "FULL3",
+    spellbook: { book: "your familiar", cantrips: 10, spells: 5, perLevel: 2 },
   },
   // An arcane school adds a cantrip and a slot at each rank 1-9 (curriculum
   // or school spells); Unified Magical Theory and the Core Rulebook's
@@ -268,6 +270,9 @@ const CLASS_SPELLCASTING = {
     attribute: "int",
     cantrips: 5,
     table: "FULL3",
+    // 10 cantrips and five 1st-rank spells, two more each level (Player
+    // Core pg. 192; spell-pickers.js)
+    spellbook: { book: "your spellbook", cantrips: 10, spells: 5, perLevel: 2 },
     schoolSlot: {
       flag: "arcaneSchool",
       none: /unified-magical-theory|universalist/,
