@@ -636,6 +636,8 @@ ${getLevelUpSummary(gains)}`,
             for (const featType of getLevelUpGains(recordUpdated, 1).featTypes) {
               steps.push((next) => promptLevelUpFeat(featType, 1, next));
             }
+            // The class's first spells (spell-pickers.js)
+            steps.push((next) => promptSpellPicks(record._id, next));
             runLevelUpSteps(steps, 0, 1);
           },
           true,
@@ -739,6 +741,9 @@ ${getLevelUpSummary(gains)}`,
           if (gains.abp?.apex) {
             steps.push((next) => promptAbpApex(record._id, next));
           }
+          // The level's new spell rows: repertoire spells, cantrips, slots
+          // (spell-pickers.js)
+          steps.push((next) => promptSpellPicks(record._id, next));
           runLevelUpSteps(steps, 0, newLevel);
         },
         true,

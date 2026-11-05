@@ -106,6 +106,12 @@
           {
             "name": "Level 1 Feats",
             "file": "wizards/characters/step6.html",
+            "next": "Go to Spells",
+            "previous": ""
+          },
+          {
+            "name": "Spells",
+            "file": "wizards/characters/spells.html",
             "next": "Go to Equipment",
             "previous": ""
           },
@@ -5533,6 +5539,9 @@
         },
         "ItemSpells": {
           "file": "rollhandlers/item-spells.js"
+        },
+        "SpellPickers": {
+          "file": "rollhandlers/spell-pickers.js"
         },
         "Concealment": {
           "file": "rollhandlers/concealment.js"
