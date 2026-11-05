@@ -12776,7 +12776,6 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber) {
   const deadlyDie = weaponDamageInfo.deadlyDie;
   const fatalDie = weaponDamageInfo.fatalDie;
 
-  let targetShieldRaised = false;
   const damageIsPhysical = ["bludgeoning", "piercing", "slashing"].includes(
     damageType.toLowerCase(),
   );
@@ -13442,17 +13441,18 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber) {
   const otherTokens = api.getOtherTokens();
   if (targets.length > 0) {
     for (const target of targets) {
+      // This target's own modifiers (range, its effects, cover), so they
+      // don't carry into the next target's prompt
+      const targetModifiers = [];
       const targetName =
         target?.token?.identified === false
           ? target?.token?.record?.unidentifiedName
           : target?.token?.record?.name;
       const targetDistance = target?.distance || 0;
 
-      // Whether the target can Shield Block: shield raised and not broken, and
-      // Shield Block (armor-traits.js)
-      if (canShieldBlock(target?.token)) {
-        targetShieldRaised = true;
-      }
+      // Whether this target can Shield Block: shield raised and not broken,
+      // and Shield Block (armor-traits.js)
+      const targetShieldRaised = canShieldBlock(target?.token);
 
       // If this a ranged attack, add penalties based on range increment
       if (!isMelee || isThrown) {
@@ -13523,7 +13523,7 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber) {
           rangePenalty < 0 &&
           increment > ignoreRangePenalty
         ) {
-          modifiers.push({
+          targetModifiers.push({
             name: `Range Increment (${increment})`,
             value: rangePenalty,
             valueType: "number",
@@ -13538,7 +13538,7 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber) {
           targetDistance > 0 &&
           targetDistance <= volleyRange
         ) {
-          modifiers.push({
+          targetModifiers.push({
             name: `Volley (within ${volleyRange} ft)`,
             value: -2,
             valueType: "number",
@@ -13559,7 +13559,7 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber) {
         if (r.value === "critical") {
           autoCritical = true;
         } else {
-          modifiers.push(r);
+          targetModifiers.push(r);
         }
       });
 
@@ -13643,14 +13643,14 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber) {
         ourToken,
         targetIsOffGuardDueToFlanking,
         attackContext,
-      ).forEach((mod) => modifiers.push(mod));
+      ).forEach((mod) => targetModifiers.push(mod));
       // Cover from the map and creatures in the way, unticked (cover.js)
       getCoverModifiers(
         target?.token,
         ourToken,
         otherTokens,
         attackContext,
-      ).forEach((mod) => modifiers.push(mod));
+      ).forEach((mod) => targetModifiers.push(mod));
 
       // Check if we have a critical specialization effect
       const hasCriticalSpecialization = hasCriticalSpecializationEffect(
@@ -13756,7 +13756,10 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber) {
       api.promptRoll(
         `Attack with ${weapon.name}`,
         diceRoll,
-        getRollModifiers(getSweepModifiers(target?.token?._id)),
+        getRollModifiers([
+          ...targetModifiers,
+          ...getSweepModifiers(target?.token?._id),
+        ]),
         metadata,
         "attack",
       );
@@ -13812,7 +13815,8 @@ function performAttackRoll(record, weapon, weaponDataPath, attackNumber) {
       criticalPersistentDamage: criticalPersistentDamage,
       failureDamage: failureDamage,
       damageType: damageType,
-      showShieldDamage: targetShieldRaised && damageIsPhysical,
+      // No target, no shield to block with
+      showShieldDamage: false,
       splashDamage: splashDamage,
       splashDamageType: splashDamageType,
       fatalDamageString: fatalDamageString,

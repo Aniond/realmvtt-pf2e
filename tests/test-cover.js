@@ -192,6 +192,36 @@ section("In the roll prompts");
     new vm.Script(body, { filename: "spell-attack-macro.js" }).runInContext(ctx);
   };
   assert("a spell attack: offered unticked", prompted(castRay), ["Target AC +1 (Lesser Cover: Goblin in the way) -1 false"]);
+
+  // Two targets: each prompt gets only its own target's modifiers
+  {
+    const troll = creature("Troll");
+    const saved = { ...ctx.api };
+    const realShieldBlock = ctx.canShieldBlock;
+    const calls = [];
+    ctx.api.getTargets = () => [
+      { token: orc, distance: 20 },
+      { token: troll, distance: 50 },
+    ];
+    ctx.api.getToken = () => token;
+    ctx.api.getOtherTokens = () => [token, orc, troll, goblin];
+    ctx.api.getRecord = (type, id, cb) => cb(shooter);
+    ctx.api.getCover = (a, t) => (t._id === "Orc" ? measured("none", [goblin]) : measured("none"));
+    ctx.canShieldBlock = (t) => t?._id === "Orc";
+    ctx.api.promptRoll = (name, dice, modifiers, metadata) => calls.push({ modifiers, metadata });
+    try {
+      ctx.performAttackRoll(shooter, shooter.data.inventory[0], "data.inventory.0", 1);
+    } finally {
+      Object.assign(ctx.api, saved);
+      ctx.canShieldBlock = realShieldBlock;
+    }
+    const names = (call) => call.modifiers.filter((m) => /Cover|Range/.test(m.name)).map((m) => `${m.name} ${m.value}`);
+    assert("two targets: two prompts", calls.length, 2);
+    assert("the first: its cover, no range penalty", names(calls[0]), ["Target AC +1 (Lesser Cover: Goblin in the way) -1"]);
+    assert("the second: its range penalty, not the first's cover", names(calls[1]), ["Range Increment (2) -2"]);
+    assert("the first can Shield Block", calls[0].metadata.showShieldDamage, true);
+    assert("the second can't: the first's shield doesn't carry", calls[1].metadata.showShieldDamage, false);
+  }
 }
 
 summary();
