@@ -148,6 +148,10 @@ Animal companions are characters, as Foundry's PF2e Companion Compendia builds t
 
 `rollhandlers/concealment.js` (Player Core pg. 442-447): a Strike or spell attack against a concealed target (DC 5), or a hidden, invisible or undetected one (DC 11), or from a dazzled (DC 5) or blinded (DC 11) attacker, carries the worst flat check as `metadata.concealment`. `attack.js` shows it as a line and a Flat Check button; nothing is rolled or refused automatically. A hidden, invisible or undetected attacker makes its target off-guard, applied to the AC as flanking is. Effects aren't per observer, so a condition on a token counts against everyone; the GM removes it when it no longer applies.
 
+### Cover
+
+`rollhandlers/cover.js` (Player Core pg. 424): Strike and spell attack prompts get `getCoverModifiers`, an unticked modifier ("Target AC +2 (Standard Cover)", "Target AC +1 (Lesser Cover: Goblin in the way)"), offered as a reminder like Blessed Swiftness. Cover is the GM's call (Sean, 2026-11-05: "be light on automation around cover"), so it only counts when someone ticks it. `getDetectedCover` asks the platform's `api.getCover(attacker, target, { method: "center" })`: its `degree` (walls, closed doors and windows, terrain, 3D props) is standard, greater or total cover, and a creature in its `creatures` with `centerLine` gives lesser cover, or standard when it's two or more sizes larger than both. Only the best applies. Dead creatures, hazards, vehicles and tokens hidden from the players (`visible: false`) don't count. Total cover gives no modifier. It adds only what it beats of the target's best circumstance bonus to AC (`getBestCircumstanceAcBonus`: modifiers, effects, and `getRaisedShieldAcBonus`). A target with an effect whose name starts with "Cover" is skipped: the GM placed it by hand. The `coverNotice` campaign setting (default Yes) floats the detected cover over the target, as Sean's 5e and Level Up rulesets do.
+
 ### Immunities, weaknesses and resistances
 
 `applyDamage` reads them from `getIWR` and matches each damage type, then the roll's `metadata.damageCategories`. The categories follow Foundry's IWR types (`actor/data/iwr.ts`):

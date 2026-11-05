@@ -5546,6 +5546,9 @@
         "Concealment": {
           "file": "rollhandlers/concealment.js"
         },
+        "Cover": {
+          "file": "rollhandlers/cover.js"
+        },
         "AnimalCompanions": {
           "file": "rollhandlers/animal-companions.js"
         },
@@ -5708,6 +5711,21 @@
           {
             "label": "Yes",
             "value": "yes"
+          }
+        ]
+      },
+      {
+        "name": "Cover Notice",
+        "key": "coverNotice",
+        "description": "Player Core pg. 424. When a Strike or spell attack targets a creature, float the cover detected between the attacker and the target (Lesser, Standard, Greater, or Total Cover) over the target token. The cover modifier is always offered in the attack prompt, unticked. Nothing is detected when the target already has an effect named Cover.",
+        "values": [
+          {
+            "label": "Yes",
+            "value": "yes"
+          },
+          {
+            "label": "No",
+            "value": "no"
           }
         ]
       },
