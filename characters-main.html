@@ -344,13 +344,11 @@
   function onLoadCharacter() {
     // Check if we need to show/hide the level up button
     // If we're not doing a change to boost fields, check if we need to show/hide the level up button
-    if (
-      record.data?.xp >= getXpToNextLevel(record) &&
-      record.data?.level < 20 &&
-      record.fields?.levelUpBtn?.hidden !== false
-    ) {
+    const showLevelUp =
+      record.data?.xp >= getXpToNextLevel(record) && record.data?.level < 20;
+    if (showLevelUp && record.fields?.levelUpBtn?.hidden !== false) {
       api.setHidden("levelUpBtn", false);
-    } else if (record.fields?.levelUpBtn?.hidden !== true) {
+    } else if (!showLevelUp && record.fields?.levelUpBtn?.hidden !== true) {
       api.setHidden("levelUpBtn", true);
     }
 
