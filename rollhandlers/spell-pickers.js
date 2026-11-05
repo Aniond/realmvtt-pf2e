@@ -131,13 +131,25 @@ function isPickableSpellEntry(entry) {
 }
 
 // A prepared class entry's book, the Available Spells it prepares from (a
-// wizard's spellbook, a witch's familiar): what it holds at 1st level and
-// gains each level (CLASS_SPELLCASTING in spell-entries.js), or null. A
-// cleric or druid prepares from the whole common list and has none.
-function getSpellbookRules(entry) {
+// wizard's or magus's spellbook, a witch's familiar): what it holds at 1st
+// level and gains each level, for the class's edition (CLASS_SPELLCASTING in
+// spell-entries.js), or null. A cleric or druid prepares from the whole
+// common list and has none. `curriculum` is set for a remastered wizard of a
+// school with a curriculum, whose curriculum spells the player drags in.
+function getSpellbookRules(entry, record) {
   if ((entry?.data?.type || "prepared") !== "prepared") return null;
   const match = /^class:([a-z-]+)$/.exec(`${entry?.data?.auto?.source || ""}`);
-  return (match && CLASS_SPELLCASTING[match[1]]?.spellbook) || null;
+  if (!match) return null;
+  const classObj = (record?.data?.classes || []).find(
+    (classObj) => getClassSpellcasting(classObj)?.slug === match[1],
+  );
+  const casting = classObj ? getClassSpellcasting(classObj) : CLASS_SPELLCASTING[match[1]];
+  if (!casting?.spellbook) return null;
+  const school = casting.schoolSlot && record?.data?.flags?.[casting.schoolSlot.flag];
+  return {
+    ...casting.spellbook,
+    curriculum: !!school && casting.edition !== "legacy" && !casting.schoolSlot.none.test(school),
+  };
 }
 
 // The empty rows a picker can fill: one group per entry and rank, in the
@@ -176,15 +188,18 @@ function getOpenSpellRowGroups(record) {
 }
 
 // The spells a book gains (Wizard Spellcasting, Player Core pg. 192; the
-// witch's familiar the same). At 1st level (the creation wizard, 1st level
-// from level 0): the cantrips and 1st-rank spells it starts with that aren't
-// in it yet. At Level Up: the level's new spells, of any rank with slots.
+// witch's familiar and the magus's spellbook the same). At 1st level (the
+// creation wizard, 1st level from level 0): the cantrips and 1st-rank spells
+// it starts with that aren't in it yet. At Level Up: the level's new spells,
+// of any rank with slots. A school's curriculum spells (two 1st-rank spells,
+// one more with each new rank) aren't picked here: the prompt says to drag
+// them in, and the 1st-rank count leaves room for them.
 // Each group: { key, entryIndex, entryName, entryType, book, rank, count,
-// tradition, levelUp }.
+// tradition, levelUp, curriculum }.
 function getSpellbookGroups(record, levelUp = false) {
   const groups = [];
   (record?.data?.spells || []).forEach((entry, entryIndex) => {
-    const rules = getSpellbookRules(entry);
+    const rules = getSpellbookRules(entry, record);
     const tradition = `${entry.data?.tradition || ""}`.trim();
     if (!rules || !tradition || !isPickableSpellEntry(entry)) return;
     const group = {
@@ -200,7 +215,10 @@ function getSpellbookGroups(record, levelUp = false) {
         0,
         ...SPELL_RANK_LISTS.filter((list) => (entry.data?.[list] || []).length > 0).map(getSpellListRank),
       );
-      if (rank > 0) groups.push({ ...group, key: `${entry._id}:book`, rank, count: rules.perLevel });
+      // A full caster's new rank comes at odd levels; curricula go to 9th
+      const level = parseInt(record.data?.level, 10) || 0;
+      const curriculum = rules.curriculum && rank <= 9 && rank === (level + 1) / 2;
+      if (rank > 0) groups.push({ ...group, key: `${entry._id}:book`, rank, count: rules.perLevel, curriculum });
       return;
     }
     const known = entry.data?.knownSpells || [];
@@ -209,8 +227,10 @@ function getSpellbookGroups(record, levelUp = false) {
     if (rules.cantrips > cantrips) {
       groups.push({ ...group, key: `${entry._id}:book:cantrips`, rank: 0, count: rules.cantrips - cantrips });
     }
-    if (rules.spells > spells) {
-      groups.push({ ...group, key: `${entry._id}:book:spells1`, rank: 1, count: rules.spells - spells });
+    const curriculum = rules.curriculum ? 2 : 0;
+    if (rules.spells + curriculum > spells) {
+      const count = Math.min(rules.spells, rules.spells + curriculum - spells);
+      groups.push({ ...group, key: `${entry._id}:book:spells1`, rank: 1, count, curriculum: rules.curriculum });
     }
   });
   return groups;
@@ -226,7 +246,7 @@ function getSpellPickGroups(record, levelUp = false) {
     if (group.font || group.entryType !== "prepared") return true;
     if (levelUp) return false;
     const entry = record.data.spells[group.entryIndex];
-    return !getSpellbookRules(entry) || getKnownSpellOptions(entry, group.rank).length > 0;
+    return !getSpellbookRules(entry, record) || getKnownSpellOptions(entry, group.rank).length > 0;
   });
   return [...getSpellbookGroups(record, levelUp), ...slots];
 }
@@ -321,9 +341,14 @@ function getSpellPickPrompt(group) {
     const which = group.levelUp
       ? `${group.count} spell${group.count === 1 ? "" : "s"} of any rank you can cast`
       : `up to ${what}`;
+    const curriculum = !group.curriculum
+      ? ""
+      : group.levelUp
+        ? " Also drag a spell from your school's curriculum into Available Spells."
+        : " Also drag your school's two 1st-rank curriculum spells into Available Spells.";
     return {
       title: `${group.entryName}: ${capitalize(group.book.replace(/^your /, ""))}`,
-      text: `Add ${which} to ${group.book}. Skip to choose later: drag spells into Available Spells.`,
+      text: `Add ${which} to ${group.book}.${curriculum} Skip to choose later: drag spells into Available Spells.`,
     };
   }
   const spontaneous = group.entryType === "spontaneous";

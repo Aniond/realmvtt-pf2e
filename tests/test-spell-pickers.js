@@ -260,6 +260,53 @@ section("Prepared casters at Level Up");
   assert("the familiar's text", witchUp.prompts[0].text.startsWith("Add 2 spells of any rank you can cast to your familiar."), true);
 }
 
+section("A magus's spellbook, per edition");
+{
+  const bookOf = (record) => record.data.spells.find((e) => e.data.auto?.source === "class:magus");
+  const first = runPicks(synced(character("Magus", 1)), () => []).prompts.filter((p) => p.title.endsWith(": Spellbook"));
+  assert("Impossible Magic: 8 cantrips and five 1st-rank spells", first.map((p) => p.count), [8, 5]);
+  assert("named for the entry", first[0].title, `${bookOf(synced(character("Magus", 1))).name}: Spellbook`);
+
+  const legacyMagus = character("Magus", 1);
+  legacyMagus.data.classes[0].data.publication = { remaster: false, title: "Pathfinder Secrets of Magic" };
+  const legacy = runPicks(synced(legacyMagus), () => []).prompts.filter((p) => p.title.endsWith(": Spellbook"));
+  assert("Secrets of Magic: 8 cantrips and four 1st-level spells", legacy.map((p) => p.count), [8, 4]);
+
+  const leveled = runPicks(synced(character("Magus", 3)), () => [], [], true);
+  assert("Level Up: two for the book, no slots", leveled.prompts.map((p) => [p.title.endsWith(": Spellbook"), p.count]), [[true, 2]]);
+}
+
+section("A school wizard's curriculum");
+{
+  const school = { flags: { arcaneSchool: "school-of-battle-magic" } };
+  const prompts = runPicks(synced(character("Wizard", 1, school)), () => []).prompts;
+  assert("the cantrips' text has no curriculum line", prompts[0].text.includes("curriculum"), false);
+  assert(
+    "the 1st-rank text says to drag the curriculum in",
+    prompts[1].text,
+    "Add up to 5 1st-rank spells to your spellbook. Also drag your school's two 1st-rank curriculum spells into Available Spells. Skip to choose later: drag spells into Available Spells.",
+  );
+  assert("still five picked", prompts[1].count, 5);
+
+  // The book has room for the two: after two curriculum spells, still five
+  const dragged = synced(character("Wizard", 1, school));
+  const wizardBook = dragged.data.spells.find((e) => e.data.auto?.source === "class:wizard");
+  wizardBook.data.knownSpells = [spell("Force Barrage"), spell("Mystic Armor")];
+  assert("two dragged in first: five still asked", runPicks(dragged, () => []).prompts.filter((p) => p.title.endsWith(": Spellbook")).pop().count, 5);
+  wizardBook.data.knownSpells.push(...["Fear", "Grease", "Sleep", "Runic Weapon"].map((n) => spell(n)));
+  assert("six in the book: one more", runPicks(dragged, () => []).prompts.filter((p) => p.title.endsWith(": Spellbook")).pop().count, 1);
+
+  const unified = runPicks(synced(character("Wizard", 1, { flags: { arcaneSchool: "unified-magical-theory" } })), () => []).prompts;
+  assert("Unified Magical Theory: no curriculum", [unified[1].text.includes("curriculum"), unified[1].count], [false, 5]);
+
+  const newRank = runPicks(synced(character("Wizard", 3, school)), () => [], [], true).prompts[0];
+  assert("Level Up to a new rank: one curriculum spell", newRank.text.includes("Also drag a spell from your school's curriculum"), true);
+  const sameRank = runPicks(synced(character("Wizard", 4, school)), () => [], [], true).prompts[0];
+  assert("no new rank: no line", sameRank.text.includes("curriculum"), false);
+  const tenth = runPicks(synced(character("Wizard", 19, school)), () => [], [], true).prompts[0];
+  assert("10th rank: no curriculum", tenth.text.includes("curriculum"), false);
+}
+
 section("Divine Font");
 {
   const heal = spell("Heal");
