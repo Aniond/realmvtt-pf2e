@@ -3,9 +3,10 @@
 // through a creature gives the target lesser cover, a +1 circumstance bonus to
 // AC. A creature two or more sizes larger than both the attacker and the
 // target gives standard cover (+2) instead.
-//   - Strike and spell attack prompts get it as a ticked modifier: the AC it
-//     adds, as a penalty to the roll (a -1 to the roll is +1 AC for every
-//     degree of success). The GM unticks it when it doesn't apply.
+//   - Strike and spell attack prompts offer it as an unticked modifier: the
+//     AC it adds, as a penalty to the roll (a -1 to the roll is +1 AC for
+//     every degree of success). It's a reminder: cover is the GM's call, so
+//     it only counts when someone ticks it.
 //   - It adds only what it beats of the target's circumstance bonuses to AC
 //     (a raised shield, the Cover effect), which don't stack.
 // Walls and terrain aren't checked: the Cover effect is for those.
@@ -113,7 +114,7 @@ function getBestCircumstanceAcBonus(token, attackerToken, attackContext) {
   return Math.max(0, getRaisedShieldAcBonus(token), ...values);
 }
 
-// The cover the creatures in the way give the target, as a ticked modifier
+// The cover the creatures in the way give the target, as an unticked modifier
 // for the attack's roll prompt ([] when there are none, or the target's
 // circumstance bonus to AC is already as good)
 function getCreatureCoverModifiers(
@@ -139,7 +140,7 @@ function getCreatureCoverModifiers(
       name: `Target AC +${difference} (${isStandard ? "Standard" : "Lesser"} Cover: ${names.join(", ")} in the way)`,
       type: "",
       value: -difference,
-      active: true,
+      active: false,
       isPenalty: true,
     },
   ];

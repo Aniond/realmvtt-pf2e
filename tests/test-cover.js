@@ -2,7 +2,7 @@
 // between the attacker's and the target's centers that passes through a
 // creature gives lesser cover (+1 AC), or standard cover (+2) behind a
 // creature two sizes larger than both. Strike and spell attack prompts get it
-// as a ticked modifier, which doesn't stack with circumstance bonuses the
+// as an unticked modifier, which doesn't stack with circumstance bonuses the
 // target already has.
 // Run: node tests/test-cover.js (or via tests/run-all.js)
 
@@ -36,7 +36,7 @@ section("Creatures in the way");
   const orc = creature("Orc", 4, 0);
   const goblin = creature("Goblin", 2, 0);
   assert("a creature on the line: lesser cover", cover(orc, archer, [archer, orc, goblin]), [
-    { name: "Target AC +1 (Lesser Cover: Goblin in the way)", type: "", value: -1, active: true, isPenalty: true },
+    { name: "Target AC +1 (Lesser Cover: Goblin in the way)", type: "", value: -1, active: false, isPenalty: true },
   ]);
   assert("nobody in the way: none", cover(orc, archer, [archer, orc, creature("Goblin", 2, 2)]), []);
   assert("the attacker and the target aren't in their own way", cover(goblin, archer, [archer, goblin]), []);
@@ -121,9 +121,9 @@ section("In the roll prompts");
     return (captured || []).filter((m) => m.name.includes("Cover")).map((m) => `${m.name} ${m.value} ${m.active}`);
   };
   assert(
-    "a Strike: ticked",
+    "a Strike: offered unticked",
     prompted(() => ctx.performAttackRoll(shooter, shooter.data.inventory[0], "data.inventory.0", 1)),
-    ["Target AC +1 (Lesser Cover: Goblin in the way) -1 true"],
+    ["Target AC +1 (Lesser Cover: Goblin in the way) -1 false"],
   );
 
   const ray = { name: "Ray", data: { defense: { passive: { statistic: "ac" } }, traits: [], damage: [] } };
@@ -135,7 +135,7 @@ section("In the roll prompts");
     ctx.api.getValueOnRecord = (r, path) => (path === "data.spells.0" ? ray : getValue(r, path));
     new vm.Script(body, { filename: "spell-attack-macro.js" }).runInContext(ctx);
   };
-  assert("a spell attack: ticked", prompted(castRay), ["Target AC +1 (Lesser Cover: Goblin in the way) -1 true"]);
+  assert("a spell attack: offered unticked", prompted(castRay), ["Target AC +1 (Lesser Cover: Goblin in the way) -1 false"]);
 }
 
 summary();
