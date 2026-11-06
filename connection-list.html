@@ -1,0 +1,28 @@
+<!-- A connection (NPC Core pg. 226): the NPC, the bond's tier and notes.
+     Tokens of affection and insults move it; the GM sets the tier. -->
+<div style="display: flex; gap: 4px; align-items: center; width: 100%">
+  <div style="flex: 1; min-width: 100px">
+    <namefield
+      field="namefield"
+      width="100%"
+      size="xs"
+      placeholder="NPC name..."
+    ></namefield>
+  </div>
+  <dropdown
+    field="tier"
+    size="xs"
+    width="120px"
+    defaultvalue="acquainted"
+    placeholder="Acquainted"
+    options='[{"label": "Bonded", "value": "bonded"}, {"label": "Committed", "value": "committed"}, {"label": "Associated", "value": "associated"}, {"label": "Acquainted", "value": "acquainted"}, {"label": "Avoided", "value": "avoided"}, {"label": "Despised", "value": "despised"}, {"label": "Vindictive", "value": "vindictive"}]'
+  ></dropdown>
+  <div style="flex: 1; min-width: 100px">
+    <stringfield
+      field="notes"
+      width="100%"
+      size="xs"
+      placeholder="Notes"
+    ></stringfield>
+  </div>
+</div>
