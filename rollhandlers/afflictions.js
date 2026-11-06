@@ -99,7 +99,7 @@ function getAfflictionExposeButton(source, { dc } = {}) {
   if (!affliction) return "";
   const saveDC = affliction.dc === "spell" ? dc : affliction.dc;
   if (!saveDC) return "";
-  const label = `Expose_to_${affliction.name.replace(/[^\w]+/g, "_")}`;
+  const label = `Expose_to_${affliction.name.replace(/[^\w]+/g, "_").replace(/^_+|_+$/g, "")}`;
   return `\n\`\`\`${label}\nexposeToAffliction(${JSON.stringify(affliction)}, ${saveDC});\n\`\`\``;
 }
 
@@ -264,7 +264,7 @@ function applyAfflictionEffects(token, changes, stacks) {
 
 function getAfflictionDamageButtons(name, stage) {
   return (stage?.damage || []).map((formula) => {
-    const label = `Roll_${formula.replace(/[^\w]+/g, "_")}`;
+    const label = `Roll_${formula.replace(/[^\w]+/g, "_").replace(/^_+|_+$/g, "")}`;
     return `\`\`\`${label}\nexecuteDamageMacro(${JSON.stringify(formula)}, "standard", ${JSON.stringify(`${name}: ${formula}`)});\n\`\`\``;
   });
 }
@@ -398,7 +398,7 @@ function getAfflictionSaveLines(metadata, degree) {
     const stored = affliction.dc === "spell" ? { ...affliction, castDC: metadata.dc } : affliction;
     return [
       `**${affliction.name}:** stage ${stage}${affliction.onset ? ` after its onset (${describeAfflictionTime(affliction.onset)})` : ""}.`,
-      getChatButton(`Apply_${affliction.name.replace(/[^\w]+/g, "_")}`, saver, `afflictCreature(token, ${JSON.stringify(stored)}, ${stage})`),
+      getChatButton(`Apply_${affliction.name.replace(/[^\w]+/g, "_").replace(/^_+|_+$/g, "")}`, saver, `afflictCreature(token, ${JSON.stringify(stored)}, ${stage})`),
     ];
   }
   const change = getAfflictionSaveChange(info, degree);
@@ -409,7 +409,7 @@ function getAfflictionSaveLines(metadata, degree) {
       : `stage ${change.stage}${change.over ? " (the highest, again)" : ""}`;
   return [
     `**${info.name}:** ${text}.`,
-    getChatButton(`Apply_${info.name.replace(/[^\w]+/g, "_")}`, saver, `resolveAfflictionSave(token, ${JSON.stringify(info.name)}, ${degree})`),
+    getChatButton(`Apply_${info.name.replace(/[^\w]+/g, "_").replace(/^_+|_+$/g, "")}`, saver, `resolveAfflictionSave(token, ${JSON.stringify(info.name)}, ${degree})`),
   ];
 }
 
@@ -466,7 +466,7 @@ function getAfflictionTurnEnd(creature, states, round) {
       state.ended = true;
       messages.push([
         `**${who}: ${state.name}** has ended (its effect is gone).`,
-        getChatButton(`Clear_${state.name.replace(/[^\w]+/g, "_")}`, creature, `clearAfflictionState(token, ${JSON.stringify(state.name)})`),
+        getChatButton(`Clear_${state.name.replace(/[^\w]+/g, "_").replace(/^_+|_+$/g, "")}`, creature, `clearAfflictionState(token, ${JSON.stringify(state.name)})`),
       ].join("\n"));
       return state;
     }
