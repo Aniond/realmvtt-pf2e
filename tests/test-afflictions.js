@@ -1,6 +1,7 @@
-// Tests for afflictions (afflictions.js, roadmap B4): parsing a poison or
-// ability, exposure, stage saves, conditions per stage, the turn end's
-// countdown, and treatment.
+// Tests for afflictions (afflictions.js, roadmap B4, Sean's design on #64):
+// data.affliction on the source, the affliction as a stackable effect whose
+// stacks are the stage, the hidden state, saves, conditions per stage, the
+// turn end and treatment.
 
 const fs = require("fs");
 const { createSandbox } = require("./sandbox");
@@ -8,291 +9,269 @@ const { assert, assertIncludes, section, summary } = require("./test-helpers");
 
 const ctx = createSandbox();
 
-const link = (value, text, type = "macro") =>
-  `<record-link recordlink="${JSON.stringify({ value, tooltip: text, type }).replace(/"/g, "&quot;")}">${text}</record-link>`;
-const save = (type, dc) => link({ type: "macro", code: `rollSavingThrow('${type}', ${dc});`, name: `${type} Save (DC ${dc})` }, `Fortitude Save (DC ${dc})`);
-const dmg = (formula) => link({ type: "macro", code: `executeDamageMacro('${formula}', 'standard', '${formula} Damage')` }, `${formula} Damage`);
-const effect = (name) => link({ _id: `e-${name}`, name, recordType: "effects" }, name, "effects");
+// Curare as the data script writes it (Treasure Vault)
+const CURARE = {
+  name: "Curare",
+  kind: "poison",
+  virulent: false,
+  level: 8,
+  save: "fortitude",
+  dc: 25,
+  onset: null,
+  maxDuration: { value: 6, unit: "round" },
+  stages: [
+    { text: "2d6 poison damage, clumsy 1, and enfeebled 1 (1 round)", damage: ["2d6 poison"], conditions: [{ name: "Clumsy", value: 1 }, { name: "Enfeebled", value: 1 }], interval: { value: 1, unit: "round" } },
+    { text: "3d6 poison damage, clumsy 2, enfeebled 2, and slowed 1 (1 minute)", damage: ["3d6 poison"], conditions: [{ name: "Clumsy", value: 2 }, { name: "Enfeebled", value: 2 }, { name: "Slowed", value: 1 }], interval: { value: 1, unit: "minute" } },
+    { text: "4d6 poison damage, clumsy 2, enfeebled 2, and slowed 1 (1 round)", note: "If the victim fails while at Stage 3, the poison ends and it is paralyzed.", damage: ["4d6 poison"], conditions: [{ name: "Clumsy", value: 2 }, { name: "Enfeebled", value: 2 }, { name: "Slowed", value: 1 }], interval: { value: 1, unit: "round" } },
+  ],
+  effectId: "eff-curare",
+};
+const FEVER = {
+  name: "Filth Fever",
+  kind: "disease",
+  virulent: true,
+  save: "fortitude",
+  dc: 20,
+  onset: { value: 1, unit: "day" },
+  maxDuration: null,
+  stages: [
+    { text: "carrier (1 day)", damage: [], conditions: [], interval: { value: 1, unit: "day" } },
+    { text: "enfeebled 1 (1 day)", damage: [], conditions: [{ name: "Enfeebled", value: 1 }], interval: { value: 1, unit: "day" } },
+    { text: "enfeebled 2 and drained 1 (1 day)", damage: [], conditions: [{ name: "Enfeebled", value: 2 }, { name: "Drained", value: 1 }], interval: { value: 1, unit: "day" } },
+  ],
+};
+const GOBLIN_POX = { name: "Goblin Pox", kind: "disease", save: "fortitude", dc: "spell", stages: [{ text: "sickened 1 (1 round)", damage: [], conditions: [{ name: "Sickened", value: 1 }], interval: { value: 1, unit: "round" } }] };
 
-// Black Adder Venom (GM Core), as the module prints it
-const BLACK_ADDER = [
-  "<p>Adder venom is a simple but effective way to enhance a weapon.</p>",
-  `<p><strong>Saving Throw</strong> ${save("fortitude", 18)}</p>`,
-  "<p><strong>Maximum Duration</strong> 3 rounds</p>",
-  `<p><strong>Stage 1</strong> ${dmg("1d4 poison")} damage (1 round)</p>`,
-  `<p><strong>Stage 2</strong> ${dmg("1d6 poison")} damage (1 round)</p>`,
-  `<p><strong>Stage 3</strong> ${dmg("1d8 poison")} damage (1 round)</p>`,
-].join("\n");
-
-// Giant Centipede Venom (Monster Core): conditions as effect links
-const CENTIPEDE = [
-  `<p><strong>Saving Throw</strong> ${save("fortitude", 14)}</p>`,
-  "<hr />",
-  "<p><strong>Maximum Duration</strong> 6 rounds</p>",
-  `<p><strong>Stage 1</strong> ${dmg("1d4 poison")} damage (1 round)</p>`,
-  `<p><strong>Stage 2</strong> ${dmg("1d4 poison")} damage and ${effect("Off-Guard")} (1 round)</p>`,
-  `<p><strong>Stage 3</strong> ${dmg("1d4 poison")} damage, ${effect("Clumsy 1")}, and ${effect("Fatigued")} (1 round)</p>`,
-].join("\n");
-
-// A disease written as plain text, with an onset in days
-const DISEASE = [
-  "<p><strong>Saving Throw</strong> DC 20 Fortitude</p>",
-  "<p><strong>Onset</strong> 1 day</p>",
-  "<p><strong>Stage 1</strong> carrier with no ill effect (1 day)</p>",
-  "<p><strong>Stage 2</strong> enfeebled 1 (1 day)</p>",
-  "<p><strong>Stage 3</strong> enfeebled 2 and drained 1 (1 day)</p>",
-].join("\n");
-
-section("Parsing: a poison item");
-{
-  const a = ctx.parseAffliction(BLACK_ADDER, { name: "Black Adder Venom", traits: ["Alchemical", "Injury", "Poison"], level: 2 });
-  assert("the save", [a.save, a.dc], ["fortitude", 18]);
-  assert("a poison", [a.kind, a.virulent, a.traits], ["poison", false, ["poison"]]);
-  assert("maximum duration in rounds", [a.maxDuration.rounds, a.maxDuration.counted], [3, true]);
-  assert("three stages", a.stages.length, 3);
-  assert("damage from the links", a.stages.map((s) => s.damage), [["1d4 poison"], ["1d6 poison"], ["1d8 poison"]]);
-  assert("the interval", [a.stages[0].interval.value, a.stages[0].interval.unit, a.stages[0].interval.rounds], [1, "round", 1]);
-  assert("no onset", a.onset, null);
-  assert("not an affliction", ctx.parseAffliction("<p>A potion.</p>", { name: "Potion" }), null);
+// A token with effects: [[name, stacks]], and its affliction state
+function token(effects = [], states = [], extra = {}) {
+  const t = { _id: "pc", name: "Valeros", recordType: "characters", effects: [], effectIds: [], effectDurations: {}, effectDurationUnits: {}, data: { afflictionState: states }, ...extra };
+  effects.forEach(([name, stacks]) => {
+    const effect = { _id: `e-${name}`, name };
+    t.effects.push(effect);
+    for (let i = 0; i < stacks; i++) t.effectIds.push(effect._id);
+  });
+  return t;
 }
 
-section("Parsing: an ability's conditions");
+section("Times");
 {
-  const a = ctx.parseAffliction(CENTIPEDE, { name: "Giant Centipede Venom", traits: ["Common", "Poison"] });
-  assert("stage 2: off-guard", a.stages[1].conditions, [{ name: "Off-Guard", value: 1 }]);
-  assert("stage 3: clumsy 1 and fatigued", a.stages[2].conditions, [{ name: "Clumsy", value: 1 }, { name: "Fatigued", value: 1 }]);
-  assertIncludes("the stage's text", a.stages[2].text, "Clumsy 1, and Fatigued (1 round)");
+  assert("rounds counted: rounds, minutes", [ctx.getAfflictionRounds({ value: 1, unit: "round" }), ctx.getAfflictionRounds({ value: 2, unit: "minute" })], [1, 20]);
+  assert("hours, days, dice: the GM's", [ctx.getAfflictionRounds({ value: 1, unit: "hour" }), ctx.getAfflictionRounds({ dice: "1d6", unit: "hour" })], [0, 0]);
+  assert("the effect's duration", [ctx.getAfflictionEffectDuration({ value: 6, unit: "round" }), ctx.getAfflictionEffectDuration({ value: 5, unit: "day" }), ctx.getAfflictionEffectDuration({ value: 2, unit: "week" })], [{ value: 6, unit: "rounds" }, { value: 5, unit: "days" }, { value: 14, unit: "days" }]);
+  assert("none for dice or nothing", [ctx.getAfflictionEffectDuration({ dice: "1d4", unit: "hour" }), ctx.getAfflictionEffectDuration(null)], [undefined, undefined]);
+  assert("described", [ctx.describeAfflictionTime({ value: 1, unit: "round" }), ctx.describeAfflictionTime({ dice: "1d6", unit: "hour" })], ["1 round", "1d6 hours"]);
 }
 
-section("Parsing: plain text, onset, days, virulent");
+section("The source: data.affliction only");
 {
-  const a = ctx.parseAffliction(DISEASE, { name: "Filth Fever", traits: ["Disease", "Virulent"] });
-  assert("the save from text", [a.save, a.dc], ["fortitude", 20]);
-  assert("a disease, virulent", [a.kind, a.virulent], ["disease", true]);
-  assert("onset in days: not counted", [a.onset.unit, a.onset.counted], ["day", false]);
-  assert("conditions from text", a.stages[2].conditions, [{ name: "Drained", value: 1 }, { name: "Enfeebled", value: 2 }]);
-  assert("the time", [ctx.parseAfflictionTime("10 minutes").rounds, ctx.parseAfflictionTime("1d4 hours")], [100, null]);
+  assert("an item's", ctx.getRecordAffliction({ name: "Curare", data: { affliction: CURARE } }).dc, 25);
+  assert("the prefix off an ability's name", ctx.getRecordAffliction({ name: "x", data: { affliction: { ...CURARE, name: "(Graveknight) Graveknight's Curse" } } }).name, "Graveknight's Curse");
+  assert("no data.affliction: none (nothing is parsed)", ctx.getRecordAffliction({ name: "Curare", data: { description: "<p><strong>Stage 1</strong> 1d6 poison (1 round)</p>" } }), null);
+  assert("no DC: none", ctx.getRecordAffliction({ data: { affliction: { ...CURARE, dc: null } } }), null);
 }
 
-section("Expose: the item's and ability's button");
+section("Expose");
 {
-  const button = ctx.getAfflictionExposeButton({ name: "Black Adder Venom", data: { description: BLACK_ADDER, traits: ["Poison"], level: 2 } });
-  assertIncludes("a button", button, "```Expose_to_Black_Adder_Venom\nexposeToAffliction(");
-  assert("none without one", ctx.getAfflictionExposeButton({ name: "Rope", data: { description: "<p>Rope.</p>" } }), "");
+  const button = ctx.getAfflictionExposeButton({ name: "Curare", data: { affliction: CURARE } });
+  assertIncludes("an item's button", button, "```Expose_to_Curare\nexposeToAffliction(");
+  assertIncludes("... with its DC", button, "}, 25);");
+  assertIncludes("a spell's at the caster's DC", ctx.getAfflictionExposeButton({ name: "Goblin Pox", data: { affliction: GOBLIN_POX } }, { dc: 19 }), "}, 19);");
+  assert("a spell without a DC: none", ctx.getAfflictionExposeButton({ name: "Goblin Pox", data: { affliction: GOBLIN_POX } }), "");
+  assert("none without data.affliction", ctx.getAfflictionExposeButton({ name: "Rope", data: {} }), "");
+  let args = null;
+  const original = ctx.rollSavingThrow;
+  ctx.rollSavingThrow = (...a) => (args = a);
+  ctx.exposeToAffliction(CURARE, 25);
+  assert("rolls the save with its traits", [args[0], args[1], args[2].traits, args[2].affliction.mode], ["fortitude", 25, ["poison"], "initial"]);
+  ctx.rollSavingThrow = original;
 }
-
-const adder = ctx.parseAffliction(BLACK_ADDER, { name: "Black Adder Venom", traits: ["Poison"], level: 2 });
-const centipede = ctx.parseAffliction(CENTIPEDE, { name: "Giant Centipede Venom", traits: ["Poison"] });
-const fever = ctx.parseAffliction(DISEASE, { name: "Filth Fever", traits: ["Disease", "Virulent"] });
 
 section("The initial save's result");
 {
-  const meta = (degree) => ctx.getAfflictionSaveLines({ saverTokenId: "pc", affliction: { mode: "initial", affliction: adder, tokenName: "Valeros" } }, degree);
-  assert("success: unaffected, no button", meta(1), ["**Black Adder Venom:** unaffected."]);
-  assertIncludes("failure: stage 1", meta(0)[0], "stage 1.");
-  assertIncludes("... its button on the saver's token", meta(0)[1], 'withChatButtonToken("pc", "Valeros"');
-  assertIncludes("critical failure: stage 2", meta(-1)[0], "stage 2.");
-  assertIncludes("onset: after it", ctx.getAfflictionSaveLines({ saverTokenId: "pc", affliction: { mode: "initial", affliction: fever } }, 0)[0], "stage 1 after its onset (1 day)");
-  assert("no affliction: nothing", ctx.getAfflictionSaveLines({ saverTokenId: "pc" }, 0), []);
+  const lines = (affliction, degree, dc = 25) => ctx.getAfflictionSaveLines({ saverTokenId: "pc", dc, affliction: { mode: "initial", affliction, tokenName: "Valeros" } }, degree);
+  assert("success: not afflicted", lines(CURARE, 1), ["**Curare:** not afflicted."]);
+  assertIncludes("a spell: its own success", lines(GOBLIN_POX, 1, 19)[0], "the spell says what a success does");
+  assertIncludes("failure: stage 1", lines(CURARE, 0)[0], "stage 1.");
+  assertIncludes("... Apply on the saver's token", lines(CURARE, 0)[1], 'withChatButtonToken("pc", "Valeros"');
+  assertIncludes("critical failure: stage 2", lines(CURARE, -1)[0], "stage 2.");
+  assertIncludes("onset: after it", lines(FEVER, 0)[0], "stage 1 after its onset (1 day)");
+  assertIncludes("a spell's DC kept for its stage saves", lines(GOBLIN_POX, 0, 19)[1], '"castDC":19');
 }
 
-section("Exposure: new, again, and a disease again");
+section("Exposure: new, onset, a poison again, a disease again");
 {
-  const first = ctx.getAfflictionExposure([], adder, 1);
-  assert("a new entry, applied", [first.list.length, first.entry.data.stage, first.apply], [1, 1, true]);
-  const applied = first.list.map((e) => ({ ...e, data: { ...e.data, appliedStage: 1, elapsed: 2 } }));
-  const again = ctx.getAfflictionExposure(applied, adder, 2);
-  assert("a poison again: +2 stages, capped, duration kept", [again.entry.data.stage, again.entry.data.elapsed, again.apply], [3, 2, true]);
-  const sick = ctx.getAfflictionExposure([], fever, 1);
-  assert("onset: not applied yet", [sick.apply, sick.entry.data.onsetLeft], [false, 0]);
-  const sickAgain = ctx.getAfflictionExposure(sick.list, fever, 2);
-  assert("a disease again: no effect", [sickAgain.apply, sickAgain.line], [false, "Already has Filth Fever: no effect."]);
-  const timed = ctx.getAfflictionExposure([], { ...adder, onset: ctx.parseAfflictionTime("1 minute") }, 1);
-  assert("onset in minutes: counted in rounds", timed.entry.data.onsetLeft, 10);
+  const first = ctx.getAfflictionExposure([], 0, CURARE, 1);
+  assert("new: applied at stage 1", [first.states.length, first.stage, first.apply, first.states[0].appliedStage], [1, 1, true, 0]);
+  const again = ctx.getAfflictionExposure(first.states, 1, CURARE, 2);
+  assert("a poison again: +2, capped", [again.stage, again.apply, again.states.length], [3, true, 1]);
+  const sick = ctx.getAfflictionExposure([], 0, FEVER, 1);
+  assert("an onset in days: not applied, not counted", [sick.apply, sick.states[0].onsetLeft], [false, 0]);
+  assert("a disease again: no effect", ctx.getAfflictionExposure(sick.states, 1, FEVER, 2).line, "Already has Filth Fever: no effect.");
+  const timed = ctx.getAfflictionExposure([], 0, { ...CURARE, onset: { value: 1, unit: "minute" } }, 1);
+  assert("an onset in minutes: counted in rounds", timed.states[0].onsetLeft, 10);
 }
 
 section("Stage saves");
 {
   const change = (state, degree) => ctx.getAfflictionSaveChange({ max: 3, successes: 0, virulent: false, ...state }, degree);
-  assert("success: -1", change({ stage: 2 }, 1).stage, 1);
-  assert("critical success: -2, cured below 1", change({ stage: 1 }, 2).stage, -1);
-  assert("failure: +1", change({ stage: 1 }, 0).stage, 2);
-  assert("critical failure: +2, capped", [change({ stage: 2 }, -1).stage, change({ stage: 2 }, -1).over], [3, true]);
-  assert("virulent: one success stays", [change({ stage: 2, virulent: true }, 1).stage, change({ stage: 2, virulent: true }, 1).successes], [2, 1]);
-  assert("virulent: the second success -1", [change({ stage: 2, virulent: true, successes: 1 }, 1).stage, change({ stage: 2, virulent: true, successes: 1 }, 1).successes], [1, 0]);
-  assert("virulent: a critical success only -1", change({ stage: 2, virulent: true }, 2).stage, 1);
-  assert("virulent: a failure resets", change({ stage: 2, virulent: true, successes: 1 }, 0).successes, 0);
-
-  const lines = ctx.getAfflictionSaveLines({ saverTokenId: "pc", affliction: { mode: "stage", entryId: "a1", name: "Filth Fever", stage: 2, max: 3, virulent: true, successes: 0, tokenName: "Valeros" } }, 1);
+  assert("success -1, critical success -2", [change({ stage: 2 }, 1).stage, change({ stage: 1 }, 2).stage], [1, -1]);
+  assert("failure +1, critical failure +2 capped", [change({ stage: 1 }, 0).stage, change({ stage: 2 }, -1).stage, change({ stage: 2 }, -1).over], [2, 3, true]);
+  assert("virulent: the second success -1", [change({ stage: 2, virulent: true }, 1).stage, change({ stage: 2, virulent: true, successes: 1 }, 1).stage], [2, 1]);
+  assert("virulent: a critical success -1", change({ stage: 2, virulent: true }, 2).stage, 1);
+  const lines = ctx.getAfflictionSaveLines({ saverTokenId: "pc", affliction: { mode: "stage", name: "Filth Fever", stage: 2, max: 3, virulent: true, successes: 0, tokenName: "Valeros" } }, 1);
   assertIncludes("virulent: what's left", lines[0], "stays at stage 2 (virulent: 1 of 2 successes)");
-  assertIncludes("the Apply button", lines[1], 'resolveAfflictionSave(token, "a1", 1)');
+  assertIncludes("the Apply button by name", lines[1], 'resolveAfflictionSave(token, "Filth Fever", 1)');
 }
 
 section("Conditions per stage");
 {
-  const changes = ctx.getAfflictionConditionChanges(centipede.stages[1].conditions, centipede.stages[2].conditions);
-  assert("off-guard goes", changes.remove, [{ name: "Off-Guard", value: 1 }]);
-  assert("clumsy and fatigued come", changes.gain, [{ name: "Clumsy", value: 1 }, { name: "Fatigued", value: 1 }]);
-  const down = ctx.getAfflictionConditionChanges(centipede.stages[2].conditions, centipede.stages[1].conditions);
-  assert("going down: clumsy goes, fatigued stays (it ends on its own)", [down.remove, down.kept], [[{ name: "Clumsy", value: 1 }], ["Fatigued"]]);
-  const up = ctx.getAfflictionConditionChanges([{ name: "Enfeebled", value: 1 }], [{ name: "Enfeebled", value: 2 }, { name: "Drained", value: 1 }]);
-  assert("enfeebled 1 to 2: one more", [up.add, up.gain], [[{ name: "Enfeebled", value: 1 }], [{ name: "Drained", value: 1 }]]);
-  const cured = ctx.getAfflictionConditionChanges(fever.stages[2].conditions, []);
-  assert("cured: enfeebled goes, drained stays", [cured.remove, cured.kept], [[{ name: "Enfeebled", value: 2 }], ["Drained"]]);
+  const changes = ctx.getAfflictionConditionChanges(CURARE.stages[0].conditions, CURARE.stages[1].conditions);
+  assert("clumsy and enfeebled +1, slowed new", [changes.add, changes.gain], [[{ name: "Clumsy", value: 1 }, { name: "Enfeebled", value: 1 }], [{ name: "Slowed", value: 1 }]]);
+  const cured = ctx.getAfflictionConditionChanges(FEVER.stages[2].conditions, []);
+  assert("cured: enfeebled goes, drained kept", [cured.remove, cured.kept], [[{ name: "Enfeebled", value: 2 }], ["Drained"]]);
+  assert("stunned kept", ctx.getAfflictionConditionChanges([{ name: "Stunned", value: 1 }], []).kept, ["Stunned"]);
 }
 
-section("Moving to a stage");
+section("Moving to a stage: the values");
 {
-  const pc = { _id: "pc", name: "Valeros", recordType: "characters" };
-  const { list } = ctx.getAfflictionExposure([], centipede, 2);
-  const id = list[0]._id;
-  const two = ctx.getAfflictionStageValues(pc, list, id, 2);
-  assert("stage 2, applied, its interval", [two.list[0].data.stage, two.list[0].data.appliedStage, two.list[0].data.roundsLeft], [2, 2, 1]);
-  assertIncludes("the card", two.message, "**Valeros: Giant Centipede Venom, stage 2**");
-  assertIncludes("its damage button", two.message, 'executeDamageMacro("1d4 poison", "standard", "Giant Centipede Venom: 1d4 poison")');
-  assert("off-guard gained", two.changes.gain, [{ name: "Off-Guard", value: 1 }]);
-  const over = ctx.getAfflictionStageValues(pc, two.list, id, 5);
-  assertIncludes("past the highest: the highest again", over.message, "stage 3 (the highest, again)");
-  const gone = ctx.getAfflictionStageValues(pc, two.list, id, 0);
-  assert("cured: removed", gone.list, []);
-  assertIncludes("... posted", gone.message, "**Valeros** recovers from **Giant Centipede Venom**.");
-  assert("... its conditions go", gone.changes.remove, [{ name: "Off-Guard", value: 1 }]);
-  const values = ctx.getAfflictionListValues(two.list);
-  assert("token data only, no sheet field", Object.keys(values), ["data.afflictions"]);
+  const pc = token([["Curare", 1]]);
+  const states = ctx.getAfflictionExposure([], 0, CURARE, 1).states;
+  const two = ctx.getAfflictionStageValues(pc, states, "Curare", 1, 2);
+  assert("stacks 1 to 2, applied, its interval in rounds", [two.stacks, two.states[0].appliedStage, two.states[0].roundsLeft], [{ name: "Curare", from: 1, to: 2 }, 2, 10]);
+  assertIncludes("the card", two.message, "**Valeros: Curare, stage 2**");
+  assertIncludes("its damage", two.message, 'executeDamageMacro("3d6 poison", "standard", "Curare: 3d6 poison")');
+  const three = ctx.getAfflictionStageValues(pc, two.states, "Curare", 2, 5);
+  assertIncludes("past the highest: again", three.message, "stage 3 (the highest, again)");
+  assertIncludes("the stage's note for the GM", three.message, "[gm]If the victim fails while at Stage 3");
+  const gone = ctx.getAfflictionStageValues(pc, two.states, "Curare", 2, 0);
+  assert("cured: the state and the effect go", [gone.states, gone.stacks], [[], { name: "Curare", from: 2, to: 0 }]);
+  assertIncludes("... posted", gone.message, "**Valeros** recovers from **Curare**.");
 }
 
-section("Applying: one write, removals before additions");
+section("The effect's duration across stacks");
+{
+  assert("a new effect: the maximum duration", ctx.getAfflictionStackDuration(token(), "Curare", CURARE), { value: 6, unit: "rounds" });
+  const ticking = token([["Curare", 1]]);
+  ticking.effectDurations["e-Curare"] = 4;
+  ticking.effectDurationUnits["e-Curare"] = "rounds";
+  assert("on the creature: what's left, with its unit", ctx.getAfflictionStackDuration(ticking, "Curare", CURARE), { value: 4, unit: "rounds" });
+  assert("on it with no duration: none", ctx.getAfflictionStackDuration(token([["Curare", 1]]), "Curare", CURARE), undefined);
+}
+
+section("Applying: removals first, then conditions, then the stacks one at a time");
 {
   const calls = [];
-  ctx.api.setValuesOnTokenById = (id, type, values) => calls.push(["write", id, Object.keys(values)]);
-  ctx.api.deductEffectById = (effectId, token, cb) => {
+  ctx.api.setValuesOnTokenById = (id, type, values) => calls.push(["write", Object.keys(values)]);
+  ctx.api.deductEffectById = (effectId, t, cb) => {
     calls.push(["deduct", effectId]);
     cb();
   };
-  ctx.api.addEffects = (names) => calls.push(["add", names]);
+  ctx.api.addEffects = (names) => calls.push(["addEffects", names]);
+  ctx.api.addEffect = (name, t, duration) => calls.push(["addEffect", name, duration]);
   ctx.__state.messages.length = 0;
-  const { list } = ctx.getAfflictionExposure([], centipede, 2);
-  const id = list[0]._id;
-  const pc = {
-    _id: "pc", name: "Valeros", recordType: "characters",
-    effects: [{ _id: "og", name: "Off-Guard" }], effectIds: ["og"], effectValues: {},
-    data: { afflictions: list.map((e) => ({ ...e, data: { ...e.data, appliedStage: 2 } })) },
-  };
-  ctx.setAfflictionStage(pc, id, 3);
-  assert("the list once, off-guard off, then clumsy and fatigued on", calls, [
-    ["write", "pc", ["data.afflictions"]],
-    ["deduct", "og"],
-    ["add", ["Clumsy", "Fatigued"]],
+  const up = token([["Curare", 1], ["Clumsy", 1], ["Enfeebled", 1]], ctx.getAfflictionExposure([], 0, CURARE, 1).states.map((s) => ({ ...s, appliedStage: 1 })));
+  up.effectDurations["e-Curare"] = 5;
+  up.effectDurationUnits["e-Curare"] = "rounds";
+  ctx.setAfflictionStage(up, "Curare", 3);
+  assert("one state write, the conditions in one call, then two stacks keeping the duration", calls, [
+    ["write", ["data.afflictionState"]],
+    ["addEffects", ["Clumsy", "Enfeebled", "Slowed"]],
+    ["addEffect", "Curare", { value: 5, unit: "rounds" }],
+    ["addEffect", "Curare", { value: 5, unit: "rounds" }],
   ]);
-  assertIncludes("the card posted", ctx.__state.messages[0], "stage 3");
+  calls.length = 0;
+  const down = token([["Curare", 3], ["Clumsy", 2], ["Enfeebled", 2], ["Slowed", 1]], ctx.getAfflictionExposure([], 0, CURARE, 1).states.map((s) => ({ ...s, appliedStage: 3 })));
+  ctx.setAfflictionStage(down, "Curare", 0);
+  assert("cured: the effect's stacks, then each condition, off", calls, [
+    ["write", ["data.afflictionState"]],
+    ["deduct", "e-Curare"], ["deduct", "e-Curare"], ["deduct", "e-Curare"],
+    ["deduct", "e-Clumsy"], ["deduct", "e-Clumsy"],
+    ["deduct", "e-Enfeebled"], ["deduct", "e-Enfeebled"],
+    ["deduct", "e-Slowed"],
+  ]);
 }
 
-section("Turn end: the countdown, once a round");
+section("Afflicted with an onset: the stage on the effect, conditions later");
 {
-  const pc = { _id: "pc", name: "Valeros", recordType: "characters" };
-  const { list } = ctx.getAfflictionExposure([], adder, 1);
-  const applied = ctx.getAfflictionStageValues(pc, list, list[0]._id, 1).list;
-  const r1 = ctx.getAfflictionTurnEnd(pc, applied, 1);
-  assert("the interval's over", [r1.list[0].data.roundsLeft, r1.list[0].data.elapsed], [0, 1]);
-  assertIncludes("a Save button", r1.messages[0], 'rollAfflictionSave(token, "' + list[0]._id + '")');
-  const again = ctx.getAfflictionTurnEnd(pc, r1.list, 1);
-  assert("the same round again: nothing", [again.changed, again.messages], [false, []]);
-  let state = r1.list;
-  state = ctx.getAfflictionTurnEnd(pc, state, 2).list;
-  const r3 = ctx.getAfflictionTurnEnd(pc, state, 3);
-  assertIncludes("the maximum duration: End", r3.messages[0], "reaches its maximum duration (3 rounds) and ends.");
-  assertIncludes("... its button", r3.messages[0], "setAfflictionStage(token");
-  assert("... once", ctx.getAfflictionTurnEnd(pc, r3.list, 4).messages, []);
-
-  const timed = ctx.getAfflictionExposure([], { ...adder, onset: ctx.parseAfflictionTime("2 rounds") }, 1).list;
-  const o1 = ctx.getAfflictionTurnEnd(pc, timed, 1);
-  assert("onset counting", [o1.list[0].data.onsetLeft, o1.messages], [1, []]);
-  assertIncludes("onset over: Apply", ctx.getAfflictionTurnEnd(pc, o1.list, 2).messages[0], "onset is over: stage 1.");
-  const days = ctx.getAfflictionExposure([], fever, 1).list;
-  assert("a day's onset: not counted", ctx.getAfflictionTurnEnd(pc, days, 1).messages, []);
-}
-
-section("The stage save's Apply: from the affliction as it is now");
-{
-  const writes = [];
-  ctx.api.setValuesOnTokenById = (id, type, values) => writes.push(values);
-  ctx.api.addEffects = () => {};
-  const pc = { _id: "pc", name: "Valeros", recordType: "characters", effects: [], effectIds: [] };
-  const { list } = ctx.getAfflictionExposure([], adder, 1);
-  pc.data = { afflictions: ctx.getAfflictionStageValues(pc, list, list[0]._id, 1).list };
-  ctx.api.getToken = () => pc;
+  const calls = [];
+  ctx.api.setValuesOnTokenById = (id, type, values) => calls.push(["write", values["data.afflictionState"].map((s) => [s.name, s.appliedStage])]);
+  ctx.api.addEffect = (name, t, duration) => calls.push(["addEffect", name, duration]);
+  ctx.api.getToken = () => null;
+  ctx.api.getOtherTokens = () => [];
   ctx.__state.messages.length = 0;
-  ctx.resolveAfflictionSave(pc, list[0]._id, 0);
-  assert("failure: stage 2", writes[0]["data.afflictions"][0].data.stage, 2);
-  writes.length = 0;
-  ctx.resolveAfflictionSave(pc, list[0]._id, 2);
-  assert("critical success from 1: recovered", writes[0]["data.afflictions"], []);
+  ctx.afflictCreature(token(), FEVER, 2);
+  assert("state, then two stacks, no conditions", calls, [["write", [["Filth Fever", 0]]], ["addEffect", "Filth Fever", undefined], ["addEffect", "Filth Fever", undefined]]);
+  assertIncludes("posted", ctx.__state.messages[0], "Filth Fever: stage 2 after its onset (1 day).");
 }
 
-section("Rolling a stage save: the treatment bonus once");
+section("Turn end: the countdown, once a round; a gone effect gets Clear");
 {
-  const writes = [];
-  let meta = null;
-  let mods = null;
-  ctx.api.setValuesOnTokenById = (id, type, values) => writes.push(values);
-  ctx.api.promptRollForToken = (rec, name, dice, modifiers, metadata) => {
-    mods = modifiers;
-    meta = metadata;
+  const states = ctx.getAfflictionExposure([], 0, CURARE, 1).states.map((s) => ({ ...s, appliedStage: 1, roundsLeft: 1 }));
+  const pc = token([["Curare", 1]], states);
+  const r1 = ctx.getAfflictionTurnEnd(pc, states, 1);
+  assertIncludes("the interval's over: Save", r1.messages[0], 'rollAfflictionSave(token, "Curare")');
+  assert("the same round again: nothing", ctx.getAfflictionTurnEnd(pc, r1.states, 1).changed, false);
+  const gone = token([], states);
+  const g1 = ctx.getAfflictionTurnEnd(gone, states, 2);
+  assertIncludes("the effect gone: Clear", g1.messages[0], 'clearAfflictionState(token, "Curare")');
+  assert("... once", ctx.getAfflictionTurnEnd(gone, g1.states, 3).messages, []);
+  const onset = ctx.getAfflictionExposure([], 0, { ...CURARE, onset: { value: 2, unit: "round" } }, 1).states;
+  const o1 = ctx.getAfflictionTurnEnd(token([["Curare", 1]], onset), onset, 1);
+  const o2 = ctx.getAfflictionTurnEnd(token([["Curare", 1]], onset), o1.states, 2);
+  assertIncludes("the onset over: Apply", o2.messages[0], "onset is over: stage 1.");
+}
+
+section("Clear: the stage's conditions off, lasting ones kept");
+{
+  const calls = [];
+  ctx.api.setValuesOnTokenById = (id, type, values) => calls.push(["write", values["data.afflictionState"]]);
+  ctx.api.deductEffectById = (effectId, t, cb) => {
+    calls.push(["deduct", effectId]);
+    cb();
   };
-  const pc = { _id: "pc", name: "Valeros", recordType: "characters", data: { fortitudeMod: 7 } };
-  const { list } = ctx.getAfflictionExposure([], adder, 2);
-  pc.data.afflictions = list.map((e) => ({ ...e, data: { ...e.data, treatBonus: 2 } }));
-  ctx.rollAfflictionSave(pc, list[0]._id);
-  assert("the save's affliction", [meta.affliction.mode, meta.affliction.stage, meta.dc], ["stage", 2, 18]);
-  assert("the bonus as a modifier", mods.some((m) => m.type === "circumstance" && m.value === 2), true);
-  assert("... kept until the result is applied (a cancelled roll keeps it)", writes, []);
-
   ctx.api.addEffects = () => {};
-  ctx.api.getToken = () => pc;
-  ctx.resolveAfflictionSave(pc, list[0]._id, 1);
-  assert("... cleared when it is", writes[0]["data.afflictions"][0].data.treatBonus, 0);
-}
-
-section("A virulent success that doesn't reach a stage");
-{
-  const writes = [];
-  ctx.api.setValuesOnTokenById = (id, type, values) => writes.push(values);
-  const pc = { _id: "pc", name: "Valeros", recordType: "characters", effects: [], effectIds: [] };
-  const virulentAdder = { ...adder, virulent: true };
-  const { list } = ctx.getAfflictionExposure([], virulentAdder, 2);
-  pc.data = { afflictions: ctx.getAfflictionStageValues(pc, list, list[0]._id, 2).list.map((e) => ({ ...e, data: { ...e.data, roundsLeft: 0 } })) };
-  ctx.api.getToken = () => pc;
   ctx.__state.messages.length = 0;
-  ctx.resolveAfflictionSave(pc, list[0]._id, 1);
-  const entry = writes[0]["data.afflictions"][0].data;
-  assert("the count and the next interval", [entry.stage, entry.successes, entry.roundsLeft], [2, 1, 1]);
-  assert("no stage card or damage", ctx.__state.messages.some((m) => m.includes("executeDamageMacro")), false);
-  assertIncludes("a short line", ctx.__state.messages[0], "stays at stage 2 (virulent: 1 of 2 successes)");
+  const pc = token([["Enfeebled", 2], ["Drained", 1]], [{ ...ctx.getAfflictionExposure([], 0, FEVER, 1).states[0], appliedStage: 3 }]);
+  ctx.api.getToken = () => pc;
+  ctx.clearAfflictionState(pc, "Filth Fever");
+  assert("state gone, enfeebled off", calls, [["write", []], ["deduct", "e-Enfeebled"], ["deduct", "e-Enfeebled"]]);
+  assertIncludes("drained kept", ctx.__state.messages[0], "kept: Drained");
 }
 
-section("Stunned is kept on a stage change");
+section("Rolling and resolving a stage save");
 {
-  const changes = ctx.getAfflictionConditionChanges([{ name: "Stunned", value: 1 }], []);
-  assert("kept", [changes.remove, changes.kept], [[], ["Stunned"]]);
+  let meta = null;
+  ctx.api.promptRollForToken = (rec, name, dice, modifiers, metadata) => (meta = metadata);
+  const states = ctx.getAfflictionExposure([], 0, CURARE, 1).states.map((s) => ({ ...s, appliedStage: 2 }));
+  ctx.rollAfflictionSave(token([["Curare", 2]], states, { data: { afflictionState: states, fortitudeMod: 7 } }), "Curare");
+  assert("the save's affliction from the effect's stacks", [meta.affliction.mode, meta.affliction.stage, meta.dc], ["stage", 2, 25]);
+  const pox = ctx.getAfflictionExposure([], 0, { ...GOBLIN_POX, castDC: 19 }, 1).states;
+  ctx.rollAfflictionSave(token([["Goblin Pox", 1]], pox, { data: { afflictionState: pox, fortitudeMod: 3 } }), "Goblin Pox");
+  assert("a spell's: the caster's DC", meta.dc, 19);
+
+  const calls = [];
+  ctx.api.setValuesOnTokenById = (id, type, values) => calls.push(values["data.afflictionState"]);
+  ctx.api.removeEffectById = (effectId) => calls.push(["remove", effectId]);
+  ctx.api.addEffect = () => {};
+  ctx.api.addEffects = () => {};
+  ctx.__state.messages.length = 0;
+  const fever = [{ ...ctx.getAfflictionExposure([], 0, FEVER, 1).states[0], appliedStage: 2 }];
+  const sick = token([["Filth Fever", 2], ["Enfeebled", 1], ["Treat Disease", 1]], fever);
+  ctx.api.getToken = () => sick;
+  ctx.resolveAfflictionSave(sick, "Filth Fever", 1);
+  assert("virulent lone success: the count and next interval only", [calls[0][0].successes, calls[0][0].roundsLeft], [1, 0]);
+  assert("no stage card", ctx.__state.messages.some((m) => m.includes("stage 2**")), false);
+  assert("the treatment used up", calls[1], ["remove", "e-Treat Disease"]);
 }
 
 section("Treat Poison and Treat Disease");
 {
   const lines = ctx.getAfflictionTreatmentLines({ action: "Treat Poison" }, 2);
-  assertIncludes("critical success: +4", lines[0], "+4 circumstance bonus to the patient's next save against its poison");
-  assertIncludes("the button", lines[1], 'applyAfflictionTreatment("poison", 4)');
-  assertIncludes("critical failure: -2", ctx.getAfflictionTreatmentLines({ action: "Treat Disease" }, -1)[0], "-2 circumstance penalty");
+  assertIncludes("critical success: +4", lines[0], "+4 to the patient's next save against its poison");
+  assertIncludes("the Player Core effect", lines[1], '```Apply_Treat_Poison\napplyEffect("Treat Poison", 1);');
+  assertIncludes("critical failure: -2", ctx.getAfflictionTreatmentLines({ action: "Treat Disease" }, -1)[0], "-2");
   assert("failure: no bonus", ctx.getAfflictionTreatmentLines({ action: "Treat Disease" }, 0), ["**Treat Disease:** no bonus."]);
   assert("another action: nothing", ctx.getAfflictionTreatmentLines({ action: "Treat Wounds" }, 1), []);
-
-  const writes = [];
-  ctx.api.setValuesOnTokenById = (id, type, values) => writes.push(values);
-  const { list } = ctx.getAfflictionExposure([], adder, 1);
-  const fevered = ctx.getAfflictionExposure(list, fever, 1).list;
-  ctx.api.getSelectedOrDroppedToken = () => [{ _id: "pc", name: "Valeros", recordType: "characters", data: { afflictions: fevered } }];
-  ctx.applyAfflictionTreatment("poison", 2);
-  assert("only the poison", writes[0]["data.afflictions"].map((e) => e.data.treatBonus), [2, 0]);
-  ctx.api.getSelectedOrDroppedToken = () => [];
 }
 
 section("The hooks");
@@ -303,6 +282,7 @@ section("The hooks");
   assertIncludes("onTurnEnd.js", read("onTurnEnd.js"), "runAfflictionTurnEnd(token");
   assertIncludes("useInventoryItem", read("common.js"), "markdownDescription += getAfflictionExposeButton(item);");
   assertIncludes("useAction", read("common.js"), "${getAfflictionExposeButton(action)}");
+  assertIncludes("a spell's card, at the caster's DC", read("spells.js"), "getAfflictionExposeButton(spell, {");
 }
 
 summary();

@@ -1,280 +1,194 @@
 // Afflictions (roadmap B4, Player Core pg. 430): poisons, diseases and
-// curses with a save, an onset, stages and their intervals.
+// curses, as Sean laid them out on #64.
 //
-//   - The source: a poison item's or a creature's ability description, as
-//     the data prints it (parseAffliction): "Saving Throw" with its save
-//     macro, "Onset", "Maximum Duration", and "Stage N" lines whose damage
-//     links and condition links are the stage's effects, with the interval
-//     in parentheses. Using the item or ability adds an Expose button
-//     (getAfflictionExposeButton), which rolls the initial save.
-//   - The creature keeps its afflictions in data.afflictions, token data
-//     with no sheet UI: the stage, the stage the conditions are for
-//     (appliedStage), the onset and interval left in rounds, and the rounds
-//     of its maximum duration gone.
+//   - The source: the record that delivers it (a poison item, a weapon, a
+//     creature ability, a spell) has data.affliction, filled once by
+//     tools/afflictions/fill-afflictions.mjs from its description: the save,
+//     the DC ("spell" for the caster's), onset, maximum duration, and each
+//     stage's damage, conditions and interval. Nothing is parsed during play;
+//     a record without data.affliction has no Expose button.
+//   - On a creature the affliction is its own stackable effect, named after
+//     it (the script creates one per affliction): the stacks are the stage,
+//     its duration is the maximum duration, so Realm counts it down, and
+//     removing it from the effects strip ends it.
+//   - What an effect can't hold is in data.afflictionState on the token, with
+//     no sheet UI: the affliction, the stage whose conditions are on the
+//     creature (appliedStage), the onset and interval left in rounds, the
+//     virulent successes, and the round last counted.
 //   - Save results (save.js, getAfflictionSaveLines) say what the degree does
 //     and have the button that does it, on the saver's token.
-//   - The creature's turn end counts down onsets, intervals and maximum
-//     durations kept in rounds or minutes, and posts the Save, onset or End
-//     button; longer ones are left to the GM.
+//   - The creature's turn end counts down onsets and intervals kept in rounds
+//     or minutes, posting the Apply or Save button; longer ones are the GM's.
+//     An affliction whose effect is gone (removed, or its duration over) gets
+//     a button that clears its stage's conditions.
 //   - A stage change swaps the stage's conditions: the old stage's go, unless
 //     they end by their own rule (drained, doomed, frightened, sickened,
 //     fatigued, wounded, stunned), and the new stage's damage gets a button.
+//   - Treat Poison and Treat Disease apply the Player Core effects (their
+//     save bonus has the poison or disease predicate), removed after the save
+//     they apply to.
 //
-// Applying a poison to a weapon isn't tracked: the GM posts Expose when the
-// Strike hits.
+// The affliction effect's stacks are added one api.addEffect at a time with
+// the remaining duration: api.addEffects ignores durations, and adding a
+// stack without one drops the duration's unit (checked live).
 
 // Rounds in each unit; rounds and minutes are counted at turn ends
-const AFFLICTION_UNIT_ROUNDS = { round: 1, minute: 10, hour: 600, day: 14400, week: 100800 };
-const AFFLICTION_COUNTED_UNITS = new Set(["round", "minute"]);
+const AFFLICTION_UNIT_ROUNDS = { round: 1, minute: 10 };
+
+// The effect duration units for a maximum duration
+const AFFLICTION_DURATION_UNITS = { round: "rounds", minute: "minutes", hour: "hours", day: "days" };
 
 // Conditions with their own ending, kept when the stage changes (Player
 // Core pg. 430: they last their normal duration, and one that changes or
 // ends on its own still does, as stunned counts down)
 const AFFLICTION_LASTING_CONDITIONS = new Set(["drained", "doomed", "frightened", "sickened", "fatigued", "wounded", "stunned"]);
 
-// Condition names read from a stage's text when it has no effect links
-const AFFLICTION_TEXT_CONDITIONS = [
-  "blinded", "clumsy", "confused", "dazzled", "deafened", "doomed", "drained",
-  "enfeebled", "fascinated", "fatigued", "fleeing", "frightened", "immobilized",
-  "off-guard", "paralyzed", "petrified", "prone", "sickened", "slowed",
-  "stunned", "stupefied", "unconscious",
-];
+// The Player Core effects Treat Poison and Treat Disease apply
+const AFFLICTION_TREATMENT_EFFECTS = { poison: "Treat Poison", disease: "Treat Disease" };
 
-// ---------------------------------------------------------------- Parsing
+// ---------------------------------------------------------------- Times
 
-// "1 round", "2 rounds", "10 minutes", "1 day": { value, unit, rounds,
-// counted }, or null (dice, "varies")
-function parseAfflictionTime(text) {
-  // Not a dice duration ("1d4 hours"): the GM rolls that
-  const match = `${text || ""}`.toLowerCase().match(/(^|[^d\d])(\d+)\s*(round|minute|hour|day|week)s?/);
-  if (!match) return null;
-  const value = parseInt(match[2], 10);
-  const unit = match[3];
-  return { value, unit, rounds: value * AFFLICTION_UNIT_ROUNDS[unit], counted: AFFLICTION_COUNTED_UNITS.has(unit) };
-}
-
+// A time from data.affliction: { value, unit } or { dice, unit }
 function describeAfflictionTime(time) {
   if (!time) return "";
+  if (time.dice) return `${time.dice} ${time.unit}s`;
   return `${time.value} ${time.unit}${time.value === 1 ? "" : "s"}`;
 }
 
-function unescapeAfflictionHtml(text) {
-  return `${text || ""}`
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&");
+// The rounds a time is counted for at turn ends, or 0 (hours and longer, and
+// dice, are the GM's)
+function getAfflictionRounds(time) {
+  if (!time || time.dice || !AFFLICTION_UNIT_ROUNDS[time.unit]) return 0;
+  return (parseInt(time.value, 10) || 0) * AFFLICTION_UNIT_ROUNDS[time.unit];
 }
 
-// The record links in a paragraph: { link, text }
-function getAfflictionLinks(html) {
-  const links = [];
-  const re = /<record-link\s+recordlink="([^"]*)"[^>]*>([\s\S]*?)<\/record-link>/g;
-  let match;
-  while ((match = re.exec(html))) {
-    try {
-      links.push({ link: JSON.parse(unescapeAfflictionHtml(match[1])), text: match[2] });
-    } catch (e) {
-      // A link that isn't JSON is only text
-    }
-  }
-  return links;
+// The effect duration for a maximum duration, or undefined (none, or dice)
+function getAfflictionEffectDuration(time) {
+  if (!time || time.dice) return undefined;
+  if (time.unit === "week") return { value: (parseInt(time.value, 10) || 0) * 7, unit: "days" };
+  const unit = AFFLICTION_DURATION_UNITS[time.unit];
+  return unit ? { value: parseInt(time.value, 10) || 0, unit } : undefined;
 }
 
-function stripAfflictionHtml(html) {
-  return unescapeAfflictionHtml(`${html || ""}`.replace(/<record-link[^>]*>([\s\S]*?)<\/record-link>/g, "$1").replace(/<[^>]+>/g, ""))
-    .replace(/\s+/g, " ")
-    .trim();
+// ---------------------------------------------------------------- The source
+
+// The effect's name: the affliction's, without a monster ability's
+// "(Graveknight) " prefix (as the script names it)
+function getAfflictionEffectName(name) {
+  return `${name || ""}`.replace(/^\([^)]*\)\s*/, "").trim();
 }
 
-// "Clumsy 1" -> { name: "Clumsy", value: 1 }; "Off-Guard" -> value 1
-function splitConditionValue(text) {
-  const match = `${text || ""}`.trim().match(/^(.*?)\s+(\d+)$/);
-  return match ? { name: match[1].trim(), value: parseInt(match[2], 10) } : { name: `${text || ""}`.trim(), value: 1 };
-}
-
-function capitalizeCondition(name) {
-  return `${name}`.split("-").map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join("-");
-}
-
-// A stage's effects: damage from its damage macros, conditions from its
-// effect links, or from the text when it has none
-function parseAfflictionStage(html) {
-  const links = getAfflictionLinks(html);
-  const damage = [];
-  const conditions = [];
-  links.forEach(({ link }) => {
-    const code = link?.value?.code || "";
-    const damageMatch = code.match(/executeDamageMacro\(\s*'([^']+)'/);
-    if (damageMatch) damage.push(damageMatch[1]);
-    if (link?.type === "effects" && link?.value?.name) {
-      conditions.push(splitConditionValue(link.value.name));
-    }
-  });
-  const text = stripAfflictionHtml(html).replace(/^Stage \d+\s*/i, "");
-  if (!conditions.length) {
-    const lower = text.toLowerCase().replace(/flat-footed/g, "off-guard");
-    AFFLICTION_TEXT_CONDITIONS.forEach((name) => {
-      const match = lower.match(new RegExp(`\\b${name}(?:\\s+(\\d+))?\\b`));
-      if (match) conditions.push({ name: capitalizeCondition(name), value: match[1] ? parseInt(match[1], 10) : 1 });
-    });
-  }
-  if (!damage.length) {
-    const re = /(\d+d\d+(?:\s*[+-]\s*\d+)?)\s+(persistent\s+)?([a-z]+)\s+damage/gi;
-    let match;
-    while ((match = re.exec(text))) damage.push(`${match[1].replace(/\s+/g, "")} ${match[2] ? "persistent " : ""}${match[3].toLowerCase()}`);
-  }
-  const intervals = text.match(/\(([^()]*)\)\s*\.?\s*$/);
-  return { text, damage, conditions, interval: parseAfflictionTime(intervals ? intervals[1] : "") };
-}
-
-// The affliction in a description, or null: { name, kind, level, traits,
-// virulent, save, dc, onset, maxDuration, stages }
-function parseAffliction(html, { name = "", traits = [], level = 0 } = {}) {
-  const paragraphs = `${html || ""}`.split(/<\/p>|<br\s*\/?>|\n/i);
-  const affliction = { name, level: parseInt(level, 10) || 0, save: null, dc: null, onset: null, maxDuration: null, stages: [] };
-  paragraphs.forEach((paragraph) => {
-    const text = stripAfflictionHtml(paragraph);
-    if (/^Saving Throw/i.test(text)) {
-      const code = getAfflictionLinks(paragraph).map(({ link }) => link?.value?.code || "").find((c) => /rollSavingThrow/.test(c)) || "";
-      const fromCode = code.match(/rollSavingThrow\(\s*'(\w+)'\s*,\s*(\d+)/);
-      const fromText = text.match(/DC\s*(\d+)\s*(Fortitude|Reflex|Will)|(Fortitude|Reflex|Will)\D*DC\s*(\d+)/i);
-      if (fromCode) {
-        affliction.save = fromCode[1].toLowerCase();
-        affliction.dc = parseInt(fromCode[2], 10);
-      } else if (fromText) {
-        affliction.save = (fromText[2] || fromText[3]).toLowerCase();
-        affliction.dc = parseInt(fromText[1] || fromText[4], 10);
-      }
-    } else if (/^Onset/i.test(text)) {
-      affliction.onset = parseAfflictionTime(text.replace(/^Onset/i, ""));
-    } else if (/^Maximum Duration/i.test(text)) {
-      affliction.maxDuration = parseAfflictionTime(text.replace(/^Maximum Duration/i, ""));
-    } else if (/^Stage \d+/i.test(text)) {
-      affliction.stages.push(parseAfflictionStage(paragraph));
-    }
-  });
-  if (!affliction.save || !affliction.dc || !affliction.stages.length) return null;
-  const lowerTraits = (traits || []).map((t) => `${t}`.toLowerCase());
-  affliction.kind = ["poison", "disease", "curse"].find((k) => lowerTraits.includes(k)) || "affliction";
-  affliction.virulent = lowerTraits.includes("virulent");
-  affliction.traits = lowerTraits.filter((t) => ["poison", "disease", "curse", "virulent", "magical"].includes(t));
-  return affliction;
-}
-
-// An item's or an ability's affliction
+// A record's affliction (data.affliction), or null: it needs a save, a DC
+// (a number, or "spell") and a stage
 function getRecordAffliction(source) {
-  const data = source?.data || {};
-  return parseAffliction(data.description, { name: source?.name || "", traits: data.traits || [], level: data.level });
+  const affliction = source?.data?.affliction;
+  if (!affliction?.save || affliction.dc === null || affliction.dc === undefined || !affliction.stages?.length) return null;
+  return { ...affliction, name: getAfflictionEffectName(affliction.name || source.name) };
+}
+
+function getAfflictionTraits(affliction) {
+  return [affliction.kind, affliction.virulent && "virulent"].filter(Boolean);
 }
 
 // ---------------------------------------------------------------- Exposure
 
-// The Expose button for an item's or ability's card ("" without one)
-function getAfflictionExposeButton(source) {
+// The Expose button for an item's, ability's or spell's card ("" without
+// one). A spell's DC is the caster's (options.dc).
+function getAfflictionExposeButton(source, { dc } = {}) {
   const affliction = getRecordAffliction(source);
   if (!affliction) return "";
+  const saveDC = affliction.dc === "spell" ? dc : affliction.dc;
+  if (!saveDC) return "";
   const label = `Expose_to_${affliction.name.replace(/[^\w]+/g, "_")}`;
-  return `\n\`\`\`${label}\nexposeToAffliction(${JSON.stringify(affliction)});\n\`\`\``;
+  return `\n\`\`\`${label}\nexposeToAffliction(${JSON.stringify(affliction)}, ${saveDC});\n\`\`\``;
 }
 
 // The initial save, for the selected tokens
-function exposeToAffliction(affliction) {
-  rollSavingThrow(affliction.save, affliction.dc, {
-    traits: affliction.traits,
+function exposeToAffliction(affliction, dc) {
+  rollSavingThrow(affliction.save, dc, {
+    traits: getAfflictionTraits(affliction),
     affliction: { mode: "initial", affliction },
   });
 }
 
-// The creature's afflictions (list rows: { _id, name, data })
-function getCreatureAfflictions(creature) {
-  const list = creature?.data?.afflictions || creature?.record?.data?.afflictions;
+// ---------------------------------------------------------------- State
+
+// The token's affliction state: [{ name, affliction, appliedStage,
+// onsetLeft, roundsLeft, successes, tickRound }]
+function getAfflictionStates(creature) {
+  const list = creature?.data?.afflictionState || creature?.record?.data?.afflictionState;
   return Array.isArray(list) ? list : [];
 }
 
-// The values that write the list
-function getAfflictionListValues(list) {
-  return { "data.afflictions": list };
+function writeAfflictionStates(creature, list) {
+  api.setValuesOnTokenById(creature._id, creature.recordType || "tokens", { "data.afflictionState": list });
 }
 
-function writeAfflictions(creature, list) {
-  api.setValuesOnTokenById(creature._id, creature.recordType || "tokens", getAfflictionListValues(list));
+// The stage: the affliction effect's stacks
+function getAfflictionStage(creature, name) {
+  return getTokenCondition(creature, name)?.value || 0;
 }
 
-function newAfflictionEntry(affliction, stage) {
-  const onsetLeft = affliction.onset?.counted ? affliction.onset.rounds : 0;
+function newAfflictionState(affliction) {
   return {
-    _id: `aff-${toSlug(affliction.name)}-${Date.now().toString(36)}`,
     name: affliction.name,
-    recordType: "records",
-    identified: true,
-    data: {
-      ...affliction,
-      stage,
-      appliedStage: 0,
-      onsetLeft,
-      roundsLeft: 0,
-      elapsed: 0,
-      successes: 0,
-      treatBonus: 0,
-      tickRound: null,
-    },
+    affliction,
+    appliedStage: 0,
+    onsetLeft: getAfflictionRounds(affliction.onset),
+    roundsLeft: 0,
+    successes: 0,
+    tickRound: null,
   };
 }
 
-function findAfflictionEntry(list, affliction) {
-  const name = `${affliction?.name || ""}`.toLowerCase();
-  return list.find((entry) => `${entry.name || ""}`.toLowerCase() === name) || null;
-}
-
-// What a failed initial save does to the creature: a new affliction, a
-// poison's stage raised (re-exposure keeps its maximum duration and onset),
-// or nothing for a curse or disease it already has. { list, entry, apply,
-// line }
-function getAfflictionExposure(list, affliction, startStage) {
-  const existing = findAfflictionEntry(list, affliction);
-  if (existing) {
+// What a failed initial save does: a new affliction, a poison's stage raised
+// (re-exposure keeps its maximum duration and onset), or nothing for a curse
+// or disease it already has. Pure: { states, state, stage, apply, line }.
+function getAfflictionExposure(states, currentStage, affliction, startStage) {
+  const max = affliction.stages.length;
+  const existing = states.find((s) => s.name === affliction.name);
+  if (existing || currentStage > 0) {
     if (affliction.kind !== "poison") {
-      return { list, entry: existing, apply: false, line: `Already has ${affliction.name}: no effect.` };
+      return { states, state: existing, stage: currentStage, apply: false, line: `Already has ${affliction.name}: no effect.` };
     }
-    const max = existing.data.stages.length;
-    const stage = Math.min(max, existing.data.stage + startStage);
-    const entry = { ...existing, data: { ...existing.data, stage } };
-    const pending = existing.data.onsetLeft > 0 || (existing.data.onset && existing.data.appliedStage === 0);
+    const state = existing || newAfflictionState(affliction);
+    const stage = Math.min(max, currentStage + startStage);
+    const pending = state.onsetLeft > 0 || (state.affliction.onset && state.appliedStage === 0);
     return {
-      list: list.map((e) => (e._id === existing._id ? entry : e)),
-      entry,
+      states: existing ? states : [...states, state],
+      state,
+      stage,
       apply: !pending,
       line: `${affliction.name} again: stage ${stage}${pending ? " after its onset" : ""}.`,
     };
   }
-  const entry = newAfflictionEntry(affliction, startStage);
+  const state = newAfflictionState(affliction);
   const onset = !!affliction.onset;
+  const stage = Math.min(max, startStage);
   return {
-    list: [...list, entry],
-    entry,
+    states: [...states, state],
+    state,
+    stage,
     apply: !onset,
     line: onset
-      ? `${affliction.name}: stage ${startStage} after its onset (${describeAfflictionTime(affliction.onset)}).`
-      : `${affliction.name}: stage ${startStage}.`,
+      ? `${affliction.name}: stage ${stage} after its onset (${describeAfflictionTime(affliction.onset)}).`
+      : `${affliction.name}: stage ${stage}.`,
   };
 }
 
-// The Apply button of a failed initial save
-function afflictCreature(token, affliction, startStage) {
-  const fresh = findSceneToken(token._id) || token;
-  const { list, entry, apply, line } = getAfflictionExposure(getCreatureAfflictions(fresh), affliction, startStage);
-  if (!apply) {
-    writeAfflictions(fresh, list);
-    api.sendMessage(`**${getCreatureName(fresh)}:** ${line}`, undefined, [], [], fresh);
-    return;
-  }
-  setAfflictionStage(fresh, entry._id, entry.data.stage, { list, line });
-}
+// ---------------------------------------------------------------- Effects
 
-// ---------------------------------------------------------------- Stages
+// The affliction effect's stacks to a stage, keeping its duration: the
+// first application takes the maximum duration
+function getAfflictionStackDuration(creature, name, affliction) {
+  const condition = getTokenCondition(creature, name);
+  const id = condition?.effect?._id;
+  const left = id ? creature?.effectDurations?.[id] : undefined;
+  const unit = id ? creature?.effectDurationUnits?.[id] : undefined;
+  if (left !== undefined && unit) return { value: left, unit };
+  if (condition) return undefined;
+  return getAfflictionEffectDuration(affliction.maxDuration);
+}
 
 // The condition changes from one stage's conditions to another's: { gain,
 // add, remove, kept }. Conditions that end by their own rule are gained
@@ -307,25 +221,35 @@ function getAfflictionConditionChanges(fromConditions, toConditions) {
   return changes;
 }
 
-// Removes, then adds, in one chain, so the effect writes don't overlap
-function applyAfflictionConditions(token, changes) {
-  const names = [];
+// The effect writes for a stage change, in one chain: removals first (the
+// affliction's stacks, then conditions), then the conditions added in one
+// api.addEffects, then the affliction's stacks one api.addEffect at a time.
+// stacks: { name, from, to, duration }; removing it all when to is 0.
+function applyAfflictionEffects(token, changes, stacks) {
+  const conditionNames = [];
   let sent = false;
-  const addStacks = (name) => (stacks) => {
-    const list = Array(Math.max(0, stacks)).fill(name);
+  const addStacks = (name) => (count) => {
+    const list = Array(Math.max(0, count)).fill(name);
     if (!list.length) return;
     // A gain confirmed after the chain (immunity's Apply Anyway) adds alone
     if (sent) api.addEffects(list, token);
-    else names.push(...list);
+    else conditionNames.push(...list);
   };
   const removals = changes.remove
     .map(({ name, value }) => ({ condition: getTokenCondition(token, name), value }))
     .filter(({ condition }) => condition);
+  const affliction = stacks ? getTokenCondition(token, stacks.name) : null;
+  if (affliction && stacks.to < stacks.from) {
+    removals.unshift({ condition: affliction, value: stacks.to < 1 ? affliction.value : stacks.from - stacks.to });
+  }
   const finish = () => {
-    changes.add.forEach(({ name, value }) => names.push(...Array(value).fill(name)));
+    changes.add.forEach(({ name, value }) => conditionNames.push(...Array(value).fill(name)));
     changes.gain.forEach(({ name, value }) => addConditionGain(token, name, value, addStacks(name)));
     sent = true;
-    if (names.length) api.addEffects(names, token);
+    if (conditionNames.length) api.addEffects(conditionNames, token);
+    if (stacks && stacks.to > stacks.from) {
+      for (let i = stacks.from; i < stacks.to; i++) api.addEffect(stacks.name, token, stacks.duration);
+    }
   };
   const next = (index) => {
     if (index >= removals.length) {
@@ -345,70 +269,97 @@ function getAfflictionDamageButtons(name, stage) {
   });
 }
 
-// The values and message for moving an affliction to a stage (below 1:
-// cured). Pure: { list, changes, message }.
-function getAfflictionStageValues(creature, list, entryId, stage, line = "") {
-  const entry = list.find((e) => e._id === entryId);
-  if (!entry) return null;
-  const data = entry.data;
-  const max = data.stages.length;
+// The state, effect stacks and card for moving an affliction to a stage
+// (below 1: it ends). Pure: { states, changes, stacks, message }.
+function getAfflictionStageValues(creature, states, name, currentStage, stage, line = "") {
+  const state = states.find((s) => s.name === name);
+  if (!state) return null;
+  const stages = state.affliction.stages;
+  const max = stages.length;
   const target = Math.min(max, stage);
-  const fromConditions = data.appliedStage > 0 ? data.stages[data.appliedStage - 1]?.conditions : [];
+  const fromConditions = state.appliedStage > 0 ? stages[state.appliedStage - 1]?.conditions : [];
   const who = getCreatureName(creature);
-  const lines = [];
-  if (line) lines.push(line);
+  const lines = line ? [line] : [];
   if (target < 1) {
     const changes = getAfflictionConditionChanges(fromConditions, []);
-    lines.unshift(`**${who}** recovers from **${entry.name}**.`);
+    lines.unshift(`**${who}** recovers from **${name}**.`);
     if (changes.kept.length) lines.push(`[gm]Kept: ${changes.kept.join(", ")} (they end on their own).[/gm]`);
-    return { list: list.filter((e) => e._id !== entryId), changes, message: lines.join("\n") };
+    return {
+      states: states.filter((s) => s.name !== name),
+      changes,
+      stacks: { name, from: currentStage, to: 0 },
+      message: lines.join("\n"),
+    };
   }
-  const stageData = data.stages[target - 1];
+  const stageData = stages[target - 1];
   const changes = getAfflictionConditionChanges(fromConditions, stageData.conditions);
-  const interval = stageData.interval;
-  const updated = {
-    ...entry,
-    data: {
-      ...data,
-      stage: target,
-      appliedStage: target,
-      onsetLeft: 0,
-      roundsLeft: interval?.counted ? interval.rounds : 0,
-    },
-  };
-  lines.unshift(`**${who}: ${entry.name}, stage ${target}${stage > max ? " (the highest, again)" : ""}**`, stageData.text);
+  const updated = { ...state, appliedStage: target, onsetLeft: 0, roundsLeft: getAfflictionRounds(stageData.interval) };
+  lines.unshift(`**${who}: ${name}, stage ${target}${stage > max ? " (the highest, again)" : ""}**`, stageData.text);
+  if (stageData.note) lines.push(`[gm]${stageData.note}[/gm]`);
   if (changes.kept.length) lines.push(`[gm]Kept: ${changes.kept.join(", ")} (they end on their own).[/gm]`);
-  lines.push(...getAfflictionDamageButtons(entry.name, stageData));
-  return { list: list.map((e) => (e._id === entryId ? updated : e)), changes, message: lines.join("\n") };
+  lines.push(...getAfflictionDamageButtons(name, stageData));
+  return {
+    states: states.map((s) => (s.name === name ? updated : s)),
+    changes,
+    stacks: { name, from: currentStage, to: target },
+    message: lines.join("\n"),
+  };
 }
 
-// Moves an affliction to a stage: one write of the list, the conditions
-// swapped, and the stage's card with its damage
-function setAfflictionStage(creature, entryId, stage, { list, line } = {}) {
-  const values = getAfflictionStageValues(creature, list || getCreatureAfflictions(creature), entryId, stage, line);
+// Moves an affliction to a stage: one write of the state, the effects in one
+// chain, and the stage's card with its damage
+function setAfflictionStage(creature, name, stage, { states, line } = {}) {
+  const list = states || getAfflictionStates(creature);
+  const current = getAfflictionStage(creature, name);
+  const values = getAfflictionStageValues(creature, list, name, current, stage, line);
   if (!values) return;
-  writeAfflictions(creature, values.list);
-  applyAfflictionConditions(creature, values.changes);
+  const state = list.find((s) => s.name === name);
+  writeAfflictionStates(creature, values.states);
+  applyAfflictionEffects(creature, values.changes, { ...values.stacks, duration: getAfflictionStackDuration(creature, name, state.affliction) });
   api.sendMessage(values.message, undefined, [], [], creature);
+}
+
+// The Apply button of a failed initial save
+function afflictCreature(token, affliction, startStage) {
+  const fresh = findSceneToken(token._id) || token;
+  const current = getAfflictionStage(fresh, affliction.name);
+  const result = getAfflictionExposure(getAfflictionStates(fresh), current, affliction, startStage);
+  if (!result.state) {
+    api.sendMessage(`**${getCreatureName(fresh)}:** ${result.line}`, undefined, [], [], fresh);
+    return;
+  }
+  if (result.apply) {
+    setAfflictionStage(fresh, affliction.name, result.stage, { states: result.states, line: result.line });
+    return;
+  }
+  // The onset: the stage shows on the effect, its conditions wait
+  writeAfflictionStates(fresh, result.states);
+  if (result.stage > current) {
+    applyAfflictionEffects(fresh, { gain: [], add: [], remove: [], kept: [] }, {
+      name: affliction.name,
+      from: current,
+      to: result.stage,
+      duration: getAfflictionStackDuration(fresh, affliction.name, affliction),
+    });
+  }
+  api.sendMessage(`**${getCreatureName(fresh)}:** ${result.line}`, undefined, [], [], fresh);
 }
 
 // ---------------------------------------------------------------- Saves
 
-// A stage's save (an interval's end): its treatment bonus goes on this
-// save, and is cleared when the result is applied (resolveAfflictionSave),
-// so a cancelled roll keeps it
-function rollAfflictionSave(creature, entryId) {
-  const list = getCreatureAfflictions(creature);
-  const entry = list.find((e) => e._id === entryId);
-  if (!entry) return;
-  const data = entry.data;
-  const bonus = parseInt(data.treatBonus, 10) || 0;
-  rollSave(creature, data.save, data.dc, false, true, {
-    traits: data.traits,
-    affliction: { mode: "stage", entryId, name: entry.name, stage: data.stage, max: data.stages.length, virulent: !!data.virulent, successes: data.successes || 0 },
-    extraModifiers: bonus
-      ? [{ name: bonus > 0 ? "Treated (circumstance)" : "Treatment failed (circumstance)", type: "circumstance", value: bonus, active: true }]
-      : [],
+// A stage's save (an interval's end). A Treat Poison or Treat Disease effect
+// on the creature adds its bonus through its own rule; it's removed when the
+// result is applied, so a cancelled roll keeps it.
+function rollAfflictionSave(creature, name) {
+  const state = getAfflictionStates(creature).find((s) => s.name === name);
+  if (!state) return;
+  const affliction = state.affliction;
+  const stage = getAfflictionStage(creature, name) || state.appliedStage;
+  // A spell's affliction keeps the caster's DC from the initial save
+  const dc = affliction.dc === "spell" ? affliction.castDC : affliction.dc;
+  rollSave(creature, affliction.save, dc, false, true, {
+    traits: getAfflictionTraits(affliction),
+    affliction: { mode: "stage", name, stage, max: affliction.stages.length, virulent: !!affliction.virulent, successes: state.successes || 0 },
   });
 }
 
@@ -441,11 +392,13 @@ function getAfflictionSaveLines(metadata, degree) {
   const saver = { _id: metadata.saverTokenId, name: info.tokenName || "the creature" };
   if (info.mode === "initial") {
     const affliction = info.affliction;
-    if (degree >= 1) return [`**${affliction.name}:** unaffected.`];
+    // A spell's own results say what a success does (Goblin Pox: sickened)
+    if (degree >= 1) return [`**${affliction.name}:** not afflicted${affliction.dc === "spell" ? " (the spell says what a success does)" : ""}.`];
     const stage = Math.min(affliction.stages.length, degree === -1 ? 2 : 1);
+    const stored = affliction.dc === "spell" ? { ...affliction, castDC: metadata.dc } : affliction;
     return [
       `**${affliction.name}:** stage ${stage}${affliction.onset ? ` after its onset (${describeAfflictionTime(affliction.onset)})` : ""}.`,
-      getChatButton(`Apply_${affliction.name.replace(/[^\w]+/g, "_")}`, saver, `afflictCreature(token, ${JSON.stringify(affliction)}, ${stage})`),
+      getChatButton(`Apply_${affliction.name.replace(/[^\w]+/g, "_")}`, saver, `afflictCreature(token, ${JSON.stringify(stored)}, ${stage})`),
     ];
   }
   const change = getAfflictionSaveChange(info, degree);
@@ -456,124 +409,125 @@ function getAfflictionSaveLines(metadata, degree) {
       : `stage ${change.stage}${change.over ? " (the highest, again)" : ""}`;
   return [
     `**${info.name}:** ${text}.`,
-    getChatButton(`Apply_${info.name.replace(/[^\w]+/g, "_")}`, saver, `resolveAfflictionSave(token, ${JSON.stringify(info.entryId)}, ${degree})`),
+    getChatButton(`Apply_${info.name.replace(/[^\w]+/g, "_")}`, saver, `resolveAfflictionSave(token, ${JSON.stringify(info.name)}, ${degree})`),
   ];
 }
 
-// The stage save's Apply button: from the affliction as it is now
-function resolveAfflictionSave(token, entryId, degree) {
+// The treatment effect used up by a save
+function removeAfflictionTreatment(token, kind) {
+  const effect = AFFLICTION_TREATMENT_EFFECTS[kind];
+  const treatment = effect ? getTokenCondition(token, effect) : null;
+  if (treatment) api.removeEffectById(treatment.effect._id, token);
+}
+
+// The stage save's Apply button: from the affliction as it is now (the GM
+// may have changed the effect's stacks)
+function resolveAfflictionSave(token, name, degree) {
   const fresh = findSceneToken(token._id) || token;
-  const list = getCreatureAfflictions(fresh);
-  const entry = list.find((e) => e._id === entryId);
-  if (!entry) {
+  const states = getAfflictionStates(fresh);
+  const state = states.find((s) => s.name === name);
+  if (!state) {
     api.showNotification("That affliction is gone.", "yellow", "Afflictions");
     return;
   }
-  const change = getAfflictionSaveChange({ ...entry.data, max: entry.data.stages.length }, degree);
-  // The save's treatment bonus is used up now
-  const withSuccesses = list.map((e) => (e._id === entryId ? { ...e, data: { ...e.data, successes: change.successes, treatBonus: 0 } } : e));
-  if (change.stage === entry.data.stage && !change.over) {
+  const current = getAfflictionStage(fresh, name) || state.appliedStage;
+  const affliction = state.affliction;
+  const change = getAfflictionSaveChange({ stage: current, max: affliction.stages.length, virulent: affliction.virulent, successes: state.successes }, degree);
+  const withSuccesses = states.map((s) => (s.name === name ? { ...s, successes: change.successes } : s));
+  if (change.stage === current && !change.over) {
     // A virulent success that doesn't reach a stage: the count and the next
     // interval only, no stage card (damage comes on reaching a stage)
-    const interval = entry.data.stages[entry.data.stage - 1]?.interval;
-    writeAfflictions(fresh, withSuccesses.map((e) => (e._id === entryId ? { ...e, data: { ...e.data, roundsLeft: interval?.counted ? interval.rounds : 0 } } : e)));
-    api.sendMessage(`**${getCreatureName(fresh)}: ${entry.name}** stays at stage ${entry.data.stage} (virulent: ${change.successes} of 2 successes).`, undefined, [], [], fresh);
-    return;
+    const interval = affliction.stages[current - 1]?.interval;
+    writeAfflictionStates(fresh, withSuccesses.map((s) => (s.name === name ? { ...s, roundsLeft: getAfflictionRounds(interval) } : s)));
+    api.sendMessage(`**${getCreatureName(fresh)}: ${name}** stays at stage ${current} (virulent: ${change.successes} of 2 successes).`, undefined, [], [], fresh);
+  } else {
+    setAfflictionStage(fresh, name, change.stage, { states: withSuccesses });
   }
-  setAfflictionStage(fresh, entryId, change.stage, { list: withSuccesses });
+  removeAfflictionTreatment(fresh, affliction.kind);
 }
 
 // ---------------------------------------------------------------- Turn end
 
-// The turn end's countdown, once a round: onsets, intervals and maximum
-// durations kept in rounds. Pure: { list, changed, messages }.
-function getAfflictionTurnEnd(creature, list, round) {
+// The turn end's countdown, once a round: onsets and intervals kept in
+// rounds. An affliction whose effect is gone (removed, or its duration over)
+// gets one Clear button. Pure: { states, changed, messages }.
+function getAfflictionTurnEnd(creature, states, round) {
   const messages = [];
   let changed = false;
-  const next = list.map((entry) => {
-    const data = { ...entry.data };
-    if (round !== null && round !== undefined && data.tickRound === round) return entry;
-    // Over its maximum duration: the End button was posted once
-    if (data.maxDuration?.counted && (data.elapsed || 0) >= data.maxDuration.rounds) return entry;
-    data.tickRound = round ?? null;
+  const who = getCreatureName(creature);
+  const next = states.map((entry) => {
+    const state = { ...entry };
+    if (round !== null && round !== undefined && state.tickRound === round) return entry;
+    if (state.ended) return entry;
+    state.tickRound = round ?? null;
     changed = true;
-    if (data.maxDuration?.counted) {
-      data.elapsed = (data.elapsed || 0) + 1;
-      if (data.elapsed >= data.maxDuration.rounds) {
+    const stage = getAfflictionStage(creature, state.name);
+    if (stage < 1) {
+      state.ended = true;
+      messages.push([
+        `**${who}: ${state.name}** has ended (its effect is gone).`,
+        getChatButton(`Clear_${state.name.replace(/[^\w]+/g, "_")}`, creature, `clearAfflictionState(token, ${JSON.stringify(state.name)})`),
+      ].join("\n"));
+      return state;
+    }
+    if (state.onsetLeft > 0) {
+      state.onsetLeft -= 1;
+      if (state.onsetLeft === 0) {
         messages.push([
-          `**${getCreatureName(creature)}: ${entry.name}** reaches its maximum duration (${describeAfflictionTime(data.maxDuration)}) and ends.`,
-          getChatButton(`End_${entry.name.replace(/[^\w]+/g, "_")}`, creature, `setAfflictionStage(token, ${JSON.stringify(entry._id)}, 0)`),
+          `**${who}: ${state.name}**'s onset is over: stage ${stage}.`,
+          getChatButton(`Apply_Stage_${stage}`, creature, `setAfflictionStage(token, ${JSON.stringify(state.name)}, ${stage})`),
         ].join("\n"));
-        return { ...entry, data };
+      }
+    } else if (state.roundsLeft > 0) {
+      state.roundsLeft -= 1;
+      if (state.roundsLeft === 0) {
+        messages.push([
+          `**${who}: ${state.name}**, stage ${stage}: the interval is over.`,
+          getChatButton(`Roll_${capitalize(state.affliction.save)}`, creature, `rollAfflictionSave(token, ${JSON.stringify(state.name)})`),
+        ].join("\n"));
       }
     }
-    if (data.onsetLeft > 0) {
-      data.onsetLeft -= 1;
-      if (data.onsetLeft === 0) {
-        messages.push([
-          `**${getCreatureName(creature)}: ${entry.name}**'s onset is over: stage ${data.stage}.`,
-          getChatButton(`Apply_Stage_${data.stage}`, creature, `setAfflictionStage(token, ${JSON.stringify(entry._id)}, ${data.stage})`),
-        ].join("\n"));
-      }
-    } else if (data.roundsLeft > 0) {
-      data.roundsLeft -= 1;
-      if (data.roundsLeft === 0) {
-        messages.push([
-          `**${getCreatureName(creature)}: ${entry.name}**, stage ${data.stage}: the interval is over.`,
-          getChatButton(`Roll_${capitalize(data.save)}`, creature, `rollAfflictionSave(token, ${JSON.stringify(entry._id)})`),
-        ].join("\n"));
-      }
-    }
-    return { ...entry, data };
+    return state;
   });
-  return { list: next, changed, messages };
+  return { states: next, changed, messages };
 }
 
 function runAfflictionTurnEnd(creature, round) {
-  const list = getCreatureAfflictions(creature);
-  if (!list.length) return;
-  const result = getAfflictionTurnEnd(creature, list, round);
-  if (result.changed) writeAfflictions(creature, result.list);
+  const states = getAfflictionStates(creature);
+  if (!states.length) return;
+  const result = getAfflictionTurnEnd(creature, states, round);
+  if (result.changed) writeAfflictionStates(creature, result.states);
   result.messages.forEach((message) => api.sendMessage(message, undefined, [], [], creature));
+}
+
+// The Clear button: the stage's conditions off (not the lasting ones) and
+// the state gone, after the effect was removed or ran out
+function clearAfflictionState(token, name) {
+  const fresh = findSceneToken(token._id) || token;
+  const states = getAfflictionStates(fresh);
+  const state = states.find((s) => s.name === name);
+  if (!state) return;
+  const fromConditions = state.appliedStage > 0 ? state.affliction.stages[state.appliedStage - 1]?.conditions : [];
+  const changes = getAfflictionConditionChanges(fromConditions, []);
+  writeAfflictionStates(fresh, states.filter((s) => s.name !== name));
+  applyAfflictionEffects(fresh, changes, null);
+  api.sendMessage(`**${getCreatureName(fresh)}:** ${name}'s conditions cleared${changes.kept.length ? ` (kept: ${changes.kept.join(", ")})` : ""}.`, undefined, [], [], fresh);
 }
 
 // ---------------------------------------------------------------- Treatment
 
-// Treat Poison and Treat Disease (Medicine): the bonus to the
-// patient's next save against them. Critical success +4, success +2,
-// critical failure -2.
 const AFFLICTION_TREATMENTS = { "treat poison": "poison", "treat disease": "disease" };
 
-function getAfflictionTreatmentBonus(degree) {
-  return { 2: 4, 1: 2, 0: 0, "-1": -2 }[degree] || 0;
-}
-
-// The result line of a Treat Poison or Treat Disease check (skill.js)
+// The result line of a Treat Poison or Treat Disease check (skill.js): the
+// Player Core effect for the patient, which asks for the degree and gives
+// the bonus to the next save against that kind
 function getAfflictionTreatmentLines(metadata, degree) {
   const kind = AFFLICTION_TREATMENTS[`${metadata?.action || ""}`.toLowerCase()];
   if (!kind || degree === null || degree === undefined) return [];
-  const bonus = getAfflictionTreatmentBonus(degree);
-  if (!bonus) return [`**${metadata.action}:** no bonus.`];
+  if (degree === 0) return [`**${metadata.action}:** no bonus.`];
+  const effect = AFFLICTION_TREATMENT_EFFECTS[kind];
   return [
-    `**${metadata.action}:** ${bonus > 0 ? "+" : ""}${bonus} circumstance ${bonus > 0 ? "bonus" : "penalty"} to the patient's next save against its ${kind}.`,
-    `\`\`\`Apply_Treatment\napplyAfflictionTreatment(${JSON.stringify(kind)}, ${bonus});\n\`\`\``,
+    `**${metadata.action}:** ${degree === 2 ? "+4" : degree === 1 ? "+2" : "-2"} to the patient's next save against its ${kind}.`,
+    `\`\`\`Apply_${effect.replace(/\s+/g, "_")}\napplyEffect(${JSON.stringify(effect)}, 1);\n\`\`\``,
   ];
-}
-
-// The Apply_Treatment button: the patient's afflictions of that kind, on
-// the selected or dropped token
-function applyAfflictionTreatment(kind, bonus) {
-  const tokens = (api.getSelectedOrDroppedToken() || []).map((t) => t?.token || t);
-  if (!tokens.length) {
-    api.showNotification("Select the patient's token.", "yellow", "Afflictions");
-    return;
-  }
-  tokens.forEach((token) => {
-    const list = getCreatureAfflictions(token);
-    if (!list.some((e) => e.data?.kind === kind)) {
-      api.showNotification(`${getCreatureName(token)} has no ${kind}.`, "yellow", "Afflictions");
-      return;
-    }
-    writeAfflictions(token, list.map((e) => (e.data?.kind === kind ? { ...e, data: { ...e.data, treatBonus: bonus } } : e)));
-  });
 }
