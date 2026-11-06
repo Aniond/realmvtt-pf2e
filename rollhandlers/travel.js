@@ -247,12 +247,15 @@ function promptHexRegion() {
 // The slowest Speed on the Party Sheet
 function setHexSpeedFromParty() {
   api.getParty((party) => {
-    const speeds = (party || []).map(getCreatureSpeed).filter((s) => s > 0);
-    if (!speeds.length) {
+    const members = (party || []).filter((member) => getCreatureSpeed(member) > 0);
+    if (!members.length) {
       api.showNotification("Open the Party Sheet from the View menu and drag the characters onto it.", "yellow", "Hexploration");
       return;
     }
-    writeHexState({ ...getHexState(), speed: Math.min(...speeds) });
+    const slowest = members.reduce((a, b) => (getCreatureSpeed(b) < getCreatureSpeed(a) ? b : a));
+    const speed = getCreatureSpeed(slowest);
+    writeHexState({ ...getHexState(), speed });
+    api.showNotification(`Party Speed ${speed} ft (slowest: ${getCreatureName(slowest)}): ${formatActivities(getHexActivitiesPerDay(speed))} a day.`, "green", "Hexploration");
   });
 }
 
