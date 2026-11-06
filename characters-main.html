@@ -2576,6 +2576,20 @@ ${getLevelUpSummary(gains)}`,
         </div>
       </div>
 
+      <!-- Afflictions (afflictions.js): shown once the character has one -->
+      <box field="afflictionsBox" hidden="true">
+        <div class="rvtt-sheet-divider">
+          <span class="rvtt-sheet-divider__label"
+            >&#10022; Afflictions &#10022;</span
+          >
+        </div>
+        <list
+          listtype="affliction_list"
+          field="afflictions"
+          variant="outline-striped"
+        ></list>
+      </box>
+
       <!-- Perception strip -->
       <div
         style="

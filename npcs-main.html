@@ -2620,6 +2620,15 @@
 
     <!-- Proprties shared with other types -->
     <box field="sharedProperties">
+      <!-- Afflictions (afflictions.js): shown once the creature has one -->
+      <box field="afflictionsBox" hidden="true">
+        <divider color="primary" label="AFFLICTIONS" textalign="center"></divider>
+        <list
+          listtype="affliction_list"
+          field="afflictions"
+          variant="outline-striped"
+        ></list>
+      </box>
       <!-- Attacks Section -->
       <div style="flex: 1; display: flex; flex-direction: column; gap: 4px">
         <divider color="primary" label="ATTACKS" textalign="center"></divider>

@@ -274,6 +274,7 @@ const downtimeLines = [
   ...getRepairLines(data?.roll?.metadata?.repair, noteDegree),
   // A challenge check: its points and the GM's Score button (challenges.js)
   ...getChallengeResultLines(data?.roll?.metadata?.challenge, noteDegree),
+  ...getAfflictionTreatmentLines(data?.roll?.metadata, noteDegree),
 ];
 if (downtimeLines.length > 0) message += `\n\n${downtimeLines.join("\n")}`;
 

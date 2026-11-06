@@ -4758,6 +4758,8 @@ performDamageRollForSpellOrItem("${record._id}","${record.recordType}", "${itemD
   if (effectMacros) {
     markdownDescription += `\n${effectMacros}`;
   }
+  // A poison's or disease's Expose button (afflictions.js)
+  markdownDescription += getAfflictionExposeButton(item);
 
   api.sendMessage(markdownDescription, undefined, recordLinks);
 
@@ -9317,6 +9319,14 @@ function rollSave(
   if (options.retch) {
     metadata.retch = true;
   }
+  // An affliction's save: what its result does, on the saver's token
+  // (afflictions.js), and a treatment's bonus or penalty
+  if (options.affliction) {
+    metadata.affliction = { ...options.affliction, tokenName: getCreatureName(record) };
+  }
+  if (Array.isArray(options.extraModifiers)) {
+    modifiers.push(...options.extraModifiers);
+  }
 
   // The save-specific and attribute lookups can each bring a status penalty
   // (fatigued, frightened): only the worst one applies
@@ -11167,7 +11177,7 @@ function useAction(action, actionDataPath = null) {
 ${usesLine ? `${usesLine}\n` : ""}
 ---
 ${actionDescription}
-${effectMacros}${getActionHealingMacros(action)}${getFirstAidActionMacro(action)}${getSkillActionMacros(action)}${getRechargeButton(action)}${getFinisherButton(action)}${applyCursebound(action)}${getStratagemUse(action)}${getOverdriveUse(action)}${getUnstableUse(action)}${getExploitVulnerabilityUse(action)}${getUnleashPsycheUse(action)}${getDrainBondedItemUse(action)}
+${effectMacros}${getActionHealingMacros(action)}${getFirstAidActionMacro(action)}${getSkillActionMacros(action)}${getRechargeButton(action)}${getFinisherButton(action)}${applyCursebound(action)}${getStratagemUse(action)}${getOverdriveUse(action)}${getUnstableUse(action)}${getExploitVulnerabilityUse(action)}${getUnleashPsycheUse(action)}${getDrainBondedItemUse(action)}${getAfflictionExposeButton(action)}
 `;
 
   // Send the message

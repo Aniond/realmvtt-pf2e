@@ -92,6 +92,12 @@ if (isConditionUpkeepOn() && !isTurnEndUpkeepDone(token)) {
   }
 }
 
+// Afflictions: onsets, intervals and maximum durations counted in rounds,
+// once a round (afflictions.js)
+if (delayTurnEnd.repeat) {
+  runAfflictionTurnEnd(token, data?.round ?? getEncounterState()?.round);
+}
+
 // A sustained spell the creature didn't Sustain this turn ends (sustain.js)
 if (delayTurnEnd.sustain) {
   endUnsustainedSpells(token);
