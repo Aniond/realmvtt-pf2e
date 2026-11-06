@@ -7,18 +7,18 @@
 //     links and condition links are the stage's effects, with the interval
 //     in parentheses. Using the item or ability adds an Expose button
 //     (getAfflictionExposeButton), which rolls the initial save.
-//   - The creature keeps its afflictions in data.afflictions, a list on the
-//     sheet (affliction-list.html): the stage, the stage the conditions are
-//     for (appliedStage), the onset and interval left in rounds, and the
-//     rounds of its maximum duration gone.
+//   - The creature keeps its afflictions in data.afflictions, token data
+//     with no sheet UI: the stage, the stage the conditions are for
+//     (appliedStage), the onset and interval left in rounds, and the rounds
+//     of its maximum duration gone.
 //   - Save results (save.js, getAfflictionSaveLines) say what the degree does
 //     and have the button that does it, on the saver's token.
 //   - The creature's turn end counts down onsets, intervals and maximum
 //     durations kept in rounds or minutes, and posts the Save, onset or End
-//     button; longer ones are left to the row's buttons.
+//     button; longer ones are left to the GM.
 //   - A stage change swaps the stage's conditions: the old stage's go, unless
 //     they end by their own rule (drained, doomed, frightened, sickened,
-//     fatigued, wounded), and the new stage's damage gets a button.
+//     fatigued, wounded, stunned), and the new stage's damage gets a button.
 //
 // Applying a poison to a weapon isn't tracked: the GM posts Expose when the
 // Strike hits.
@@ -28,8 +28,9 @@ const AFFLICTION_UNIT_ROUNDS = { round: 1, minute: 10, hour: 600, day: 14400, we
 const AFFLICTION_COUNTED_UNITS = new Set(["round", "minute"]);
 
 // Conditions with their own ending, kept when the stage changes (Player
-// Core pg. 430: they last their normal duration)
-const AFFLICTION_LASTING_CONDITIONS = new Set(["drained", "doomed", "frightened", "sickened", "fatigued", "wounded"]);
+// Core pg. 430: they last their normal duration, and one that changes or
+// ends on its own still does, as stunned counts down)
+const AFFLICTION_LASTING_CONDITIONS = new Set(["drained", "doomed", "frightened", "sickened", "fatigued", "wounded", "stunned"]);
 
 // Condition names read from a stage's text when it has no effect links
 const AFFLICTION_TEXT_CONDITIONS = [
@@ -193,33 +194,9 @@ function getCreatureAfflictions(creature) {
   return Array.isArray(list) ? list : [];
 }
 
-// The row's status line: the stage, then what comes next
-function getAfflictionStatus(data) {
-  const parts = [`of ${data.stages?.length || 0}`];
-  if (data.onsetLeft > 0) parts.push(`onset: ${data.onsetLeft} round${data.onsetLeft === 1 ? "" : "s"} left`);
-  else if (data.onset && data.appliedStage === 0) parts.push(`onset: ${describeAfflictionTime(data.onset)}`);
-  else {
-    const interval = data.stages?.[data.stage - 1]?.interval;
-    if (data.roundsLeft > 0) parts.push(`save in ${data.roundsLeft} round${data.roundsLeft === 1 ? "" : "s"}`);
-    else if (interval) parts.push(`save every ${describeAfflictionTime(interval)}`);
-  }
-  if (data.maxDuration?.counted) parts.push(`${Math.max(0, data.maxDuration.rounds - (data.elapsed || 0))} of ${data.maxDuration.rounds} rounds left`);
-  else if (data.maxDuration) parts.push(`lasts ${describeAfflictionTime(data.maxDuration)}`);
-  if (data.virulent) parts.push(`virulent${data.successes ? `, ${data.successes} success` : ""}`);
-  if (data.treatBonus) parts.push(`next save ${data.treatBonus > 0 ? "+" : ""}${data.treatBonus}`);
-  return parts.join(" · ");
-}
-
-function withAfflictionStatus(entry) {
-  return { ...entry, data: { ...entry.data, status: getAfflictionStatus(entry.data) } };
-}
-
-// The values that write the list (and show or hide the sheet's box)
+// The values that write the list
 function getAfflictionListValues(list) {
-  return {
-    "data.afflictions": list.map(withAfflictionStatus),
-    "fields.afflictionsBox.hidden": list.length === 0,
-  };
+  return { "data.afflictions": list };
 }
 
 function writeAfflictions(creature, list) {
@@ -417,17 +394,15 @@ function setAfflictionStage(creature, entryId, stage, { list, line } = {}) {
 
 // ---------------------------------------------------------------- Saves
 
-// A stage's save (an interval's end, or the row's Save): its treatment
-// bonus goes on this save, then it's cleared
+// A stage's save (an interval's end): its treatment bonus goes on this
+// save, and is cleared when the result is applied (resolveAfflictionSave),
+// so a cancelled roll keeps it
 function rollAfflictionSave(creature, entryId) {
   const list = getCreatureAfflictions(creature);
   const entry = list.find((e) => e._id === entryId);
   if (!entry) return;
   const data = entry.data;
   const bonus = parseInt(data.treatBonus, 10) || 0;
-  if (bonus) {
-    writeAfflictions(creature, list.map((e) => (e._id === entryId ? { ...e, data: { ...e.data, treatBonus: 0 } } : e)));
-  }
   rollSave(creature, data.save, data.dc, false, true, {
     traits: data.traits,
     affliction: { mode: "stage", entryId, name: entry.name, stage: data.stage, max: data.stages.length, virulent: !!data.virulent, successes: data.successes || 0 },
@@ -435,19 +410,6 @@ function rollAfflictionSave(creature, entryId) {
       ? [{ name: bonus > 0 ? "Treated (circumstance)" : "Treatment failed (circumstance)", type: "circumstance", value: bonus, active: true }]
       : [],
   });
-}
-
-// The row's Save button
-function rollAfflictionSaveFromRow(row) {
-  const entry = api.getValue(getNearestParentDataPath(row));
-  if (entry?._id && typeof record !== "undefined") rollAfflictionSave(record, entry._id);
-}
-
-// The row's Apply button: the stage as the row shows it (after an onset, or
-// a stage the GM typed)
-function applyAfflictionStageFromRow(row) {
-  const entry = api.getValue(getNearestParentDataPath(row));
-  if (entry?._id && typeof record !== "undefined") setAfflictionStage(record, entry._id, parseInt(entry.data?.stage, 10) || 1);
 }
 
 // What a stage save's degree does: { stage, successes } (stage below 1:
@@ -508,12 +470,14 @@ function resolveAfflictionSave(token, entryId, degree) {
     return;
   }
   const change = getAfflictionSaveChange({ ...entry.data, max: entry.data.stages.length }, degree);
-  const withSuccesses = list.map((e) => (e._id === entryId ? { ...e, data: { ...e.data, successes: change.successes } } : e));
+  // The save's treatment bonus is used up now
+  const withSuccesses = list.map((e) => (e._id === entryId ? { ...e, data: { ...e.data, successes: change.successes, treatBonus: 0 } } : e));
   if (change.stage === entry.data.stage && !change.over) {
+    // A virulent success that doesn't reach a stage: the count and the next
+    // interval only, no stage card (damage comes on reaching a stage)
     const interval = entry.data.stages[entry.data.stage - 1]?.interval;
-    const stayed = withSuccesses.map((e) => (e._id === entryId ? { ...e, data: { ...e.data, roundsLeft: interval?.counted ? interval.rounds : 0 } } : e));
-    // The same stage: its effects again (damage), conditions unchanged
-    setAfflictionStage(fresh, entryId, entry.data.stage, { list: stayed });
+    writeAfflictions(fresh, withSuccesses.map((e) => (e._id === entryId ? { ...e, data: { ...e.data, roundsLeft: interval?.counted ? interval.rounds : 0 } } : e)));
+    api.sendMessage(`**${getCreatureName(fresh)}: ${entry.name}** stays at stage ${entry.data.stage} (virulent: ${change.successes} of 2 successes).`, undefined, [], [], fresh);
     return;
   }
   setAfflictionStage(fresh, entryId, change.stage, { list: withSuccesses });

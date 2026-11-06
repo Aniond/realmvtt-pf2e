@@ -158,9 +158,7 @@ section("Moving to a stage");
   assertIncludes("... posted", gone.message, "**Valeros** recovers from **Giant Centipede Venom**.");
   assert("... its conditions go", gone.changes.remove, [{ name: "Off-Guard", value: 1 }]);
   const values = ctx.getAfflictionListValues(two.list);
-  assert("the sheet's box shows", values["fields.afflictionsBox.hidden"], false);
-  assertIncludes("the status line", values["data.afflictions"][0].data.status, "of 3 · save in 1 round · 6 of 6 rounds left");
-  assert("no afflictions: hidden", ctx.getAfflictionListValues([])["fields.afflictionsBox.hidden"], true);
+  assert("token data only, no sheet field", Object.keys(values), ["data.afflictions"]);
 }
 
 section("Applying: one write, removals before additions");
@@ -182,7 +180,7 @@ section("Applying: one write, removals before additions");
   };
   ctx.setAfflictionStage(pc, id, 3);
   assert("the list once, off-guard off, then clumsy and fatigued on", calls, [
-    ["write", "pc", ["data.afflictions", "fields.afflictionsBox.hidden"]],
+    ["write", "pc", ["data.afflictions"]],
     ["deduct", "og"],
     ["add", ["Clumsy", "Fatigued"]],
   ]);
@@ -247,7 +245,35 @@ section("Rolling a stage save: the treatment bonus once");
   ctx.rollAfflictionSave(pc, list[0]._id);
   assert("the save's affliction", [meta.affliction.mode, meta.affliction.stage, meta.dc], ["stage", 2, 18]);
   assert("the bonus as a modifier", mods.some((m) => m.type === "circumstance" && m.value === 2), true);
-  assert("... cleared", writes[0]["data.afflictions"][0].data.treatBonus, 0);
+  assert("... kept until the result is applied (a cancelled roll keeps it)", writes, []);
+
+  ctx.api.addEffects = () => {};
+  ctx.api.getToken = () => pc;
+  ctx.resolveAfflictionSave(pc, list[0]._id, 1);
+  assert("... cleared when it is", writes[0]["data.afflictions"][0].data.treatBonus, 0);
+}
+
+section("A virulent success that doesn't reach a stage");
+{
+  const writes = [];
+  ctx.api.setValuesOnTokenById = (id, type, values) => writes.push(values);
+  const pc = { _id: "pc", name: "Valeros", recordType: "characters", effects: [], effectIds: [] };
+  const virulentAdder = { ...adder, virulent: true };
+  const { list } = ctx.getAfflictionExposure([], virulentAdder, 2);
+  pc.data = { afflictions: ctx.getAfflictionStageValues(pc, list, list[0]._id, 2).list.map((e) => ({ ...e, data: { ...e.data, roundsLeft: 0 } })) };
+  ctx.api.getToken = () => pc;
+  ctx.__state.messages.length = 0;
+  ctx.resolveAfflictionSave(pc, list[0]._id, 1);
+  const entry = writes[0]["data.afflictions"][0].data;
+  assert("the count and the next interval", [entry.stage, entry.successes, entry.roundsLeft], [2, 1, 1]);
+  assert("no stage card or damage", ctx.__state.messages.some((m) => m.includes("executeDamageMacro")), false);
+  assertIncludes("a short line", ctx.__state.messages[0], "stays at stage 2 (virulent: 1 of 2 successes)");
+}
+
+section("Stunned is kept on a stage change");
+{
+  const changes = ctx.getAfflictionConditionChanges([{ name: "Stunned", value: 1 }], []);
+  assert("kept", [changes.remove, changes.kept], [[], ["Stunned"]]);
 }
 
 section("Treat Poison and Treat Disease");
