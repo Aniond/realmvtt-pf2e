@@ -215,7 +215,8 @@ async function main() {
   console.log(`${scanned.length} afflictions, ${scanned.length - notWritten.length} writable, ${notWritten.length} to fix by hand`);
   notWritten.forEach((row) => console.log(`  ${row.recordType} ${row.name} (${row.category || "?"}): ${row.parsed.problems.join("; ")}`));
   console.log(`Report: ${reportFile}`);
-  if (WRITE) console.log(`Wrote ${written}. Backup: ${backupFile} (undo with --rollback ${backupFile} --write)`);
+  if (WRITE && written) console.log(`Wrote ${written}. Backup: ${backupFile} (undo with --rollback ${backupFile} --write)`);
+  else if (WRITE) console.log("Wrote 0: everything already matches.");
   else console.log(`Dry run: ${written} would be written. Add --write --limit 1 to write one.`);
 }
 
