@@ -50,21 +50,53 @@ const TREASURE_VARS = {
   meter: "treasureMeter",
 };
 
-// The level's budget for the party's size: the total, with the currency per
-// character past four added (or taken away for fewer, GM Core pg. 59)
+// Items [level, count] with count added at a level (taken away when
+// negative), highest level first, empty levels dropped
+function addTreasureItems(items, level, count) {
+  const byLevel = new Map(items.map(([l, c]) => [l, c]));
+  byLevel.set(level, (byLevel.get(level) || 0) + count);
+  return [...byLevel.entries()].filter(([, c]) => c > 0).sort((a, b) => b[0] - a[0]);
+}
+
+// The level's budget for the party's size (Different Party Sizes, GM Core
+// pg. 61). For each character past four: the currency per additional PC,
+// one permanent item of the party's level or 1 higher (extraPermanent, the
+// GM's pick) and two consumables, one of each. Taken away for each missing
+// character. The table's total has no price for those items, so only the
+// currency changes it (sizeNote).
 function getTreasureBudget(level, size = 4) {
-  const row = PARTY_TREASURE[Math.min(20, Math.max(1, parseInt(level, 10) || 1))];
+  const partyLevel = Math.min(20, Math.max(1, parseInt(level, 10) || 1));
+  const row = PARTY_TREASURE[partyLevel];
   const extra = (parseInt(size, 10) || 4) - 4;
+  const higher = Math.min(20, partyLevel + 1);
+  let consumables = row.consumables;
+  if (extra) {
+    consumables = addTreasureItems(consumables, higher, extra);
+    consumables = addTreasureItems(consumables, partyLevel, extra);
+  }
   return {
     ...row,
     total: Math.max(0, row.total + extra * row.perPc),
     currency: Math.max(0, row.currency + extra * row.perPc),
+    consumables,
+    extraPermanent: extra ? { count: extra, levels: [...new Set([partyLevel, higher])] } : null,
+    sizeNote: extra ? "the party's size changes only its currency" : "",
   };
 }
 
 // "2 × 4th, 2 × 3rd" (getOrdinal, spell-entries.js)
 function describeTreasureItems(items) {
   return items.map(([level, count]) => `${count} × ${getOrdinal(level)}`).join(", ");
+}
+
+// The extra PCs' permanent items, after the table's: "2 × 4th, 2 × 3rd,
+// plus 1 × 3rd or 4th" (less, for a smaller party)
+function describeTreasurePermanent(budget) {
+  const listed = describeTreasureItems(budget.permanent);
+  const extra = budget.extraPermanent;
+  if (!extra) return listed;
+  const levels = extra.levels.map((level) => getOrdinal(level)).join(" or ");
+  return `${listed}, ${extra.count > 0 ? "plus" : "less"} ${Math.abs(extra.count)} × ${levels}`;
 }
 
 // The panel's treasure meter: awarded against the budget, and the budget's
@@ -78,10 +110,10 @@ function getTreasureMeter({ level, size, awarded }, variants = getVariantRules()
     awarded: given,
     max: budget.total,
     awardedLabel: `${formatGp(given)} awarded`,
-    budgetLabel: `of ${formatGp(budget.total)} for level ${level}, ${size} PCs`,
+    budgetLabel: `of ${formatGp(budget.total)} for level ${level}, ${size} PCs${budget.sizeNote ? ` (${budget.sizeNote})` : ""}`,
     left: left >= 0 ? `${formatGp(left)} left` : `${formatGp(-left)} over`,
     // Under the panel's PERMANENT, CONSUMABLES and CURRENCY headings
-    permanent: describeTreasureItems(budget.permanent),
+    permanent: describeTreasurePermanent(budget),
     consumables: describeTreasureItems(budget.consumables),
     currency: formatGp(budget.currency),
     abp: variants.automaticBonusProgression ? "Automatic Bonus Progression: leave out potency, striking and resilient runes." : "",
@@ -150,16 +182,20 @@ function loadTreasureMeter() {
 
 // ---------------------------------------------------------------- Reputation
 
-// Reputation tiers (GM Core pg. 201): the lowest points of each
+// Reputation tiers (GM Core pg. 200-201, Table 3-2): the lowest points of
+// each, and the smallest favor that raises it and disservice that lowers it
+// (1 minor, 2 moderate, 5 major)
 const REPUTATION_TIERS = [
-  { name: "Revered", min: 30 },
-  { name: "Admired", min: 15 },
-  { name: "Liked", min: 5 },
-  { name: "Ignored", min: -4 },
-  { name: "Disliked", min: -14 },
-  { name: "Hated", min: -29 },
-  { name: "Hunted", min: -50 },
+  { name: "Revered", min: 30, raisedBy: 5, loweredBy: 2 },
+  { name: "Admired", min: 15, raisedBy: 5, loweredBy: 1 },
+  { name: "Liked", min: 5, raisedBy: 2, loweredBy: 1 },
+  { name: "Ignored", min: -4, raisedBy: 1, loweredBy: 1 },
+  { name: "Disliked", min: -14, raisedBy: 1, loweredBy: 2 },
+  { name: "Hated", min: -29, raisedBy: 1, loweredBy: 5 },
+  { name: "Hunted", min: -50, raisedBy: 2, loweredBy: 5 },
 ];
+
+const REPUTATION_CHANGE_NAMES = { 1: "minor", 2: "moderate", 5: "major" };
 
 const REPUTATION_CHANGES = [
   { label: "Minor favor (+1)", value: 1 },
@@ -225,14 +261,32 @@ function addReputationFaction() {
   });
 }
 
-// The faction after a favor or disservice, and the chat line
+// Whether a favor (change > 0) or disservice of this size counts at the
+// faction's tier (Table 3-2)
+function doesReputationChangeCount(points, change) {
+  const tier = REPUTATION_TIERS.find((t) => t.name === getReputationTier(points));
+  return change > 0 ? change >= tier.raisedBy : -change >= tier.loweredBy;
+}
+
+// The faction after a favor or disservice, and the chat line. One too small
+// for the tier leaves the points as they are (counted: false).
 function getReputationChange(faction, change) {
+  if (!doesReputationChangeCount(faction.points, change)) {
+    const kind = `${REPUTATION_CHANGE_NAMES[Math.abs(change)] || ""} ${change > 0 ? "favor" : "disservice"}`.trim();
+    const standing = `${faction.points >= 0 ? "+" : ""}${faction.points}`;
+    return {
+      faction,
+      counted: false,
+      message: `**Reputation:** ${faction.name}: a ${kind} has no effect at ${getReputationTier(faction.points)} (${standing}).`,
+    };
+  }
   const points = clampReputation(faction.points + change);
   const before = getReputationTier(faction.points);
   const after = getReputationTier(points);
   const tier = before === after ? after : `${before} to ${after}`;
   return {
     faction: { ...faction, points },
+    counted: true,
     message: `**Reputation:** ${faction.name} ${change > 0 ? "+" : ""}${change}, now ${points >= 0 ? "+" : ""}${points} (${tier}).`,
   };
 }
@@ -258,8 +312,8 @@ function changeReputation() {
         const change = parseInt(pick(changeChoice), 10);
         const latest = getReputationFactions();
         if (!change || !latest[index]) return;
-        const { faction, message } = getReputationChange(latest[index], change);
-        writeReputation(latest.map((f, i) => (i === index ? faction : f)));
+        const { faction, message, counted } = getReputationChange(latest[index], change);
+        if (counted) writeReputation(latest.map((f, i) => (i === index ? faction : f)));
         api.sendMessage(message);
       },
       "OK",
