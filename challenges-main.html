@@ -1,0 +1,263 @@
+<script>
+  // A challenge (roadmap B1, B2, challenges.js): Victory Points, a chase, an
+  // infiltration, research or an Influence encounter. The GM posts checks
+  // from it, and scores results from their cards.
+  function getChallengeFieldValues(data) {
+    const type = getChallengeType(data);
+    const hidden = {
+      scoringBox: type !== "victory",
+      pointsBox: type === "chase",
+      infiltrationBox: type !== "infiltration",
+      influenceBox: type !== "influence",
+    };
+    const values = {};
+    Object.entries(hidden).forEach(([field, value]) => {
+      if (!!record.fields?.[field]?.hidden !== value) values[`fields.${field}.hidden`] = value;
+    });
+    const summary = getChallengeSummary(data);
+    if (data?.summary !== summary) values["data.summary"] = summary;
+    return values;
+  }
+
+  // On load and on a change: the type's fields, and the summary line
+  function showHideFields() {
+    const values = getChallengeFieldValues(record.data || {});
+    if (Object.keys(values).length > 0) api.setValues(values);
+  }
+
+  function onTypeChange(value) {
+    const values = getChallengeFieldValues({ ...(record.data || {}), challengeType: value });
+    if (Object.keys(values).length > 0) api.setValues(values);
+  }
+
+  function onCounterChange(field, value) {
+    const values = getChallengeFieldValues({ ...(record.data || {}), [field]: value });
+    if (Object.keys(values).length > 0) api.setValues(values);
+  }
+</script>
+
+<div
+  style="
+    display: flex;
+    flex-direction: row;
+    width: 100%;
+    gap: 4px;
+    background-color: rgb(
+      from var(--mantine-color-primary-filled) r g b / 0.25
+    );
+    border-radius: 4px;
+    margin-bottom: 4px;
+    padding: 0px 4px;
+  "
+>
+  <namefield
+    field="namefield"
+    placeholder="New Challenge"
+    size="lg"
+    variant="bold"
+  ></namefield>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 6px; width: 100%">
+  <div style="display: flex; gap: 4px; align-items: flex-end; flex-wrap: wrap">
+    <dropdown
+      field="challengeType"
+      label="Type"
+      width="160px"
+      size="xs"
+      defaultvalue="victory"
+      placeholder="Victory Points"
+      onchange="onTypeChange(value)"
+      options='[{"label": "Victory Points", "value": "victory"}, {"label": "Chase", "value": "chase"}, {"label": "Infiltration", "value": "infiltration"}, {"label": "Research", "value": "research"}, {"label": "Influence", "value": "influence"}]'
+    ></dropdown>
+    <numberfield
+      field="level"
+      label="Level"
+      size="xs"
+      width="60px"
+      placeholder="1"
+    ></numberfield>
+    <box field="scoringBox" width="160px">
+      <dropdown
+        field="scoring"
+        label="Scoring"
+        width="160px"
+        size="xs"
+        defaultvalue="accumulating"
+        placeholder="Accumulating"
+        options='[{"label": "Accumulating", "value": "accumulating"}, {"label": "Diminishing", "value": "diminishing"}]'
+      ></dropdown>
+    </box>
+  </div>
+
+  <div
+    class="rvtt-sheet-section rvtt-sheet-corners"
+    style="background: var(--bg, transparent)"
+  >
+    <span class="rvtt-sheet-corner rvtt-sheet-corner--tl"></span>
+    <span class="rvtt-sheet-corner rvtt-sheet-corner--tr"></span>
+    <span class="rvtt-sheet-corner rvtt-sheet-corner--bl"></span>
+    <span class="rvtt-sheet-corner rvtt-sheet-corner--br"></span>
+
+    <div class="rvtt-sheet-divider">
+      <span class="rvtt-sheet-divider__label">&#10022; Progress &#10022;</span>
+    </div>
+    <box field="summaryBox" onload="showHideFields()">
+      <label field="summary" size="lg" variant="bold"></label>
+    </box>
+
+    <div style="display: flex; gap: 6px; align-items: flex-end; flex-wrap: wrap; margin-top: 6px">
+      <box field="pointsBox" width="80px">
+        <numberfield
+          field="points"
+          label="Points"
+          size="xs"
+          width="80px"
+          placeholder="0"
+          onchange="onCounterChange('points', value)"
+        ></numberfield>
+      </box>
+      <box field="infiltrationBox">
+        <div style="display: flex; gap: 6px">
+          <numberfield
+            field="awareness"
+            label="Awareness"
+            size="xs"
+            width="80px"
+            placeholder="0"
+            onchange="onCounterChange('awareness', value)"
+          ></numberfield>
+          <numberfield
+            field="edge"
+            label="Edge"
+            size="xs"
+            width="80px"
+            placeholder="0"
+            onchange="onCounterChange('edge', value)"
+          ></numberfield>
+        </div>
+      </box>
+      <numberfield
+        field="round"
+        label="Round"
+        size="xs"
+        width="70px"
+        placeholder="0"
+        onchange="onCounterChange('round', value)"
+      ></numberfield>
+      <numberfield
+        field="roundLimit"
+        label="Round Limit"
+        size="xs"
+        width="80px"
+        placeholder="None"
+        onchange="onCounterChange('roundLimit', value)"
+      ></numberfield>
+    </div>
+
+    <div style="display: flex; gap: 4px; flex-wrap: wrap; margin-top: 8px">
+      <button
+        size="xs"
+        variant="light"
+        icon="IconPlayerTrackNext"
+        label="Next Round"
+        onclick="advanceChallengeRound(record._id)"
+      ></button>
+      <button
+        size="xs"
+        variant="light"
+        color="green"
+        icon="IconTrophy"
+        label="Complete"
+        onclick="completeChallenge(record._id, record.name)"
+      ></button>
+    </div>
+  </div>
+
+  <box field="influenceBox">
+    <div
+      class="rvtt-sheet-section rvtt-sheet-corners"
+      style="background: var(--bg, transparent)"
+    >
+      <span class="rvtt-sheet-corner rvtt-sheet-corner--tl"></span>
+      <span class="rvtt-sheet-corner rvtt-sheet-corner--tr"></span>
+      <span class="rvtt-sheet-corner rvtt-sheet-corner--bl"></span>
+      <span class="rvtt-sheet-corner rvtt-sheet-corner--br"></span>
+
+      <div class="rvtt-sheet-divider">
+        <span class="rvtt-sheet-divider__label">&#10022; Influence &#10022;</span>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 4px">
+        <stringfield
+          field="discovery"
+          label="Discovery"
+          width="100%"
+          placeholder="Perception DC 20, Society DC 18"
+        ></stringfield>
+        <stringfield
+          field="influenceSkills"
+          label="Influence Skills"
+          width="100%"
+          placeholder="Diplomacy DC 20, Performance DC 22"
+        ></stringfield>
+        <stringfield
+          field="resistances"
+          label="Resistances"
+          width="100%"
+          placeholder="None"
+        ></stringfield>
+        <stringfield
+          field="weaknesses"
+          label="Weaknesses"
+          width="100%"
+          placeholder="None"
+        ></stringfield>
+      </div>
+      <div style="display: flex; gap: 4px; flex-wrap: wrap; margin-top: 8px">
+        <button
+          size="xs"
+          variant="light"
+          icon="IconMessageCircle"
+          label="Call Influence"
+          onclick="postInfluenceChecks(record._id, 'influence')"
+        ></button>
+        <button
+          size="xs"
+          variant="light"
+          icon="IconSearch"
+          label="Call Discover"
+          onclick="postInfluenceChecks(record._id, 'discover')"
+        ></button>
+      </div>
+    </div>
+  </box>
+
+  <div style="display: flex; flex-direction: column; gap: 4px">
+    <label
+      label="Obstacles (Research: library sections, Needs is the maximum RP)"
+      size="sm"
+      textalign="left"
+      variant="bold"
+    ></label>
+    <list
+      listtype="challenge_obstacle_list"
+      field="obstacles"
+      variant="outline-striped"
+    ></list>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 4px">
+    <label label="Thresholds" size="sm" textalign="left" variant="bold"></label>
+    <list
+      listtype="challenge_threshold_list"
+      field="thresholds"
+      variant="outline-striped"
+    ></list>
+  </div>
+
+  <richtextfield
+    field="description"
+    label="Notes"
+    placeholder="Setup, complications, opportunities, timed events..."
+  ></richtextfield>
+</div>

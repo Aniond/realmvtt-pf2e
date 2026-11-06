@@ -1,0 +1,24 @@
+<div style="display: flex; gap: 4px; align-items: center; width: 100%">
+  <numberfield
+    field="points"
+    size="xs"
+    width="60px"
+    placeholder="0"
+  ></numberfield>
+  <dropdown
+    field="track"
+    size="xs"
+    width="110px"
+    defaultvalue="points"
+    placeholder="Points"
+    options='[{"label": "Points", "value": "points"}, {"label": "Awareness", "value": "awareness"}]'
+  ></dropdown>
+  <div style="flex: 1; min-width: 100px">
+    <stringfield
+      field="outcome"
+      width="100%"
+      size="xs"
+      placeholder="What happens"
+    ></stringfield>
+  </div>
+</div>
