@@ -225,7 +225,7 @@ section("Encounter builder (H21)");
     return [...written];
   };
   ctx.api.getParty = (cb) => cb([pc("a", 3), pc("b", 4), pc("c", 3), { _id: "pet", recordType: "npcs", data: { level: 1 } }]);
-  assert("Use the Party: the level, the size and the meter", writes(() => ctx.setEncounterBuilderFromParty()), ["encounterPartyLevel", "encounterPartySize", "encounterMeter"]);
+  assert("Use the Party: the level, the size, the meter and the treasure meter", writes(() => ctx.setEncounterBuilderFromParty()), ["encounterPartyLevel", "encounterPartySize", "encounterMeter", "treasureMeter"]);
   assert("... level 3, 3 characters", [vars.encounterPartyLevel, vars.encounterPartySize], [3, 3]);
 
   ctx.api.getSelectedTokens = () => [foe("Ogre", 5), foe("Trap", 3, { type: "hazard" }), pc("e", 3)];

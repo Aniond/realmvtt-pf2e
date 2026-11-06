@@ -1234,6 +1234,29 @@
           onclick="retrainSkillIncrease(record)"
         ></button>
       </div>
+      <!-- Days available, spent with a log line (campaign-tools.js); the GM
+           grants days from the GM Tools panel -->
+      <div style="display: flex; gap: 4px; align-items: flex-end; margin-top: 6px">
+        <numberfield
+          field="downtimeDays"
+          label="Days"
+          size="xs"
+          width="70px"
+          placeholder="0"
+        ></numberfield>
+        <button
+          size="xs"
+          variant="light"
+          icon="IconCalendarMinus"
+          label="Spend Days"
+          onclick="spendDowntimeDays(record)"
+        ></button>
+      </div>
+      <richtextfield
+        field="downtimeLog"
+        label="Downtime Log"
+        placeholder="Days granted and spent"
+      ></richtextfield>
     </div>
   </box>
 

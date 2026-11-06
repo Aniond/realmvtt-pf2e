@@ -256,6 +256,8 @@ function setEncounterBuilderFromParty() {
     api.setCampaignVariable(ENCOUNTER_BUILDER_VARS.level, state.level);
     api.setCampaignVariable(ENCOUNTER_BUILDER_VARS.size, state.size);
     writeEncounterMeter(state);
+    // The treasure budget shares the party (campaign-tools.js)
+    refreshTreasureMeter({ level: state.level, size: state.size });
   });
 }
 

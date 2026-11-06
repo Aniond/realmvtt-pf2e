@@ -1,13 +1,19 @@
 <script>
   // The GM Tools panel (View menu, GM only): the encounter builder (H21,
-  // gm-tools.js). Its fields are campaign variables; each action writes what
-  // it changed and the meter in encounterMeter, which the labels below read.
+  // gm-tools.js), then treasure, reputation and downtime (campaign-tools.js).
+  // Its fields are campaign variables; each action writes what it changed and
+  // its meter (encounterMeter, treasureMeter, reputationMeter), which the
+  // labels below read. The party's level and size are shared.
   function onEncounterPartyLevel(value) {
     setEncounterBuilderParty("level", value);
+    const level = parseInt(value, 10);
+    if (Number.isFinite(level)) refreshTreasureMeter({ level });
   }
 
   function onEncounterPartySize(value) {
     setEncounterBuilderParty("size", value);
+    const size = parseInt(value, 10);
+    if (Number.isFinite(size)) refreshTreasureMeter({ size });
   }
 </script>
 
@@ -205,5 +211,194 @@
         onclick="promptEncounterTemplates()"
       ></button>
     </div>
+  </div>
+
+  <div
+    class="rvtt-sheet-section rvtt-sheet-corners"
+    style="background: var(--bg, transparent)"
+  >
+    <span class="rvtt-sheet-corner rvtt-sheet-corner--tl"></span>
+    <span class="rvtt-sheet-corner rvtt-sheet-corner--tr"></span>
+    <span class="rvtt-sheet-corner rvtt-sheet-corner--bl"></span>
+    <span class="rvtt-sheet-corner rvtt-sheet-corner--br"></span>
+
+    <!-- Collapsed by default, so the Encounter Builder stays on top. The
+         box's onload writes the meter when it's missing or out of date. -->
+    <accordion size="xs" field="treasureOpen" label="Treasure">
+      <box onload="loadTreasureMeter()">
+        <label
+          label="The level's budget for the party's level and size above (GM Core Table 10-9)."
+          size="xs"
+          color="dimmed"
+          width="100%"
+        ></label>
+
+        <!-- Awarded against the level's budget -->
+        <div
+          style="
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            margin: 4px 0;
+          "
+        >
+          <label field="treasureMeter.awardedLabel" size="lg" variant="bold" hideifempty="true"></label>
+          <label field="treasureMeter.left" size="sm" color="orange" hideifempty="true"></label>
+        </div>
+        <progressbar
+          field="treasureMeter"
+          currentvaluefield="treasureMeter.awarded"
+          maxvaluefield="treasureMeter.max"
+          color="yellow"
+          size="md"
+        ></progressbar>
+        <label field="treasureMeter.budgetLabel" size="xs" color="dimmed" hideifempty="true"></label>
+      </box>
+
+      <!-- The budget's parts -->
+      <div
+        style="
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 4px;
+          margin-top: 8px;
+          text-align: center;
+        "
+      >
+        <div>
+          <span class="rvtt-sheet-mono-dim">PERMANENT</span>
+          <label field="treasureMeter.permanent" size="sm" textalign="center"></label>
+        </div>
+        <div>
+          <span class="rvtt-sheet-mono-dim">CONSUMABLES</span>
+          <label field="treasureMeter.consumables" size="sm" textalign="center"></label>
+        </div>
+        <div>
+          <span class="rvtt-sheet-mono-dim">CURRENCY</span>
+          <label field="treasureMeter.currency" size="sm" textalign="center"></label>
+        </div>
+      </div>
+      <label field="treasureMeter.abp" size="xs" color="dimmed" hideifempty="true"></label>
+
+      <div style="display: flex; gap: 4px; flex-wrap: wrap; margin-top: 10px">
+        <button
+          size="xs"
+          variant="light"
+          icon="IconCoins"
+          label="Add Award"
+          onclick="addTreasureAward()"
+        ></button>
+        <button
+          size="xs"
+          variant="light"
+          icon="IconStairsUp"
+          label="New Level"
+          onclick="startTreasureLevel()"
+        ></button>
+      </div>
+    </accordion>
+  </div>
+
+  <div
+    class="rvtt-sheet-section rvtt-sheet-corners"
+    style="background: var(--bg, transparent)"
+  >
+    <span class="rvtt-sheet-corner rvtt-sheet-corner--tl"></span>
+    <span class="rvtt-sheet-corner rvtt-sheet-corner--tr"></span>
+    <span class="rvtt-sheet-corner rvtt-sheet-corner--bl"></span>
+    <span class="rvtt-sheet-corner rvtt-sheet-corner--br"></span>
+
+    <accordion size="xs" field="reputationOpen" label="Reputation">
+      <!-- A row for each faction, empty rows hidden -->
+      <div style="display: flex; justify-content: space-between">
+        <span class="rvtt-sheet-mono-dim">FACTION</span>
+        <span class="rvtt-sheet-mono-dim">STANDING</span>
+      </div>
+      <label field="reputationMeter.empty" size="sm" color="dimmed" hideifempty="true"></label>
+      <div style="display: flex; justify-content: space-between">
+        <label field="reputationMeter.rows.0.name" size="sm" hideifempty="true"></label>
+        <label field="reputationMeter.rows.0.standing" size="sm" hideifempty="true"></label>
+      </div>
+      <div style="display: flex; justify-content: space-between">
+        <label field="reputationMeter.rows.1.name" size="sm" hideifempty="true"></label>
+        <label field="reputationMeter.rows.1.standing" size="sm" hideifempty="true"></label>
+      </div>
+      <div style="display: flex; justify-content: space-between">
+        <label field="reputationMeter.rows.2.name" size="sm" hideifempty="true"></label>
+        <label field="reputationMeter.rows.2.standing" size="sm" hideifempty="true"></label>
+      </div>
+      <div style="display: flex; justify-content: space-between">
+        <label field="reputationMeter.rows.3.name" size="sm" hideifempty="true"></label>
+        <label field="reputationMeter.rows.3.standing" size="sm" hideifempty="true"></label>
+      </div>
+      <div style="display: flex; justify-content: space-between">
+        <label field="reputationMeter.rows.4.name" size="sm" hideifempty="true"></label>
+        <label field="reputationMeter.rows.4.standing" size="sm" hideifempty="true"></label>
+      </div>
+      <div style="display: flex; justify-content: space-between">
+        <label field="reputationMeter.rows.5.name" size="sm" hideifempty="true"></label>
+        <label field="reputationMeter.rows.5.standing" size="sm" hideifempty="true"></label>
+      </div>
+      <div style="display: flex; justify-content: space-between">
+        <label field="reputationMeter.rows.6.name" size="sm" hideifempty="true"></label>
+        <label field="reputationMeter.rows.6.standing" size="sm" hideifempty="true"></label>
+      </div>
+      <div style="display: flex; justify-content: space-between">
+        <label field="reputationMeter.rows.7.name" size="sm" hideifempty="true"></label>
+        <label field="reputationMeter.rows.7.standing" size="sm" hideifempty="true"></label>
+      </div>
+
+      <div style="display: flex; gap: 4px; flex-wrap: wrap; margin-top: 10px">
+        <button
+          size="xs"
+          variant="light"
+          icon="IconPlus"
+          label="Add Faction"
+          onclick="addReputationFaction()"
+        ></button>
+        <button
+          size="xs"
+          variant="light"
+          icon="IconArrowsUpDown"
+          label="Favor or Disservice"
+          onclick="changeReputation()"
+        ></button>
+        <button
+          size="xs"
+          variant="light"
+          icon="IconTrash"
+          label="Remove Faction"
+          onclick="removeReputationFaction()"
+        ></button>
+      </div>
+    </accordion>
+  </div>
+
+  <div
+    class="rvtt-sheet-section rvtt-sheet-corners"
+    style="background: var(--bg, transparent)"
+  >
+    <span class="rvtt-sheet-corner rvtt-sheet-corner--tl"></span>
+    <span class="rvtt-sheet-corner rvtt-sheet-corner--tr"></span>
+    <span class="rvtt-sheet-corner rvtt-sheet-corner--bl"></span>
+    <span class="rvtt-sheet-corner rvtt-sheet-corner--br"></span>
+
+    <accordion size="xs" field="downtimeOpen" label="Downtime">
+      <label
+        label="Gives each character on the Party Sheet days of downtime, logged on their Skills tab, where they spend them."
+        size="xs"
+        color="dimmed"
+        width="100%"
+      ></label>
+      <div style="display: flex; gap: 4px; flex-wrap: wrap; margin-top: 6px">
+        <button
+          size="xs"
+          variant="light"
+          icon="IconCalendarPlus"
+          label="Grant Downtime Days"
+          onclick="grantDowntimeDays()"
+        ></button>
+      </div>
+    </accordion>
   </div>
 </div>
