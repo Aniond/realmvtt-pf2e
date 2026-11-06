@@ -200,7 +200,7 @@ function describeTime(time) {
 }
 
 function describeAffliction(affliction) {
-  const head = `${affliction.save} ${affliction.dc === "spell" ? "vs spell DC" : affliction.dc === null ? "(no DC)" : `DC ${affliction.dc}`}; ${affliction.kind || "kind?"}${affliction.virulent ? ", virulent" : ""}; onset ${describeTime(affliction.onset)}; max ${describeTime(affliction.maxDuration)}; ${affliction.stages.length} stages`;
+  const head = `${affliction.save} ${affliction.dc === "spell" ? "vs spell DC" : affliction.dc === null ? "(no DC)" : `DC ${affliction.dc}`}; ${affliction.kind || "kind?"}${affliction.virulent ? ", virulent" : ""}; onset ${describeTime(affliction.onset)}; max ${describeTime(affliction.maxDuration)}; ${affliction.stages.length} stage${affliction.stages.length === 1 ? "" : "s"}`;
   const stages = affliction.stages.map((stage, i) => {
     const conditions = stage.conditions.map((c) => `${c.name} ${c.value}`).join(", ");
     return `  ${i + 1}. ${stage.damage.join(" + ") || "no damage"}; ${conditions || "no conditions"}; ${describeTime(stage.interval)}`;
@@ -208,4 +208,86 @@ function describeAffliction(affliction) {
   return [head, ...stages].join("\n");
 }
 
-module.exports = { parseRecordAffliction, describeAffliction, parseTime, decodeEntities, getSegments, UNITS };
+// The effect's name: the affliction's, without a monster ability's
+// "(Graveknight) " prefix
+function getAfflictionEffectName(name) {
+  return `${name || ""}`.replace(/^\([^)]*\)\s*/, "").trim();
+}
+
+// The afflictions a record carries: its own description (an item, a spell,
+// an ability record), or for an NPC each ability in data.actions. Each is
+// { index, name, affliction, problems }, index null for the record itself.
+function getRecordAfflictions(record) {
+  const stage = /Stage\s*1\b/;
+  if (record?.recordType === "npcs") {
+    return (record.data?.actions || [])
+      .map((action, index) => ({ action, index }))
+      .filter(({ action }) => stage.test(action?.data?.description || ""))
+      .map(({ action, index }) => ({ index, name: action.name, ...parseRecordAffliction({ ...action, recordType: "actions" }) }));
+  }
+  if (!stage.test(record?.data?.description || "")) return [];
+  return [{ index: null, name: record.name, ...parseRecordAffliction(record) }];
+}
+
+// Whether an affliction can be written: it needs a save and a DC (or the
+// caster's). One without a DC is reported for fixing by hand.
+function isWritableAffliction(found) {
+  return !!found.affliction && found.affliction.dc !== null;
+}
+
+// The record's data with data.affliction set (an NPC's on the ability), or
+// null when it already matches. effectIds: affliction name -> effect id.
+function getAfflictionData(record, found, effectIds) {
+  const data = record.data || {};
+  const stored = (affliction) => ({ ...affliction, effectId: effectIds[getAfflictionEffectName(affliction.name)] || null });
+  const same = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+  const writable = found.filter(isWritableAffliction);
+  if (record.recordType === "npcs") {
+    let changed = false;
+    const actions = (data.actions || []).map((action, index) => {
+      const match = writable.find((f) => f.index === index);
+      if (!match) return action;
+      const affliction = stored(match.affliction);
+      if (same(action.data?.affliction, affliction)) return action;
+      changed = true;
+      return { ...action, data: { ...action.data, affliction } };
+    });
+    return changed ? { ...data, actions } : null;
+  }
+  if (!writable.length) return null;
+  const affliction = stored(writable[0].affliction);
+  return same(data.affliction, affliction) ? null : { ...data, affliction };
+}
+
+// The effect the script creates for an affliction: stackable, the stacks are
+// the stage (as Monster Core's Bogwid Fever). Its duration is set when it's
+// applied (the maximum duration), so the record's is indefinite.
+function getAfflictionEffect(affliction, { campaignId, portrait = "" } = {}) {
+  const kind = affliction.kind || "affliction";
+  return {
+    campaignId,
+    name: getAfflictionEffectName(affliction.name),
+    description: `<p>${kind.charAt(0).toUpperCase()}${kind.slice(1)}: the stacks are the stage (${affliction.stages.length} stage${affliction.stages.length === 1 ? "" : "s"}).</p>`,
+    portrait,
+    stackable: true,
+    allowsMultiple: false,
+    tokenMenu: false,
+    duration: 0,
+    durationUnit: "indefinite",
+    rules: [],
+  };
+}
+
+module.exports = {
+  parseRecordAffliction,
+  describeAffliction,
+  parseTime,
+  decodeEntities,
+  getSegments,
+  getRecordAfflictions,
+  isWritableAffliction,
+  getAfflictionData,
+  getAfflictionEffect,
+  getAfflictionEffectName,
+  UNITS,
+};

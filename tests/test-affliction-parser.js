@@ -133,7 +133,44 @@ section("The report");
   const text = formatReport(report);
   assertIncludes("the totals", text, "# Afflictions: 3 records, 1 clean, 1 partial, 1 not parsed");
   assertIncludes("a problem listed", text, "Problems: kind unknown (no poison, disease or curse trait); stage 1: no interval (a final stage?)");
-  assertIncludes("a parse listed", text, "fortitude DC 18; poison; onset —; max —; 1 stages");
+  assertIncludes("a parse listed", text, "fortitude DC 18; poison; onset —; max —; 1 stage");
+}
+
+section("Records: items, NPC abilities, the data to write");
+{
+  const { getRecordAfflictions, getAfflictionData, getAfflictionEffect, isWritableAffliction } = require("../tools/afflictions/parse");
+  const venom = `<p><strong>Saving Throw</strong> DC 14 Fortitude</p><p><strong>Maximum Duration</strong> 6 rounds</p><p><strong>Stage 1</strong> 1d4 poison damage (1 round)</p>`;
+  const npc = {
+    _id: "n1",
+    name: "Giant Centipede",
+    recordType: "npcs",
+    data: {
+      level: -1,
+      actions: [
+        { name: "Swarming Bites", data: { description: "<p>Bites.</p>" } },
+        { name: "Giant Centipede Venom", data: { traits: ["Poison"], description: venom } },
+      ],
+    },
+  };
+  const found = getRecordAfflictions(npc);
+  assert("an NPC's ability, by index", [found.length, found[0].index, found[0].name, found[0].affliction.dc], [1, 1, "Giant Centipede Venom", 14]);
+  const next = getAfflictionData(npc, found, { "Giant Centipede Venom": "eff1" });
+  assert("written on the ability, the rest kept", [next.level, next.actions[0], next.actions[1].data.affliction.effectId], [-1, npc.data.actions[0], "eff1"]);
+  assert("the description untouched", next.actions[1].data.description, venom);
+  const written = { ...npc, data: next };
+  assert("a second run: nothing", getAfflictionData(written, getRecordAfflictions(written), { "Giant Centipede Venom": "eff1" }), null);
+
+  const item = { _id: "i1", name: "Black Adder Venom", recordType: "items", data: { price: 6, traits: ["Poison"], description: venom } };
+  const itemNext = getAfflictionData(item, getRecordAfflictions(item), { "Black Adder Venom": "eff2" });
+  assert("an item: data.affliction, the rest kept", [itemNext.price, itemNext.affliction.save, itemNext.affliction.effectId], [6, "fortitude", "eff2"]);
+
+  const noDc = { _id: "a1", name: "(Graveknight) Graveknight's Curse", recordType: "actions", data: { traits: ["Curse"], description: "<p><strong>Saving Throw</strong> Will</p><p><strong>Stage 1</strong> doomed 1 (1 day)</p>" } };
+  const noDcFound = getRecordAfflictions(noDc);
+  assert("no DC: not written", [isWritableAffliction(noDcFound[0]), getAfflictionData(noDc, noDcFound, {})], [false, null]);
+
+  const effect = getAfflictionEffect({ ...noDcFound[0].affliction, dc: 30 }, { campaignId: "c1", portrait: "/x.webp" });
+  assert("the effect: named without the prefix, stackable", [effect.name, effect.stackable, effect.durationUnit, effect.portrait], ["Graveknight's Curse", true, "indefinite", "/x.webp"]);
+  assertIncludes("... says the stacks are the stage", effect.description, "Curse: the stacks are the stage (1 stage).");
 }
 
 summary();

@@ -11,13 +11,21 @@ const fs = require("fs");
 const { parseRecordAffliction, describeAffliction } = require("./parse");
 
 function getReport(records) {
-  const rows = records
-    .filter((r) => /Stage \d+/i.test(r?.data?.description || ""))
-    .map((record) => {
-      const { affliction, problems } = parseRecordAffliction(record);
-      const status = !affliction ? "not parsed" : problems.length ? "partial" : "clean";
-      return { record, affliction, problems, status };
-    });
+  return getParsedReport(
+    records
+      .filter((r) => /Stage \d+/i.test(r?.data?.description || ""))
+      .map((record) => ({ record, ...parseRecordAffliction(record) })),
+  );
+}
+
+// The same from rows already parsed: { record, affliction, problems }
+function getParsedReport(parsed) {
+  const rows = parsed.map(({ record, affliction, problems }) => ({
+    record,
+    affliction,
+    problems,
+    status: !affliction ? "not parsed" : problems.length ? "partial" : "clean",
+  }));
   const bySource = {};
   rows.forEach(({ record, status }) => {
     const source = record.category || "(no category)";
@@ -67,4 +75,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { getReport, formatReport };
+module.exports = { getReport, getParsedReport, formatReport };
