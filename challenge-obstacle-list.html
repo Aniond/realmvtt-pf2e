@@ -1,0 +1,49 @@
+<script>
+  // An obstacle (a library section in research): its checks as the stat
+  // block prints them, the points it has and needs. Call posts its checks
+  // (challenges.js).
+  function onCallObstacle() {
+    const obstacle = api.getValue(getNearestParentDataPath(dataPath));
+    if (obstacle?._id) postChallengeObstacle(record._id, obstacle._id);
+  }
+</script>
+
+<div style="display: flex; flex-direction: column; gap: 4px; width: 100%">
+  <div style="display: flex; gap: 4px; align-items: flex-end">
+    <div style="flex: 1; min-width: 100px">
+      <namefield
+        field="namefield"
+        width="100%"
+        size="xs"
+        placeholder="Obstacle name..."
+      ></namefield>
+    </div>
+    <numberfield
+      field="points"
+      label="Points"
+      size="xs"
+      width="60px"
+      placeholder="0"
+    ></numberfield>
+    <numberfield
+      field="goal"
+      label="Needs"
+      size="xs"
+      width="60px"
+      placeholder="-"
+    ></numberfield>
+    <button
+      size="xs"
+      variant="light"
+      icon="IconSend"
+      label="Call"
+      onclick="onCallObstacle()"
+    ></button>
+  </div>
+  <stringfield
+    field="checks"
+    width="100%"
+    size="xs"
+    placeholder="Athletics DC 20 or Acrobatics DC 18"
+  ></stringfield>
+</div>

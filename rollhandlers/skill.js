@@ -272,6 +272,8 @@ const downtimeLines = [
   // Repair: the HP it restores, or the critical failure's damage
   // (item-gear.js)
   ...getRepairLines(data?.roll?.metadata?.repair, noteDegree),
+  // A challenge check: its points and the GM's Score button (challenges.js)
+  ...getChallengeResultLines(data?.roll?.metadata?.challenge, noteDegree),
 ];
 if (downtimeLines.length > 0) message += `\n\n${downtimeLines.join("\n")}`;
 

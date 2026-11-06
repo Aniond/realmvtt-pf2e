@@ -553,6 +553,36 @@
       "hideFromCompendium": false
     },
     {
+      "name": "Challenges",
+      "type": "challenges",
+      "isList": false,
+      "minX": 560,
+      "minY": 600,
+      "tabs": [
+        {
+          "name": "Main",
+          "file": "challenges-main.html",
+          "fields": []
+        }
+      ],
+      "icon": "IconFlag",
+      "showAddButton": false,
+      "showDeleteButton": false,
+      "addButtonText": "",
+      "allowedListTypes": [],
+      "newItemName": "",
+      "newItemUnidentifiedName": "",
+      "stackDuplicates": false,
+      "disableDrop": false,
+      "countFieldName": "",
+      "emptyListText": "",
+      "singleRow": false,
+      "filters": {
+        "challengeType": "dynamic"
+      },
+      "hideFromCompendium": false
+    },
+    {
       "name": "Advanced Alchemy List",
       "type": "advanced_alchemy_list",
       "isList": true,
@@ -940,6 +970,64 @@
       "singleRow": false,
       "disableDrop": false,
       "hideFromCompendium": false
+    },
+    {
+      "name": "Challenge Obstacle List",
+      "type": "challenge_obstacle_list",
+      "isList": true,
+      "minX": 500,
+      "minY": 60,
+      "tabs": [
+        {
+          "name": "Main",
+          "file": "challenge-obstacle-list.html",
+          "fields": []
+        }
+      ],
+      "icon": "",
+      "showAddButton": true,
+      "showDeleteButton": true,
+      "addButtonText": "Add Obstacle",
+      "allowedListTypes": [],
+      "newItemName": "New Obstacle",
+      "newItemUnidentifiedName": "New Obstacle",
+      "stackDuplicates": false,
+      "disableDrop": false,
+      "countFieldName": "",
+      "emptyListText": "None",
+      "orderCriteria": [],
+      "maxLength": 0,
+      "filterCriteria": [],
+      "singleRow": false
+    },
+    {
+      "name": "Challenge Threshold List",
+      "type": "challenge_threshold_list",
+      "isList": true,
+      "minX": 500,
+      "minY": 60,
+      "tabs": [
+        {
+          "name": "Main",
+          "file": "challenge-threshold-list.html",
+          "fields": []
+        }
+      ],
+      "icon": "",
+      "showAddButton": true,
+      "showDeleteButton": true,
+      "addButtonText": "Add Threshold",
+      "allowedListTypes": [],
+      "newItemName": "New Threshold",
+      "newItemUnidentifiedName": "New Threshold",
+      "stackDuplicates": false,
+      "disableDrop": false,
+      "countFieldName": "",
+      "emptyListText": "None",
+      "orderCriteria": [],
+      "maxLength": 0,
+      "filterCriteria": [],
+      "singleRow": true
     },
     {
       "name": "Class Feature List",
@@ -5608,6 +5696,9 @@
         },
         "DelayReady": {
           "file": "rollhandlers/delay-ready.js"
+        },
+        "Challenges": {
+          "file": "rollhandlers/challenges.js"
         }
       },
       "defaultDice": "default",
