@@ -80,9 +80,10 @@ function getTreasureMeter({ level, size, awarded }, variants = getVariantRules()
     awardedLabel: `${formatGp(given)} awarded`,
     budgetLabel: `of ${formatGp(budget.total)} for level ${level}, ${size} PCs`,
     left: left >= 0 ? `${formatGp(left)} left` : `${formatGp(-left)} over`,
-    permanent: `Permanent items: ${describeTreasureItems(budget.permanent)}`,
-    consumables: `Consumables: ${describeTreasureItems(budget.consumables)}`,
-    currency: `Currency: ${formatGp(budget.currency)}`,
+    // Under the panel's PERMANENT, CONSUMABLES and CURRENCY headings
+    permanent: describeTreasureItems(budget.permanent),
+    consumables: describeTreasureItems(budget.consumables),
+    currency: formatGp(budget.currency),
     abp: variants.automaticBonusProgression ? "Automatic Bonus Progression: leave out potency, striking and resilient runes." : "",
   };
 }
@@ -135,6 +136,16 @@ function startTreasureLevel() {
 // The party's level or size changed (the encounter builder's fields, shared)
 function refreshTreasureMeter(overrides = {}) {
   writeTreasureMeter({ ...getTreasureState(), ...overrides });
+}
+
+// The Treasure section's onload: writes the meter only when it's missing or
+// out of date (a setting changed, or before any party was set), so opening
+// the panel needs no button and usually writes nothing
+function loadTreasureMeter() {
+  const meter = getTreasureMeter(getTreasureState());
+  if (JSON.stringify(api.getCampaignVariable?.(TREASURE_VARS.meter)) !== JSON.stringify(meter)) {
+    api.setCampaignVariable(TREASURE_VARS.meter, meter);
+  }
 }
 
 // ---------------------------------------------------------------- Reputation

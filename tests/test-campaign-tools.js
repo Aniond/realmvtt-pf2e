@@ -39,8 +39,9 @@ section("Treasure: the meter");
   assert("awarded", [meter.awarded, meter.awardedLabel], [420, "420 gp awarded"]);
   assert("the budget", [meter.max, meter.budgetLabel], [500, "of 500 gp for level 3, 4 PCs"]);
   assert("what's left", meter.left, "80 gp left");
-  assert("the items", meter.permanent, "Permanent items: 2 × 4th, 2 × 3rd");
-  assert("consumables", meter.consumables, "Consumables: 2 × 4th, 2 × 3rd, 2 × 2nd");
+  assert("the items, for the PERMANENT heading", meter.permanent, "2 × 4th, 2 × 3rd");
+  assert("consumables", meter.consumables, "2 × 4th, 2 × 3rd, 2 × 2nd");
+  assert("currency", meter.currency, "120 gp");
   assert("no ABP note", meter.abp, "");
   assert("over the budget", ctx.getTreasureMeter({ level: 1, size: 4, awarded: 200 }).left, "25 gp over");
   settings = { automaticBonusProgression: "yes" };
@@ -75,6 +76,26 @@ section("Treasure: awards");
 
   ctx.refreshTreasureMeter({ level: 5 });
   assert("a new party level: the meter follows", vars.treasureMeter.max, 1350);
+}
+
+section("Treasure: the panel's onload");
+{
+  vars = {};
+  let writes = 0;
+  const set = ctx.api.setCampaignVariable;
+  ctx.api.setCampaignVariable = (name, value) => {
+    writes++;
+    set(name, value);
+  };
+  ctx.loadTreasureMeter();
+  assert("no meter yet: written, level 1 and four PCs", [writes, vars.treasureMeter.max], [1, 175]);
+  ctx.loadTreasureMeter();
+  assert("up to date: nothing written", writes, 1);
+  settings = { automaticBonusProgression: "yes" };
+  ctx.loadTreasureMeter();
+  assert("a setting changed: written again", [writes, !!vars.treasureMeter.abp], [2, true]);
+  settings = {};
+  ctx.api.setCampaignVariable = set;
 }
 
 section("Treasure: Use the Party updates it too");
