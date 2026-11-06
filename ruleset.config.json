@@ -1097,6 +1097,35 @@
       "singleRow": false
     },
     {
+      "name": "Connection List",
+      "type": "connection_list",
+      "isList": true,
+      "minX": 500,
+      "minY": 60,
+      "tabs": [
+        {
+          "name": "Main",
+          "file": "connection-list.html",
+          "fields": []
+        }
+      ],
+      "icon": "",
+      "showAddButton": true,
+      "showDeleteButton": true,
+      "addButtonText": "Add Connection",
+      "allowedListTypes": [],
+      "newItemName": "New Connection",
+      "newItemUnidentifiedName": "New Connection",
+      "stackDuplicates": false,
+      "disableDrop": false,
+      "countFieldName": "",
+      "emptyListText": "None",
+      "orderCriteria": [],
+      "maxLength": 0,
+      "filterCriteria": [],
+      "singleRow": true
+    },
+    {
       "name": "Crafting List",
       "type": "crafting_list",
       "isList": true,
@@ -5699,6 +5728,9 @@
         },
         "Challenges": {
           "file": "rollhandlers/challenges.js"
+        },
+        "CampaignTools": {
+          "file": "rollhandlers/campaign-tools.js"
         },
         "Afflictions": {
           "file": "rollhandlers/afflictions.js"
