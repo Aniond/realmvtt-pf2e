@@ -1,7 +1,15 @@
 <!-- A connection (NPC Core pg. 226): the NPC, the bond's tier and notes.
      Tokens of affection and insults move it; the GM sets the tier. -->
-<div style="display: flex; gap: 4px; align-items: center; width: 100%">
-  <div style="flex: 1; min-width: 100px">
+<div
+  style="
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    width: 100%;
+    min-height: 30px;
+  "
+>
+  <div style="flex: 2 1 0; min-width: 0">
     <namefield
       field="namefield"
       width="100%"
@@ -9,15 +17,17 @@
       placeholder="NPC name..."
     ></namefield>
   </div>
-  <dropdown
-    field="tier"
-    size="xs"
-    width="120px"
-    defaultvalue="acquainted"
-    placeholder="Acquainted"
-    options='[{"label": "Bonded", "value": "bonded"}, {"label": "Committed", "value": "committed"}, {"label": "Associated", "value": "associated"}, {"label": "Acquainted", "value": "acquainted"}, {"label": "Avoided", "value": "avoided"}, {"label": "Despised", "value": "despised"}, {"label": "Vindictive", "value": "vindictive"}]'
-  ></dropdown>
-  <div style="flex: 1; min-width: 100px">
+  <div style="flex: 0 0 120px">
+    <dropdown
+      field="tier"
+      size="xs"
+      width="100%"
+      defaultvalue="acquainted"
+      placeholder="Acquainted"
+      options='[{"label": "Bonded", "value": "bonded"}, {"label": "Committed", "value": "committed"}, {"label": "Associated", "value": "associated"}, {"label": "Acquainted", "value": "acquainted"}, {"label": "Avoided", "value": "avoided"}, {"label": "Despised", "value": "despised"}, {"label": "Vindictive", "value": "vindictive"}]'
+    ></dropdown>
+  </div>
+  <div style="flex: 3 1 0; min-width: 0">
     <stringfield
       field="notes"
       width="100%"

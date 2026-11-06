@@ -1152,7 +1152,11 @@ function getSpellSaveMacro(record, spell, spellCastingEntry, dataPathToSpell) {
   const rank = sourceTraits.some((t) => `${t}`.toLowerCase() === "incapacitation")
     ? getCastingRank(record, spell, dataPathToSpell)
     : null;
-  return getSaveMacro(saveType, saveDC, true, true, sourceTraits, basic === true || basic === "true", rank);
+  // An affliction spell (Goblin Pox): its save is the initial save, and the
+  // result's Apply afflicts at this DC (afflictions.js)
+  const affliction = getRecordAffliction(spell);
+  return getSaveMacro(saveType, saveDC, true, true, sourceTraits, basic === true || basic === "true", rank,
+    affliction ? { affliction: { mode: "initial", affliction } } : {});
 }
 
 function getSpellAttackMacro(
