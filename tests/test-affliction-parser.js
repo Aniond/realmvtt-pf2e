@@ -82,6 +82,32 @@ section("A spell: the caster's DC");
   assert("the spell's own results aren't stages", affliction.stages.length, 3);
   assert("stage 3: a day", affliction.stages[2].interval, { value: 1, unit: "day" });
   assert("no problems", problems, []);
+  assert("named by its header", affliction.name, "Goblin Pox");
+}
+
+section("A spell whose affliction has its own name (Blood Chestnuts)");
+{
+  const record = {
+    name: "Blood Chestnuts",
+    recordType: "spells",
+    data: {
+      traits: ["Disease", "Manipulate", "Wood"],
+      defense: { save: { statistic: "fortitude", basic: true } },
+      description: [
+        "<p>Chestnuts burst from the ground and pierce the creatures in the area.</p>",
+        "<p><strong>Draining Growth</strong> (disease)</p>",
+        `<p><strong>Stage 1</strong> ${effect("Drained 1")} (1 day)</p>`,
+        `<p><strong>Stage 2</strong> ${effect("Drained 2")} (1 day)</p>`,
+      ].join("\n"),
+    },
+  };
+  const { affliction } = parseRecordAffliction(record);
+  assert("the affliction's name, not the spell's", affliction.name, "Draining Growth");
+  const plain = parseRecordAffliction({ ...record, data: { ...record.data, description: record.data.description.replace("<p><strong>Draining Growth</strong> (disease)</p>\n", "") } });
+  assert("no header: the record's name", plain.affliction.name, "Blood Chestnuts");
+  const item = parseRecordAffliction({ ...record, name: "Some Item", recordType: "items", data: { ...record.data, defense: undefined, description: `<p><strong>Saving Throw</strong> DC 20 Fortitude</p>
+${record.data.description}` } });
+  assert("an item keeps its own name", item.affliction.name, "Some Item");
 }
 
 section("A save with no DC, a final stage with no interval (Graveknight's Curse)");

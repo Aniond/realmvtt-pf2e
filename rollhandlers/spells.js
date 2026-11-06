@@ -1109,9 +1109,7 @@ api.getRecord('${record.recordType}', '${record._id}', (record) => {
 \`\`\``;
 }
 
-// The caster's spell DC for a spell's save, with its modifiers (also an
-// affliction spell's Expose button, afflictions.js)
-function getSpellSaveDC(record, spell, spellCastingEntry) {
+function getSpellSaveMacro(record, spell, spellCastingEntry, dataPathToSpell) {
   const saveType = spell?.data?.defense?.save?.statistic;
   // NPC spell DCs are stored numbers; Proficiency without Level subtracts the
   // creature's level (0 for characters, whose DC is already calculated)
@@ -1137,12 +1135,6 @@ function getSpellSaveDC(record, spell, spellCastingEntry) {
     if (mod.active === false) return;
     saveDC += parseInt(mod.value || 0, 10) || 0;
   });
-  return saveDC;
-}
-
-function getSpellSaveMacro(record, spell, spellCastingEntry, dataPathToSpell) {
-  const saveType = spell?.data?.defense?.save?.statistic;
-  const saveDC = getSpellSaveDC(record, spell, spellCastingEntry);
   // Pass the spell's traits and casting tradition so save modifiers against
   // emotion/fear/mental/arcane/... effects apply automatically
   const sourceTraits = [...(spell?.data?.traits || [])];
@@ -1160,7 +1152,11 @@ function getSpellSaveMacro(record, spell, spellCastingEntry, dataPathToSpell) {
   const rank = sourceTraits.some((t) => `${t}`.toLowerCase() === "incapacitation")
     ? getCastingRank(record, spell, dataPathToSpell)
     : null;
-  return getSaveMacro(saveType, saveDC, true, true, sourceTraits, basic === true || basic === "true", rank);
+  // An affliction spell (Goblin Pox): its save is the initial save, and the
+  // result's Apply afflicts at this DC (afflictions.js)
+  const affliction = getRecordAffliction(spell);
+  return getSaveMacro(saveType, saveDC, true, true, sourceTraits, basic === true || basic === "true", rank,
+    affliction ? { affliction: { mode: "initial", affliction } } : {});
 }
 
 function getSpellAttackMacro(
@@ -1796,13 +1792,6 @@ function castSpell(record, spell, dataPathToSpell, isOverlay = false) {
         dataPathToSpell
       );
       macros.push(saveMacro);
-      // An affliction spell (Goblin Pox): Expose at the caster's DC
-      const exposeMacro = getAfflictionExposeButton(spell, {
-        dc: getSpellSaveDC(record, spell, spellCastingEntry),
-      }).trim();
-      if (exposeMacro) {
-        macros.push(exposeMacro);
-      }
 
       // Add damage macro for saving throw spells
       const damageMacro = getSpellDamageMacro(

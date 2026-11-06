@@ -9528,6 +9528,7 @@ function getSaveMacro(
   traits = [],
   basic = false,
   rank = null,
+  extraOptions = {},
 ) {
   if (!saveType) {
     console.error("getSaveMacro: Invalid saveType");
@@ -9573,6 +9574,8 @@ selectedTokens.forEach(token => {
     ...(sourceTraits.length > 0 ? { traits: sourceTraits } : {}),
     ...(basic ? { basic: true } : {}),
     ...(rank > 0 ? { rank } : {}),
+    // An affliction spell's save is also its initial save (afflictions.js)
+    ...(extraOptions || {}),
   };
   if (Object.keys(saveOptions).length > 0) {
     macroContent += `, ${JSON.stringify(saveOptions)}`;

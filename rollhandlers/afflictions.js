@@ -92,15 +92,13 @@ function getAfflictionTraits(affliction) {
 
 // ---------------------------------------------------------------- Exposure
 
-// The Expose button for an item's, ability's or spell's card ("" without
-// one). A spell's DC is the caster's (options.dc).
-function getAfflictionExposeButton(source, { dc } = {}) {
+// The Expose button for an item's or ability's card ("" without one). A
+// spell has none: its own save button carries the affliction (spells.js).
+function getAfflictionExposeButton(source) {
   const affliction = getRecordAffliction(source);
-  if (!affliction) return "";
-  const saveDC = affliction.dc === "spell" ? dc : affliction.dc;
-  if (!saveDC) return "";
+  if (!affliction || affliction.dc === "spell") return "";
   const label = `Expose_to_${affliction.name.replace(/[^\w]+/g, "_").replace(/^_+|_+$/g, "")}`;
-  return `\n\`\`\`${label}\nexposeToAffliction(${JSON.stringify(affliction)}, ${saveDC});\n\`\`\``;
+  return `\n\`\`\`${label}\nexposeToAffliction(${JSON.stringify(affliction)}, ${affliction.dc});\n\`\`\``;
 }
 
 // The initial save, for the selected tokens

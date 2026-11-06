@@ -4,10 +4,13 @@
 // turn end and treatment.
 
 const fs = require("fs");
+const vm = require("vm");
 const { createSandbox } = require("./sandbox");
 const { assert, assertIncludes, section, summary } = require("./test-helpers");
 
 const ctx = createSandbox();
+// spells.js shares the sheet's scope with common.js at runtime
+new vm.Script(fs.readFileSync(`${__dirname}/../rollhandlers/spells.js`, "utf8"), { filename: "spells.js" }).runInContext(ctx);
 
 // Curare as the data script writes it (Treasure Vault)
 const CURARE = {
@@ -75,8 +78,7 @@ section("Expose");
   const button = ctx.getAfflictionExposeButton({ name: "Curare", data: { affliction: CURARE } });
   assertIncludes("an item's button", button, "```Expose_to_Curare\nexposeToAffliction(");
   assertIncludes("... with its DC", button, "}, 25);");
-  assertIncludes("a spell's at the caster's DC", ctx.getAfflictionExposeButton({ name: "Goblin Pox", data: { affliction: GOBLIN_POX } }, { dc: 19 }), "}, 19);");
-  assert("a spell without a DC: none", ctx.getAfflictionExposeButton({ name: "Goblin Pox", data: { affliction: GOBLIN_POX } }), "");
+  assert("a spell: none (its own save carries it)", ctx.getAfflictionExposeButton({ name: "Goblin Pox", data: { affliction: GOBLIN_POX } }), "");
   assert("none without data.affliction", ctx.getAfflictionExposeButton({ name: "Rope", data: {} }), "");
   let args = null;
   const original = ctx.rollSavingThrow;
@@ -305,7 +307,18 @@ section("The hooks");
   assertIncludes("onTurnEnd.js", read("onTurnEnd.js"), "runAfflictionTurnEnd(token");
   assertIncludes("useInventoryItem", read("common.js"), "markdownDescription += getAfflictionExposeButton(item);");
   assertIncludes("useAction", read("common.js"), "${getAfflictionExposeButton(action)}");
-  assertIncludes("a spell's card, at the caster's DC", read("spells.js"), "getAfflictionExposeButton(spell, {");
+  assert("a spell's card: no Expose button", read("spells.js").includes("getAfflictionExposeButton"), false);
+}
+
+section("An affliction spell: one save");
+{
+  const pox = { name: "Goblin Pox", recordType: "spells", data: { traits: ["Disease", "Manipulate"], defense: { save: { statistic: "fortitude" } }, affliction: GOBLIN_POX } };
+  const macro = ctx.getSpellSaveMacro({ data: {} }, pox, { data: { dc: 19 } }, "");
+  assert("one save button", (macro.match(/```/g) || []).length, 2);
+  assertIncludes("at the caster's DC", macro, "rollSave(token, 'fortitude', 19");
+  assertIncludes("carrying the affliction as the initial save", macro, '"affliction":{"mode":"initial","affliction":{');
+  const plain = ctx.getSpellSaveMacro({ data: {} }, { name: "Fear", data: { traits: ["Fear"], defense: { save: { statistic: "will" } } } }, { data: { dc: 19 } }, "");
+  assert("another spell: no affliction", plain.includes("affliction"), false);
 }
 
 summary();

@@ -166,6 +166,9 @@ function parseRecordAffliction(record) {
       const header = stripHtml(segment).match(/^(.+?)\s*\((curse|disease|poison)[^)]*\)(?:\s*Level\s+(\d+))?/i);
       if (header && !affliction.kind) {
         affliction.kind = header[2].toLowerCase();
+        // A spell's affliction has its own name (Blood Chestnuts: Draining
+        // Growth); the record's name stays without a header
+        if (record?.recordType === "spells" && header[1].trim()) affliction.name = header[1].trim();
         if (header[3]) affliction.level = parseInt(header[3], 10);
       }
       return;
