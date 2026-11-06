@@ -217,6 +217,20 @@ section("Records: items, NPC abilities, the data to write");
   assert("... no category unless given", effect.category, undefined);
   const categorized = getAfflictionEffect({ ...noDcFound[0].affliction, dc: 30 }, { campaignId: "c1", category: "Pathfinder GM Core" });
   assert("... the delivering record's category", categorized.category, "Pathfinder GM Core");
+
+  // The effect's description: the affliction's own lines, links kept
+  const { getAfflictionEffectDescription, PLACEHOLDER_EFFECT_DESCRIPTION, parseRecordAffliction } = require("../tools/afflictions/parse");
+  const tvHtml = "<p>Hunters favor curare.</p><p><strong>Saving Throw</strong> <record-link recordlink=\"{}\">DC 25 Fortitude</record-link>; <strong>Maximum Duration</strong> 6 rounds; <strong>Stage 1</strong> 2d6 poison damage (1 round); <strong>Stage 2</strong> 3d6 poison damage (1 round)</p>";
+  const tvDescription = getAfflictionEffectDescription(tvHtml, parseRecordAffliction({ name: "Curare", recordType: "items", data: { description: tvHtml, traits: ["Poison"] } }).affliction);
+  assert("effect description: the affliction's lines, one paragraph each, flavor left out", tvDescription,
+    "<p><strong>Saving Throw</strong> <record-link recordlink=\"{}\">DC 25 Fortitude</record-link></p><p><strong>Maximum Duration</strong> 6 rounds</p><p><strong>Stage 1</strong> 2d6 poison damage (1 round)</p><p><strong>Stage 2</strong> 3d6 poison damage (1 round)</p><p><em>The stacks are the stage (2 stages).</em></p>");
+  const spellHtml = "<p>Seeds.</p><hr /><p><strong>Draining Growth</strong> (disease) Can't reduce drained.</p><p><strong>Stage 1</strong> drained 1 (1 round)</p>";
+  assertIncludes("... a spell's affliction header kept", getAfflictionEffectDescription(spellHtml, null), "<p><strong>Draining Growth</strong> (disease) Can't reduce drained.</p><p><strong>Stage 1</strong>");
+  assert("... none without affliction lines", getAfflictionEffectDescription("<p>Nothing.</p>", null), "");
+  assert("... used for the effect", getAfflictionEffect({ ...noDcFound[0].affliction, dc: 30 }, { description: tvDescription }).description, tvDescription);
+  assert("placeholder: only the first runs' text is replaced",
+    [PLACEHOLDER_EFFECT_DESCRIPTION.test("<p>Poison: the stacks are the stage (3 stages).</p>"), PLACEHOLDER_EFFECT_DESCRIPTION.test("<p>Curse: the stacks are the stage (1 stage).</p>"), PLACEHOLDER_EFFECT_DESCRIPTION.test(tvDescription)],
+    [true, true, false]);
 }
 
 summary();

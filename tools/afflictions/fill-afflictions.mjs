@@ -33,7 +33,9 @@ const {
   isWritableAffliction,
   getAfflictionData,
   getAfflictionEffect,
+  getAfflictionEffectDescription,
   getAfflictionEffectName,
+  PLACEHOLDER_EFFECT_DESCRIPTION,
 } = require("./parse.js");
 const { getParsedReport, formatReport } = require("./report.js");
 
@@ -102,26 +104,49 @@ const endpointFor = (recordType) => (recordType === "npcs" ? "/npcs" : "/records
 // ------------------------------------------------------------------ Effects
 
 // The affliction's effect, found by name in the campaign first so a second
-// run creates nothing. Created only with --write (in the delivering record's
-// category), and logged to the backup before the record that uses it is
-// written. A dry run says what it would create.
-async function ensureEffect(campaignId, affliction, { portrait, category }, backup) {
+// run creates nothing. Created only with --write, in the delivering record's
+// category and with the affliction's own lines as its description, and
+// logged to the backup before the record that uses it is written. A found
+// effect still holding the first runs' placeholder description gets the
+// affliction's lines (backed up first); any other description is left alone.
+// A dry run says what it would create or update.
+async function ensureEffect(campaignId, affliction, { portrait, category, description }, backup) {
   const name = getAfflictionEffectName(affliction.name);
   const params = new URLSearchParams({ campaignId, name });
   const found = (await api("GET", `/effects?${params}`)).data?.[0];
   if (found) {
-    if (!WRITE) console.log(`  uses effect ${name} (${found.category || "no category"})`);
+    if (description && PLACEHOLDER_EFFECT_DESCRIPTION.test(found.description || "")) {
+      if (!WRITE) {
+        console.log(`  would update effect ${name}'s description`);
+        return found._id;
+      }
+      backup({ kind: "effectDescription", _id: found._id, name, description: found.description });
+      await api("PATCH", `/effects/${found._id}`, { description });
+      console.log(`  updated effect ${name}'s description`);
+      await sleep(150);
+    }
     return found._id;
   }
   if (!WRITE) {
     console.log(`  would create effect ${name} (${category || "no category"})`);
     return null;
   }
-  const effect = await api("POST", "/effects", getAfflictionEffect(affliction, { campaignId, portrait, category }));
+  const effect = await api("POST", "/effects", getAfflictionEffect(affliction, { campaignId, portrait, category, description }));
   backup({ kind: "effect", _id: effect._id, name });
   console.log(`  created effect ${name}`);
   await sleep(150);
   return effect._id;
+}
+
+// The effect options for one affliction of a record: an NPC ability's
+// description is the ability's own
+function getEffectOptions(record, found) {
+  const html = found.index === null ? record.data?.description : record.data?.actions?.[found.index]?.data?.description;
+  return {
+    portrait: record.portrait || "",
+    category: record.category || "",
+    description: getAfflictionEffectDescription(html || "", found.affliction),
+  };
 }
 
 // ------------------------------------------------------------------ Rollback
@@ -134,6 +159,9 @@ async function rollback(file) {
     if (entry.kind === "record") {
       console.log(`restore ${entry.recordType} ${entry.name}`);
       if (WRITE) await api("PATCH", `${endpointFor(entry.recordType)}/${entry._id}`, { data: entry.data });
+    } else if (entry.kind === "effectDescription") {
+      console.log(`restore effect ${entry.name}'s description`);
+      if (WRITE) await api("PATCH", `/effects/${entry._id}`, { description: entry.description });
     } else if (entry.kind === "effect") {
       console.log(`delete effect ${entry.name || entry._id}`);
       if (WRITE) await api("DELETE", `/effects/${entry._id}`);
@@ -192,11 +220,15 @@ async function main() {
         const stored = f.index === null ? fresh.data?.affliction : fresh.data?.actions?.[f.index]?.data?.affliction;
         if (stored?.effectId) storedIds[getAfflictionEffectName(f.affliction.name)] = stored.effectId;
       });
-      if (Object.keys(storedIds).length === writable.length && !getAfflictionData(fresh, freshFound, storedIds)) continue;
+      if (Object.keys(storedIds).length === writable.length && !getAfflictionData(fresh, freshFound, storedIds)) {
+        // The record is done; its effect may still have the placeholder text
+        for (const f of writable) await ensureEffect(campaignId, f.affliction, getEffectOptions(fresh, f), backup);
+        continue;
+      }
 
       if (!WRITE) {
         console.log(`would write ${fresh.name}`);
-        for (const f of writable) await ensureEffect(campaignId, f.affliction, { category: fresh.category }, backup);
+        for (const f of writable) await ensureEffect(campaignId, f.affliction, getEffectOptions(fresh, f), backup);
         written += 1;
         continue;
       }
@@ -204,7 +236,7 @@ async function main() {
       backup({ kind: "record", recordType: fresh.recordType, _id: fresh._id, name: fresh.name, data: fresh.data });
       const effectIds = {};
       for (const f of writable) {
-        effectIds[getAfflictionEffectName(f.affliction.name)] = await ensureEffect(campaignId, f.affliction, { portrait: fresh.portrait || "", category: fresh.category || "" }, backup);
+        effectIds[getAfflictionEffectName(f.affliction.name)] = await ensureEffect(campaignId, f.affliction, getEffectOptions(fresh, f), backup);
       }
       const next = getAfflictionData(fresh, freshFound, effectIds);
       if (!next) continue;

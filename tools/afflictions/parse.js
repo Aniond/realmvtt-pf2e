@@ -280,13 +280,34 @@ function getAfflictionData(record, found, effectIds) {
 // The effect the script creates for an affliction: stackable, the stacks are
 // the stage (as Monster Core's Bogwid Fever). Its duration is set when it's
 // applied (the maximum duration), so the record's is indefinite.
-// category: the delivering record's, so the effect files with its book
-function getAfflictionEffect(affliction, { campaignId, portrait = "", category = "" } = {}) {
+// The affliction's own lines from the delivering record's description, each
+// as a paragraph with its links (the save, damage and conditions stay
+// clickable): the header of a spell's or curse's affliction, Saving Throw,
+// Onset, Maximum Duration and the stages, then a line saying the stacks are
+// the stage. Copied, never changed; "" when there are none.
+function getAfflictionEffectDescription(html, affliction) {
+  const lines = getSegments(html)
+    .filter((segment) =>
+      /^<strong>\s*(?:Saving Throw|Onset|Maximum Duration|Stage \d+)\s*<\/strong>/i.test(segment) ||
+      /^.+?\s*\((?:curse|disease|poison)[^)]*\)/i.test(stripHtml(segment)))
+    .map((segment) => `<p>${segment.trim().replace(/;\s*$/, "")}</p>`);
+  if (!lines.length) return "";
+  const count = affliction?.stages?.length || 0;
+  return `${lines.join("")}<p><em>The stacks are the stage${count ? ` (${count} stage${count === 1 ? "" : "s"})` : ""}.</em></p>`;
+}
+
+// The placeholder description the first runs wrote ("Poison: the stacks
+// are the stage (3 stages)."), the only description a rerun replaces
+const PLACEHOLDER_EFFECT_DESCRIPTION = /^<p>\w+: the stacks are the stage \(\d+ stages?\)\.<\/p>$/;
+
+// category: the delivering record's, so the effect files with its book.
+// description: getAfflictionEffectDescription of the delivering record.
+function getAfflictionEffect(affliction, { campaignId, portrait = "", category = "", description = "" } = {}) {
   const kind = affliction.kind || "affliction";
   return {
     campaignId,
     name: getAfflictionEffectName(affliction.name),
-    description: `<p>${kind.charAt(0).toUpperCase()}${kind.slice(1)}: the stacks are the stage (${affliction.stages.length} stage${affliction.stages.length === 1 ? "" : "s"}).</p>`,
+    description: description || `<p>${kind.charAt(0).toUpperCase()}${kind.slice(1)}: the stacks are the stage (${affliction.stages.length} stage${affliction.stages.length === 1 ? "" : "s"}).</p>`,
     portrait,
     ...(category ? { category } : {}),
     stackable: true,
@@ -308,6 +329,8 @@ module.exports = {
   isWritableAffliction,
   getAfflictionData,
   getAfflictionEffect,
+  getAfflictionEffectDescription,
   getAfflictionEffectName,
+  PLACEHOLDER_EFFECT_DESCRIPTION,
   UNITS,
 };
