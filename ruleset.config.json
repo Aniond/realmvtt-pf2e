@@ -1152,7 +1152,7 @@
       "orderCriteria": [],
       "maxLength": 0,
       "filterCriteria": [],
-      "singleRow": true
+      "singleRow": false
     },
     {
       "name": "Crafting List",
