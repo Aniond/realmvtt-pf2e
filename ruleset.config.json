@@ -5731,6 +5731,9 @@
         },
         "CampaignTools": {
           "file": "rollhandlers/campaign-tools.js"
+        },
+        "Travel": {
+          "file": "rollhandlers/travel.js"
         }
       },
       "defaultDice": "default",

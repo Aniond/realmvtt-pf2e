@@ -401,4 +401,146 @@
       </div>
     </accordion>
   </div>
+
+  <div
+    class="rvtt-sheet-section rvtt-sheet-corners"
+    style="background: var(--bg, transparent)"
+  >
+    <span class="rvtt-sheet-corner rvtt-sheet-corner--tl"></span>
+    <span class="rvtt-sheet-corner rvtt-sheet-corner--tr"></span>
+    <span class="rvtt-sheet-corner rvtt-sheet-corner--bl"></span>
+    <span class="rvtt-sheet-corner rvtt-sheet-corner--br"></span>
+
+    <!-- Hexploration (travel.js): the day, activities, the region's
+         encounter check, Travel and Reconnoiter -->
+    <accordion size="xs" field="hexplorationOpen" label="Hexploration">
+      <box onload="loadTravelMeters()">
+        <div
+          style="
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            margin-bottom: 4px;
+          "
+        >
+          <label field="hexMeter.dayLabel" size="lg" variant="bold" hideifempty="true"></label>
+          <label field="hexMeter.activitiesLabel" size="sm" color="orange" hideifempty="true"></label>
+        </div>
+        <label field="hexMeter.detail" size="xs" color="dimmed" hideifempty="true"></label>
+        <label field="hexMeter.task" size="sm" hideifempty="true"></label>
+        <label field="hexMeter.last" size="xs" color="dimmed" hideifempty="true"></label>
+      </box>
+      <div style="display: flex; gap: 4px; flex-wrap: wrap; margin-top: 10px">
+        <button
+          size="xs"
+          variant="light"
+          icon="IconUsers"
+          label="Party Speed"
+          onclick="setHexSpeedFromParty()"
+        ></button>
+        <button
+          size="xs"
+          variant="light"
+          icon="IconMap"
+          label="Region"
+          onclick="promptHexRegion()"
+        ></button>
+        <button
+          size="xs"
+          variant="light"
+          icon="IconSunrise"
+          label="Start Day"
+          onclick="startHexDay(false)"
+        ></button>
+        <button
+          size="xs"
+          variant="light"
+          icon="IconRun"
+          label="Forced March"
+          onclick="startHexDay(true)"
+        ></button>
+        <button
+          size="xs"
+          variant="light"
+          icon="IconWalk"
+          label="Travel"
+          onclick="promptHexActivity('travel')"
+        ></button>
+        <button
+          size="xs"
+          variant="light"
+          icon="IconBinoculars"
+          label="Reconnoiter"
+          onclick="promptHexActivity('reconnoiter')"
+        ></button>
+        <button
+          size="xs"
+          variant="light"
+          icon="IconRuler"
+          label="Travel Time"
+          onclick="promptTravelTime()"
+        ></button>
+      </div>
+    </accordion>
+  </div>
+
+  <div
+    class="rvtt-sheet-section rvtt-sheet-corners"
+    style="background: var(--bg, transparent)"
+  >
+    <span class="rvtt-sheet-corner rvtt-sheet-corner--tl"></span>
+    <span class="rvtt-sheet-corner rvtt-sheet-corner--tr"></span>
+    <span class="rvtt-sheet-corner rvtt-sheet-corner--bl"></span>
+    <span class="rvtt-sheet-corner rvtt-sheet-corner--br"></span>
+
+    <!-- Weather and the environment (travel.js): the GM's weather and what
+         it does, environmental damage, falling -->
+    <accordion size="xs" field="environmentOpen" label="Weather and Environment">
+      <box onload="loadTravelMeters()">
+        <label field="weatherMeter.summary" size="sm" variant="bold" hideifempty="true"></label>
+        <label field="weatherMeter.fatigue" size="xs" color="dimmed" hideifempty="true"></label>
+        <label field="weatherMeter.damage" size="xs" color="orange" hideifempty="true"></label>
+        <label field="weatherMeter.effects.0" size="xs" hideifempty="true"></label>
+        <label field="weatherMeter.effects.1" size="xs" hideifempty="true"></label>
+        <label field="weatherMeter.effects.2" size="xs" hideifempty="true"></label>
+      </box>
+      <div style="display: flex; gap: 4px; flex-wrap: wrap; margin-top: 10px">
+        <button
+          size="xs"
+          variant="light"
+          icon="IconCloud"
+          label="Set Weather"
+          onclick="promptWeather()"
+        ></button>
+        <button
+          size="xs"
+          variant="light"
+          icon="IconSpeakerphone"
+          label="Announce"
+          onclick="announceWeather()"
+        ></button>
+        <button
+          size="xs"
+          variant="light"
+          icon="IconTemperature"
+          label="Temperature Damage"
+          onclick="postTemperatureDamage()"
+        ></button>
+        <button
+          size="xs"
+          variant="light"
+          icon="IconFlame"
+          label="Environmental Damage"
+          onclick="promptEnvironmentalDamage()"
+        ></button>
+        <button
+          size="xs"
+          variant="light"
+          icon="IconArrowDown"
+          label="Falling"
+          onclick="promptFalling()"
+        ></button>
+      </div>
+    </accordion>
+  </div>
 </div>
