@@ -1,0 +1,287 @@
+<script>
+  // A challenge (roadmap B1, B2, challenges.js): Victory Points, a chase, an
+  // infiltration, research or an Influence encounter. The GM posts checks
+  // from it, and scores results from their cards. Laid out as the feats and
+  // items are: the name bar, the portrait beside the type, then dividers.
+  function getChallengeFieldValues(data) {
+    const type = getChallengeType(data);
+    const hidden = {
+      scoringBox: type !== "victory",
+      pointsBox: type === "chase",
+      infiltrationBox: type !== "infiltration",
+      influenceBox: type !== "influence",
+    };
+    const values = {};
+    Object.entries(hidden).forEach(([field, value]) => {
+      if (!!record.fields?.[field]?.hidden !== value) values[`fields.${field}.hidden`] = value;
+    });
+    const summary = getChallengeSummary(data);
+    if (data?.summary !== summary) values["data.summary"] = summary;
+    // "Chase 3", as a feat's "Feat 1"
+    const level = parseInt(data?.level, 10);
+    const levelLabel = `${CHALLENGE_TYPES[type].label}${Number.isFinite(level) && level > 0 ? ` ${level}` : ""}`;
+    if (data?.levelLabel !== levelLabel) values["data.levelLabel"] = levelLabel;
+    const obstaclesLabel = type === "research" ? "Library Sections" : "Obstacles";
+    if (data?.obstaclesLabel !== obstaclesLabel) values["data.obstaclesLabel"] = obstaclesLabel;
+    return values;
+  }
+
+  // On load and on a change: the type's fields, and the labels
+  function showHideFields() {
+    const values = getChallengeFieldValues(record.data || {});
+    if (Object.keys(values).length > 0) api.setValues(values);
+  }
+
+  function onFieldChange(field, value) {
+    const values = getChallengeFieldValues({ ...(record.data || {}), [field]: value });
+    if (Object.keys(values).length > 0) api.setValues(values);
+  }
+</script>
+
+<div
+  style="
+    display: flex;
+    flex-direction: row;
+    width: 100%;
+    gap: 4px;
+    background-color: rgb(
+      from var(--mantine-color-primary-filled) r g b / 0.25
+    );
+    border-radius: 4px;
+    margin-bottom: 4px;
+    padding: 0px 4px;
+  "
+>
+  <label
+    field="namefield"
+    placeholder="New Challenge"
+    size="lg"
+    variant="bold"
+  ></label>
+  <div style="margin-left: auto">
+    <label field="levelLabel" size="lg" variant="bold"></label>
+  </div>
+</div>
+
+<div
+  style="
+    display: flex;
+    gap: 4px;
+    flex-direction: column;
+    width: 100%;
+    margin-bottom: 4px;
+  "
+>
+  <div style="display: flex; gap: 4px">
+    <div
+      style="width: 125px; height: 125px; min-height: 125px; min-width: 125px"
+    >
+      <portrait width="125px" height="125px" field="portrait"></portrait>
+    </div>
+    <div
+      style="
+        display: flex;
+        gap: 4px;
+        flex-direction: column;
+        width: 100%;
+        margin-bottom: 4px;
+      "
+    >
+      <div style="display: flex; flex-direction: row; width: 100%; gap: 4px">
+        <numberfield
+          field="level"
+          label="Level"
+          width="70px"
+          minvalue="0"
+          placeholder="1"
+          onchange="onFieldChange('level', value)"
+        ></numberfield>
+        <div style="min-width: 70px; flex-grow: 1">
+          <dropdown
+            field="challengeType"
+            label="Type"
+            width="100%"
+            defaultvalue="victory"
+            placeholder="Victory Points"
+            onchange="onFieldChange('challengeType', value)"
+            options='[{"label": "Victory Points", "value": "victory"},
+            {"label": "Chase", "value": "chase"},
+            {"label": "Infiltration", "value": "infiltration"},
+            {"label": "Research", "value": "research"},
+            {"label": "Influence", "value": "influence"}]'
+          ></dropdown>
+        </div>
+      </div>
+      <box field="scoringBox">
+        <dropdown
+          field="scoring"
+          label="Scoring"
+          width="100%"
+          defaultvalue="accumulating"
+          placeholder="Accumulating"
+          options='[{"label": "Accumulating", "value": "accumulating"},
+          {"label": "Diminishing", "value": "diminishing"}]'
+        ></dropdown>
+      </box>
+    </div>
+  </div>
+</div>
+
+<div style="margin-top: 8px; margin-bottom: 8px">
+  <divider label="Progress"></divider>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 4px; width: 100%">
+  <box field="summaryBox" onload="showHideFields()">
+    <label field="summary" size="lg" variant="bold"></label>
+  </box>
+
+  <div style="display: flex; flex-direction: row; width: 100%; gap: 4px">
+    <box field="pointsBox" width="100%">
+      <numberfield
+        field="points"
+        label="Points"
+        width="100%"
+        placeholder="0"
+        onchange="onFieldChange('points', value)"
+      ></numberfield>
+    </box>
+    <box field="infiltrationBox" width="100%">
+      <div style="display: flex; flex-direction: row; width: 100%; gap: 4px">
+        <numberfield
+          field="awareness"
+          label="Awareness"
+          width="100%"
+          placeholder="0"
+          onchange="onFieldChange('awareness', value)"
+        ></numberfield>
+        <numberfield
+          field="edge"
+          label="Edge"
+          width="100%"
+          placeholder="0"
+          onchange="onFieldChange('edge', value)"
+        ></numberfield>
+      </div>
+    </box>
+    <numberfield
+      field="round"
+      label="Round"
+      width="100%"
+      placeholder="0"
+      onchange="onFieldChange('round', value)"
+    ></numberfield>
+    <numberfield
+      field="roundLimit"
+      label="Round Limit"
+      width="100%"
+      placeholder="None"
+      onchange="onFieldChange('roundLimit', value)"
+    ></numberfield>
+  </div>
+
+  <div style="display: flex; gap: 4px; flex-wrap: wrap; margin-top: 4px">
+    <button
+      size="sm"
+      variant="light"
+      icon="IconPlayerTrackNext"
+      label="Next Round"
+      onclick="advanceChallengeRound(record._id)"
+    ></button>
+    <button
+      size="sm"
+      variant="light"
+      color="green"
+      icon="IconTrophy"
+      label="Complete"
+      onclick="completeChallenge(record._id, record.name)"
+    ></button>
+  </div>
+</div>
+
+<box field="influenceBox">
+  <div style="margin-top: 8px; margin-bottom: 8px">
+    <divider label="Influence"></divider>
+  </div>
+  <div style="display: flex; flex-direction: column; gap: 4px; width: 100%">
+    <stringfield
+      field="discovery"
+      label="Discovery"
+      width="100%"
+      placeholder="Perception DC 20, Society DC 18"
+    ></stringfield>
+    <stringfield
+      field="influenceSkills"
+      label="Influence Skills"
+      width="100%"
+      placeholder="Diplomacy DC 20, Performance DC 22"
+    ></stringfield>
+    <div style="display: flex; flex-direction: row; width: 100%; gap: 4px">
+      <stringfield
+        field="resistances"
+        label="Resistances"
+        width="100%"
+        placeholder="None"
+      ></stringfield>
+      <stringfield
+        field="weaknesses"
+        label="Weaknesses"
+        width="100%"
+        placeholder="None"
+      ></stringfield>
+    </div>
+    <div style="display: flex; gap: 4px; flex-wrap: wrap; margin-top: 4px">
+      <button
+        size="sm"
+        variant="light"
+        icon="IconMessageCircle"
+        label="Call Influence"
+        onclick="postInfluenceChecks(record._id, 'influence')"
+      ></button>
+      <button
+        size="sm"
+        variant="light"
+        icon="IconSearch"
+        label="Call Discover"
+        onclick="postInfluenceChecks(record._id, 'discover')"
+      ></button>
+    </div>
+  </div>
+</box>
+
+<div style="display: flex; flex-direction: column; gap: 4px; margin-top: 8px">
+  <label
+    field="obstaclesLabel"
+    label="Obstacles"
+    size="sm"
+    textalign="left"
+    variant="bold"
+  ></label>
+  <list
+    listtype="challenge_obstacle_list"
+    field="obstacles"
+    variant="outline-striped"
+  ></list>
+
+  <label
+    label="Thresholds"
+    size="sm"
+    textalign="left"
+    variant="bold"
+  ></label>
+  <list
+    listtype="challenge_threshold_list"
+    field="thresholds"
+    variant="outline-striped"
+  ></list>
+</div>
+
+<div style="margin-top: 8px; margin-bottom: 8px">
+  <divider label="Description"></divider>
+</div>
+
+<richtextfield
+  field="description"
+  label="Description"
+  placeholder="Setup, complications, opportunities, timed events..."
+></richtextfield>
