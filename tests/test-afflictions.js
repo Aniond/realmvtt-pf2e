@@ -251,7 +251,10 @@ section("Rolling and resolving a stage save");
 
   const calls = [];
   ctx.api.setValuesOnTokenById = (id, type, values) => calls.push(values["data.afflictionState"]);
-  ctx.api.removeEffectById = (effectId) => calls.push(["remove", effectId]);
+  ctx.api.removeEffectById = (effectId, t, cb) => {
+    calls.push(["remove", effectId]);
+    cb();
+  };
   ctx.api.addEffect = () => {};
   ctx.api.addEffects = () => {};
   ctx.__state.messages.length = 0;
@@ -259,9 +262,29 @@ section("Rolling and resolving a stage save");
   const sick = token([["Filth Fever", 2], ["Enfeebled", 1], ["Treat Disease", 1]], fever);
   ctx.api.getToken = () => sick;
   ctx.resolveAfflictionSave(sick, "Filth Fever", 1);
-  assert("virulent lone success: the count and next interval only", [calls[0][0].successes, calls[0][0].roundsLeft], [1, 0]);
+  assert("the treatment used up first", calls[0], ["remove", "e-Treat Disease"]);
+  assert("virulent lone success: the count and next interval only", [calls[1][0].successes, calls[1][0].roundsLeft], [1, 0]);
   assert("no stage card", ctx.__state.messages.some((m) => m.includes("stage 2**")), false);
-  assert("the treatment used up", calls[1], ["remove", "e-Treat Disease"]);
+
+  // A stage change waits for the treatment's removal: one effect write at a time
+  const order = [];
+  let pending = null;
+  ctx.api.removeEffectById = (effectId, t, cb) => {
+    order.push("remove");
+    pending = cb;
+  };
+  ctx.api.setValuesOnTokenById = () => order.push("write");
+  ctx.api.deductEffectById = (effectId, t, cb) => {
+    order.push("deduct");
+    cb();
+  };
+  const treated = token([["Filth Fever", 2], ["Enfeebled", 1], ["Treat Disease", 1]], fever);
+  ctx.api.getToken = () => treated;
+  ctx.resolveAfflictionSave(treated, "Filth Fever", 2);
+  assert("nothing else before the removal finishes", order, ["remove"]);
+  pending();
+  assert("then the stage change", order[1], "write");
+  assert("and its effects", order.includes("deduct"), true);
 }
 
 section("Treat Poison and Treat Disease");

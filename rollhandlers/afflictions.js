@@ -413,23 +413,35 @@ function getAfflictionSaveLines(metadata, degree) {
   ];
 }
 
-// The treatment effect used up by a save
-function removeAfflictionTreatment(token, kind) {
+// The treatment effect used up by a save, then the callback: each effect
+// call writes the token's whole effect list, so the stage change waits
+function removeAfflictionTreatment(token, kind, callback) {
   const effect = AFFLICTION_TREATMENT_EFFECTS[kind];
   const treatment = effect ? getTokenCondition(token, effect) : null;
-  if (treatment) api.removeEffectById(treatment.effect._id, token);
+  if (!treatment) {
+    callback();
+    return;
+  }
+  api.removeEffectById(treatment.effect._id, token, () => callback());
 }
 
-// The stage save's Apply button: from the affliction as it is now (the GM
-// may have changed the effect's stacks)
+// The stage save's Apply button: the treatment it used comes off first, then
+// the affliction as it is now (the GM may have changed the effect's stacks)
 function resolveAfflictionSave(token, name, degree) {
-  const fresh = findSceneToken(token._id) || token;
-  const states = getAfflictionStates(fresh);
-  const state = states.find((s) => s.name === name);
-  if (!state) {
+  const first = findSceneToken(token._id) || token;
+  const found = getAfflictionStates(first).find((s) => s.name === name);
+  if (!found) {
     api.showNotification("That affliction is gone.", "yellow", "Afflictions");
     return;
   }
+  removeAfflictionTreatment(first, found.affliction.kind, () => applyAfflictionSave(token, name, degree));
+}
+
+function applyAfflictionSave(token, name, degree) {
+  const fresh = findSceneToken(token._id) || token;
+  const states = getAfflictionStates(fresh);
+  const state = states.find((s) => s.name === name);
+  if (!state) return;
   const current = getAfflictionStage(fresh, name) || state.appliedStage;
   const affliction = state.affliction;
   const change = getAfflictionSaveChange({ stage: current, max: affliction.stages.length, virulent: affliction.virulent, successes: state.successes }, degree);
@@ -443,7 +455,6 @@ function resolveAfflictionSave(token, name, degree) {
   } else {
     setAfflictionStage(fresh, name, change.stage, { states: withSuccesses });
   }
-  removeAfflictionTreatment(fresh, affliction.kind);
 }
 
 // ---------------------------------------------------------------- Turn end
