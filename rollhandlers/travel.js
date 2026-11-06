@@ -19,6 +19,9 @@
 
 // ---------------------------------------------------------------- Hexploration
 
+// A prompt's answer: one value, or the first of a list
+const pick = (choice) => (Array.isArray(choice) ? choice[0] : choice);
+
 const HEX_VARS = { state: "hexState", meter: "hexMeter" };
 
 // Random encounter flat check DCs by region (GM Core Table 3-7)
@@ -60,12 +63,16 @@ function getCreatureSpeed(creature) {
   return parseInt(speed?.value ?? speed, 10) || 0;
 }
 
-// "2 activities", "½ activity", "1½ activities"
-function formatActivities(n) {
+// "2", "½", "1½"
+function formatAmount(n) {
   const whole = Math.floor(n);
   const half = n - whole >= 0.5;
-  const amount = `${whole || (half ? "" : "0")}${half ? "½" : ""}`;
-  return `${amount} activit${n > 0 && n <= 1 ? "y" : "ies"}`;
+  return `${whole || (half ? "" : "0")}${half ? "½" : ""}`;
+}
+
+// "2 activities", "½ activity", "1½ activities"
+function formatActivities(n) {
+  return `${formatAmount(n)} activit${n > 0 && n <= 1 ? "y" : "ies"}`;
 }
 
 function getHexState() {
@@ -78,7 +85,6 @@ function getHexState() {
     road: false,
     flying: false,
     forcedMarch: false,
-    forcedDays: 0,
     task: null,
     last: "",
     ...(state && typeof state === "object" ? state : {}),
@@ -91,7 +97,7 @@ function getHexMeter(state) {
   const region = HEX_REGIONS[state.region] || HEX_REGIONS.plains;
   const extras = [state.road && "road or river", state.flying && "flying"].filter(Boolean);
   const task = state.task
-    ? `${state.task.kind === "travel" ? "Travel" : "Reconnoiter"} (${HEX_TERRAIN[state.task.terrain]?.label.toLowerCase() || ""}${state.task.road ? ", road" : ""}): ${state.task.spent} of ${state.task.cost} activities`
+    ? `${state.task.kind === "travel" ? "Travel" : "Reconnoiter"} (${HEX_TERRAIN[state.task.terrain]?.label.toLowerCase() || ""}${state.task.road ? ", road" : ""}): ${formatAmount(state.task.spent)} of ${formatActivities(state.task.cost)}`
     : "";
   return {
     dayLabel: state.day ? `Day ${state.day}` : "No day started",
@@ -128,20 +134,22 @@ function getHexEncounterCheck(state, d20, d10s = []) {
 // Start Day: the activities for the day (a forced march adds one Travel, or
 // gives a full one at Speed 10 or less, and is the only activity), and its
 // encounter check. A Speed of 10 or less has ½ an activity a day, which
-// carries over in the task. { state, gmLines, line }
+// carries over in the task. A forced march's days aren't counted: the GM
+// line gives each PC's safe days and the rule, and the GM applies fatigue.
+// { state, gmLines, line }
 function getStartDayValues(state, { forced = false, d20, d10s = [], party = [] } = {}) {
   const perDay = getHexActivitiesPerDay(state.speed);
   const day = state.day + 1;
-  const forcedDays = forced ? state.forcedDays + 1 : 0;
   const left = forced ? (perDay < 1 ? 1 : perDay + 1) : perDay;
   const check = getHexEncounterCheck(state, d20, d10s);
   const gmLines = [check.line];
   if (forced) {
-    // Safe for days equal to the Constitution modifier (at least 1)
-    const tired = party.filter((member) => Math.max(1, parseInt(member?.data?.con, 10) || 0) < forcedDays).map((member) => getCreatureName(member));
-    gmLines.push(`Forced march, day ${forcedDays}: only Travel today.${tired.length ? ` Fatigued now, until a full day of rest: ${tired.join(", ")}.` : ""}`);
+    // GM Core pg. 207: safe for days equal to the Constitution modifier
+    // (minimum 1)
+    const safe = party.map((member) => `${getCreatureName(member)} ${Math.max(1, parseInt(member?.data?.con, 10) || 0)}`);
+    gmLines.push(`Forced march: only Travel today.${safe.length ? ` Safe days (Con modifier, minimum 1): ${safe.join(", ")}.` : ""} Each forced march day past that makes the character fatigued until an entire day of downtime resting, and there's no forced march while anyone is fatigued.`);
   }
-  const next = { ...state, day, left, forcedMarch: forced, forcedDays, last: check.line };
+  const next = { ...state, day, left, forcedMarch: forced, last: check.line };
   return {
     state: next,
     gmLines,
@@ -167,7 +175,15 @@ function getHexActivityValues(state, kind, terrain, road = false) {
   if (!(state.left > 0)) {
     return { state, line: "No activities left today: start the next day." };
   }
+  // GM Core pg. 207: on a forced march, Travel is the only activity
+  if (kind === "reconnoiter" && state.forcedMarch) {
+    return { state, line: "Forced march: Travel is the only activity today." };
+  }
   const continuing = state.task && state.task.kind === kind;
+  // A task of the other kind is dropped, and the card says so
+  const dropped = state.task && !continuing
+    ? `The unfinished ${state.task.kind === "travel" ? "Travel" : "Reconnoiter"} (${formatAmount(state.task.spent)} of ${formatActivities(state.task.cost)}) is dropped. `
+    : "";
   const base = HEX_TERRAIN[terrain] || HEX_TERRAIN.open;
   const cost = kind === "travel" && road ? Math.max(1, base.cost - 1) : base.cost;
   const task = continuing ? { ...state.task } : { kind, terrain, road: kind === "travel" && !!road, cost, spent: 0 };
@@ -181,14 +197,18 @@ function getHexActivityValues(state, kind, terrain, road = false) {
     nextTask = null;
     line = kind === "travel" ? "The party Travels into the next hex." : "The party Reconnoiters the hex: they can Map the Area.";
   } else {
-    line = `${name}: ${task.spent} of ${task.cost} activities; it continues with the next activity.`;
+    line = `${name}: ${formatAmount(task.spent)} of ${formatActivities(task.cost)}; it continues with the next activity.`;
   }
+  line = `${dropped}${line}`;
   return { state: { ...state, left, task: nextTask, last: line }, line: `**Hexploration:** ${line} ${formatActivities(left)} left today.` };
 }
 
 function promptHexActivity(kind) {
   const state = getHexState();
-  const pick = (choice) => (Array.isArray(choice) ? choice[0] : choice);
+  if (kind === "reconnoiter" && state.forcedMarch) {
+    api.showNotification("Forced march: Travel is the only activity today.", "yellow", "Hexploration");
+    return;
+  }
   const run = (terrain, road) => {
     const values = getHexActivityValues(getHexState(), kind, terrain, road);
     writeHexState(values.state);
@@ -212,7 +232,6 @@ function promptHexActivity(kind) {
 // The region (its encounter DC) and whether the party is on a road or
 // river, or flying
 function promptHexRegion() {
-  const pick = (choice) => (Array.isArray(choice) ? choice[0] : choice);
   const options = Object.entries(HEX_REGIONS).flatMap(([value, r]) => [
     { label: `${r.label} (DC ${r.dc})`, value },
     { label: `${r.label}, road or river (DC ${r.dc - 2})`, value: `${value}:road` },
@@ -285,8 +304,8 @@ const WEATHER_VARS = { state: "weatherState", meter: "weatherMeter" };
 // Temperature (GM Core pg. 95): hours of travel before fatigue, and damage
 const TEMPERATURES = {
   "incredible-cold": { label: "Incredible cold", range: "-80°F or colder", fatigue: 2, damage: { category: "moderate", type: "cold", every: "minute" } },
-  "extreme-cold": { label: "Extreme cold", range: "-79°F to -20°F", fatigue: 4, damage: { category: "minor", type: "cold", every: "10 minutes" } },
-  "severe-cold": { label: "Severe cold", range: "-21°F to 12°F", fatigue: 4, damage: { category: "minor", type: "cold", every: "hour" } },
+  "extreme-cold": { label: "Extreme cold", range: "-79°F to -20°F", fatigue: 4, damage: { category: "minor", type: "cold", every: "10 minutes" }, gear: "cold-weather gear makes it severe cold's" },
+  "severe-cold": { label: "Severe cold", range: "-21°F to 12°F", fatigue: 4, damage: { category: "minor", type: "cold", every: "hour" }, gear: "cold-weather gear negates it" },
   "mild-cold": { label: "Mild cold", range: "13°F to 32°F", fatigue: 4 },
   normal: { label: "Normal", range: "33°F to 94°F", fatigue: 8 },
   "mild-heat": { label: "Mild heat", range: "95°F to 104°F", fatigue: 4 },
@@ -331,18 +350,20 @@ function getWeatherMeter(state) {
   // Heavier than drizzle or light snow: fatigue after 4 hours (GM Core
   // pg. 95)
   const fatigue = Math.min(temperature.fatigue, precipitation > 1 ? 4 : 8);
-  const damage = temperature.damage
-    ? `${capitalize(temperature.damage.category)} ${temperature.damage.type} damage (${ENVIRONMENTAL_DAMAGE[temperature.damage.category].low}–${ENVIRONMENTAL_DAMAGE[temperature.damage.category].high}) every ${temperature.damage.every}${temperature.damage.type === "cold" ? temperature.damage.category === "minor" && temperature.damage.every === "hour" ? "; cold-weather gear negates it" : temperature.damage.every === "10 minutes" ? "; cold-weather gear makes it severe cold's" : "" : ""}.`
+  const hurt = temperature.damage;
+  const row = hurt && ENVIRONMENTAL_DAMAGE[hurt.category];
+  const damage = hurt
+    ? `${capitalize(hurt.category)} ${hurt.type} damage (${row.low}–${row.high}) every ${hurt.every}${temperature.gear ? `; ${temperature.gear}` : ""}.`
     : "";
   const effects = [];
   if (precipitation) {
     effects.push(`Precipitation: -${precipitation} circumstance penalty to visual Perception; rain douses flames${precipitation >= 3 ? "; distant creatures can be concealed" : ""}${cold && precipitation > 1 ? "; soaked characters treat the cold as one step colder" : ""}.`);
   }
   if (fog) {
-    effects.push(`Fog: -${fog} circumstance penalty to visual Perception${fog >= 3 ? "; creatures seen through it are concealed" : ""}.`);
+    effects.push(`Fog: -${fog} circumstance penalty to visual Perception; it can conceal creatures seen through it.`);
   }
   if (wind) {
-    effects.push(`Wind: -${wind} circumstance penalty to auditory Perception and physical ranged attacks; handheld flames go out${wind >= 2 ? `; ${wind >= 3 ? "greater difficult" : "difficult"} terrain for fliers (Maneuver in Flight)` : ""}${wind >= 4 ? "; moving on the ground can take Athletics" : ""}.`);
+    effects.push(`Wind: -${wind} circumstance penalty to auditory Perception and physical ranged attacks; handheld flames go out; flying in it can be difficult or greater difficult terrain, and strong winds can call for Athletics to move.`);
   }
   return {
     summary: parts.join(", "),
@@ -359,7 +380,6 @@ function writeWeather(state) {
 
 // Set Weather: the temperature, then precipitation, fog and wind
 function promptWeather() {
-  const pick = (choice) => (Array.isArray(choice) ? choice[0] : choice);
   const levels = WEATHER_LEVELS.map((level, i) => ({ label: i ? `${capitalize(level)} (-${i})` : "None", value: level }));
   const ask = (title, options, cb) =>
     api.showPrompt("Weather", title, "Select...", options, null, (choice) => {
@@ -407,7 +427,6 @@ function postTemperatureDamage() {
 }
 
 function promptEnvironmentalDamage() {
-  const pick = (choice) => (Array.isArray(choice) ? choice[0] : choice);
   const categories = Object.entries(ENVIRONMENTAL_DAMAGE).map(([value, row]) => ({ label: `${row.label} (${row.low}–${row.high})`, value }));
   const types = ["bludgeoning", "cold", "fire", "electricity", "acid", "poison", "sonic", "piercing", "slashing"].map((value) => ({ label: capitalize(value), value }));
   api.showPrompt("Environmental Damage", "How much?", "Select...", categories, null, (category) => {
@@ -444,7 +463,6 @@ function promptFalling() {
   api.showValuePrompt("Falling", "Feet fallen", (value) => {
     const distance = parseInt(value, 10);
     if (!(distance > 0)) return;
-    const pick = (choice) => (Array.isArray(choice) ? choice[0] : choice);
     api.showPrompt("Falling", "Where does it land?", "Select...", [
       { label: "Solid ground", value: "0" },
       { label: "Water, snow or soft ground (-20 feet)", value: "20" },

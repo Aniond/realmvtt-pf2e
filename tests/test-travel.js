@@ -13,7 +13,7 @@ ctx.api.setCampaignVariable = (name, value) => {
   vars[name] = value;
 };
 
-const state = (extra = {}) => ({ day: 0, speed: 25, left: 0, region: "plains", road: false, flying: false, forcedMarch: false, forcedDays: 0, task: null, last: "", ...extra });
+const state = (extra = {}) => ({ day: 0, speed: 25, left: 0, region: "plains", road: false, flying: false, forcedMarch: false, task: null, last: "", ...extra });
 
 section("Hexploration: activities per day (Table 3-6)");
 {
@@ -38,15 +38,16 @@ section("Hexploration: Start Day");
   const start = ctx.getStartDayValues(state({ speed: 30 }), { d20: 5 });
   assert("day 1, two activities", [start.state.day, start.state.left], [1, 2]);
   assertIncludes("posted", start.line, "**Day 1** of travel: 2 activities.");
-  const forced = ctx.getStartDayValues(state({ speed: 30, forcedDays: 1, day: 1 }), {
+  const forced = ctx.getStartDayValues(state({ speed: 30, day: 1 }), {
     forced: true,
     d20: 5,
     party: [{ name: "Amiri", data: { con: 3 } }, { name: "Ezren", data: { con: 1 } }, { name: "Seelah", data: { con: 0 } }],
   });
-  assert("forced march: one more Travel", [forced.state.left, forced.state.forcedDays], [3, 2]);
-  assertIncludes("past their Constitution's days: fatigued", forced.gmLines[1], "Fatigued now, until a full day of rest: Ezren, Seelah.");
+  assert("forced march: one more Travel", [forced.state.left, forced.state.forcedMarch], [3, true]);
+  assertIncludes("each PC's safe days, minimum 1", forced.gmLines[1], "Safe days (Con modifier, minimum 1): Amiri 3, Ezren 1, Seelah 1.");
+  assertIncludes("... and the rule for the GM", forced.gmLines[1], "no forced march while anyone is fatigued");
+  assert("no day count kept", "forcedDays" in forced.state, false);
   assert("slow: a full Travel when forced", ctx.getStartDayValues(state({ speed: 10 }), { forced: true, d20: 5 }).state.left, 1);
-  assert("an ordinary day resets the count", ctx.getStartDayValues(state({ forcedDays: 3 }), { d20: 5 }).state.forcedDays, 0);
 }
 
 section("Hexploration: Travel and Reconnoiter");
@@ -65,6 +66,12 @@ section("Hexploration: Travel and Reconnoiter");
   const slow = ctx.getHexActivityValues(state({ left: 0.5 }), "travel", "open");
   assert("½ a day at Speed 10: half done", [slow.state.task.spent, slow.state.left], [0.5, 0]);
   assertIncludes("no activities", ctx.getHexActivityValues(state({ left: 0 }), "travel", "open").line, "No activities left today");
+  const march = ctx.getHexActivityValues(state({ left: 3, forcedMarch: true }), "reconnoiter", "open");
+  assert("forced march: no Reconnoiter", [march.state.left, march.line], [3, "Forced march: Travel is the only activity today."]);
+  assert("... Travel still runs", ctx.getHexActivityValues(state({ left: 3, forcedMarch: true }), "travel", "open").state.left, 2);
+  const switched = ctx.getHexActivityValues(state({ left: 2, task: { kind: "travel", terrain: "greater", road: false, cost: 3, spent: 1 } }), "reconnoiter", "open");
+  assertIncludes("switching drops the Travel, and says so", switched.line, "The unfinished Travel (1 of 3 activities) is dropped.");
+  assertIncludes("half progress as ½", slow.line, "Travel: ½ of 1 activity;");
 }
 
 section("Hexploration: the meter");
@@ -73,6 +80,7 @@ section("Hexploration: the meter");
   assert("labels", [meter.dayLabel, meter.activitiesLabel], ["Day 3", "1 activity left"]);
   assert("detail", meter.detail, "Speed 25 ft (1 activity a day) · Forest, road or river");
   assert("task", meter.task, "Travel (difficult): 1 of 2 activities");
+  assert("half a task as ½", ctx.getHexMeter(state({ task: { kind: "travel", terrain: "open", road: false, cost: 1, spent: 0.5 } })).task, "Travel (open): ½ of 1 activity");
   assert("before a day", ctx.getHexMeter(state()).dayLabel, "No day started");
 }
 
@@ -93,11 +101,11 @@ section("Weather");
   assertIncludes("precipitation", meter.effects[0], "-3 circumstance penalty to visual Perception");
   assertIncludes("... soaked in the cold", meter.effects[0], "one step colder");
   assertIncludes("wind", meter.effects[1], "-2 circumstance penalty to auditory Perception and physical ranged attacks");
-  assertIncludes("... fliers", meter.effects[1], "difficult terrain for fliers");
+  assertIncludes("... fliers, as the GM judges", meter.effects[1], "flying in it can be difficult or greater difficult terrain");
   assert("third line empty", meter.effects[2], "");
   const calm = ctx.getWeatherMeter({ temperature: "normal", precipitation: "light", fog: "heavy", wind: "none" });
   assert("light rain: 8 hours", calm.fatigue, "Overland travel: fatigued after 8 hours.");
-  assertIncludes("heavy fog: concealed", calm.effects[1], "creatures seen through it are concealed");
+  assertIncludes("fog: can conceal", calm.effects[1], "it can conceal creatures seen through it");
   assert("normal: no damage", calm.damage, "");
   assertIncludes("incredible heat", ctx.getWeatherMeter({ temperature: "incredible-heat", precipitation: "none", fog: "none", wind: "none" }).damage, "Moderate fire damage (4d6–6d6) every minute.");
 }
