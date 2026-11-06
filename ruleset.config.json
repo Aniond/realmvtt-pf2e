@@ -5763,6 +5763,9 @@
         },
         "Afflictions": {
           "file": "rollhandlers/afflictions.js"
+        },
+        "Travel": {
+          "file": "rollhandlers/travel.js"
         }
       },
       "defaultDice": "default",
