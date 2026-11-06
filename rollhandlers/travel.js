@@ -244,6 +244,12 @@ function promptHexRegion() {
   }, "OK", "Cancel", 1);
 }
 
+// Clear: a new trip from no day started; the party's Speed and the region
+// stay
+function clearHexploration() {
+  writeHexState({ ...getHexState(), day: 0, left: 0, forcedMarch: false, task: null, last: "" });
+}
+
 // The slowest Speed on the Party Sheet
 function setHexSpeedFromParty() {
   api.getParty((party) => {
@@ -384,8 +390,11 @@ function writeWeather(state) {
 // Set Weather: the temperature, then precipitation, fog and wind
 function promptWeather() {
   const levels = WEATHER_LEVELS.map((level, i) => ({ label: i ? `${capitalize(level)} (-${i})` : "None", value: level }));
+  // A new array for each prompt: the client resets a prompt only when its
+  // options change, so the same array twice in a row (precipitation, then
+  // fog) leaves the second prompt's OK and Cancel doing nothing
   const ask = (title, options, cb) =>
-    api.showPrompt("Weather", title, "Select...", options, null, (choice) => {
+    api.showPrompt("Weather", title, "Select...", [...options], null, (choice) => {
       const value = pick(choice);
       if (value) cb(value);
     }, "OK", "Cancel", 1);
