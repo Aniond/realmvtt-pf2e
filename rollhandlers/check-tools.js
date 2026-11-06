@@ -532,6 +532,7 @@ const SECRET_ACTIONS = new Set([
   "conceal an object",
   "create forgery",
   "decipher writing",
+  "discover",
   "gather information",
   "hide",
   "identify alchemy",

@@ -85,9 +85,10 @@ function parseChallengeChecks(text) {
 }
 
 // A roll button for a check, carrying the challenge (the record and
-// obstacle) to skill.js
+// obstacle) to skill.js. The label has no DC, as getCallForCheckMessage's
+// (gm-tools.js): players see the skill, the GM the DC.
 function getChallengeCheckButton(check, challenge) {
-  const label = `${check.skill.replace(/[^\w]+/g, "_")}_DC_${check.dc}`;
+  const label = `Roll_${check.skill.replace(/[^\w]+/g, "_")}`;
   return `\`\`\`${label}\nrollChallengeCheck(${JSON.stringify(check.skill)}, ${check.dc}, ${JSON.stringify(challenge)});\n\`\`\``;
 }
 
@@ -99,14 +100,15 @@ function findLoreSkill(creature, skill) {
 
 // A challenge check for each selected (or dropped-on) token. A Lore is the
 // creature's own, by name; one it doesn't have rolls untrained, with its
-// Intelligence modifier.
+// Intelligence modifier. Discover is rolled as its action, which has the
+// secret trait (GM Core pg. 187; SECRET_ACTIONS, check-tools.js).
 function rollChallengeCheck(skill, dc, challenge) {
   const tokens = api.getSelectedOrDroppedToken() || [];
   if (!tokens.length) {
     api.showNotification("Select the tokens that make the check.", "yellow", "Challenge");
     return;
   }
-  const metadata = { challenge };
+  const metadata = challenge?.discover ? { challenge, action: "Discover" } : { challenge };
   tokens.forEach((token) => {
     if (/\blore\b/i.test(skill)) {
       const lore = findLoreSkill(token, skill);
@@ -205,7 +207,7 @@ const DISCOVER_RESULTS = {
 function getChallengeResultLines(challenge, degree) {
   if (!challenge?.recordId || degree === null || degree === undefined) return [];
   const type = CHALLENGE_TYPES[challenge.type] ? challenge.type : "victory";
-  if (challenge.discover) return [`**Discover:** ${DISCOVER_RESULTS[degree] || ""}`];
+  if (challenge.discover) return [`[gm]**Discover:** ${DISCOVER_RESULTS[degree] || ""}[/gm]`];
   const change = getChallengePointChange(type, degree, challenge.diminishing);
   const where = challenge.obstacle ? ` (${challenge.obstacle})` : "";
   const args = `${JSON.stringify(challenge.recordId)}, ${JSON.stringify(challenge.obstacleId || null)}`;
@@ -215,6 +217,10 @@ function getChallengeResultLines(challenge, degree) {
     lines.push(`**${CHALLENGE_TYPES[type].label}:** no points${where}.`);
   } else {
     lines.push(`**${CHALLENGE_TYPES[type].label}:** ${described}${where}.`);
+    // GM Core pg. 184: only if regaining ground is possible
+    if (type === "victory" && challenge.diminishing && degree === 2) {
+      lines.push("[gm]Only if regaining ground is possible; otherwise it counts as a success.[/gm]");
+    }
     lines.push(`\`\`\`Score_${described.replace(/[^\w+-]+/g, "_")}\nscoreChallenge(${args}, ${degree});\n\`\`\``);
   }
   if (type === "infiltration" && degree <= 0) {
@@ -223,15 +229,17 @@ function getChallengeResultLines(challenge, degree) {
   return lines;
 }
 
-// The thresholds a total passed going from before to after (up), lowest
-// first. track: "points" or "awareness".
+// The thresholds a total passed going from before to after, in the order
+// passed: up, lowest first; down (a diminishing subsystem), highest first.
+// track: "points" or "awareness".
 function getReachedThresholds(thresholds, track, before, after) {
-  if (after <= before) return [];
+  if (after === before) return [];
+  const up = after > before;
   return (thresholds || [])
     .filter((t) => (t?.data?.track || "points") === track)
     .map((t) => ({ points: parseInt(t?.data?.points, 10) || 0, outcome: t?.data?.outcome || t?.name || "" }))
-    .filter((t) => t.points > before && t.points <= after)
-    .sort((a, b) => a.points - b.points);
+    .filter((t) => (up ? t.points > before && t.points <= after : t.points < before && t.points >= after))
+    .sort((a, b) => (up ? a.points - b.points : b.points - a.points));
 }
 
 // One line for the sheet and the cards: "5 VP", "2 of 6 obstacles
@@ -292,9 +300,17 @@ function getChallengeScoreValues(record, obstacleId, degree, useEdge = false) {
   const points = parseInt(data.points, 10) || 0;
   const total = Math.max(0, points + applied);
   if (total !== points) values["data.points"] = total;
-  getReachedThresholds(data.thresholds, "points", points, total).forEach((t) => {
-    lines.push(`[gm]Threshold ${t.points} ${CHALLENGE_TYPES[type].short}: ${t.outcome}[/gm]`);
-  });
+  // Diminishing Victory Points: the thresholds are drawbacks, reached as the
+  // points fall, and losing them all is a negative event (GM Core pg. 184-185)
+  const diminishing = type === "victory" && data.scoring === "diminishing";
+  if (diminishing ? total < points : total > points) {
+    getReachedThresholds(data.thresholds, "points", points, total).forEach((t) => {
+      lines.push(`[gm]Threshold ${t.points} ${CHALLENGE_TYPES[type].short}: ${t.outcome}[/gm]`);
+    });
+  }
+  if (diminishing && total === 0 && points > 0) {
+    lines.push("[gm]No Victory Points left: a negative event occurs.[/gm]");
+  }
   if (change.awareness) {
     const awareness = parseInt(data.awareness, 10) || 0;
     values["data.awareness"] = awareness + change.awareness;

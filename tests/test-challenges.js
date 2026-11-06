@@ -41,7 +41,8 @@ section("Posting an obstacle's checks");
   assertIncludes("titled", message, "Rooftop Chase: Crowded Market");
   assertIncludes("progress", message, "1 of 3 CP");
   assertIncludes("the DCs for the GM", message, "[gm]Acrobatics DC 20, Diplomacy DC 18[/gm]");
-  assertIncludes("a button per check", message, "```Acrobatics_DC_20\nrollChallengeCheck(\"Acrobatics\", 20, ");
+  assertIncludes("a button per check, the DC in its code", message, "```Roll_Acrobatics\nrollChallengeCheck(\"Acrobatics\", 20, ");
+  assert("no DC in the labels", /```\w*DC/.test(message), false);
   assertIncludes("the challenge in the button", message, '"recordId":"c1","obstacleId":"o1","type":"chase"');
   const empty = ctx.getChallengeObstacleMessage(record, obstacle("o2", "Fog", "", 0, 2));
   assertIncludes("no checks: a GM hint", empty, "No checks to post");
@@ -63,6 +64,10 @@ section("Rolling: a Lore is the creature's own");
   calls.length = 0;
   ctx.rollChallengeCheck("Athletics", 20, { recordId: "c1" });
   assert("a skill by name", calls[0].slice(1, 4), ["athletics", 20, false]);
+  assert("no action for other checks", calls[0][10], { challenge: { recordId: "c1" } });
+  calls.length = 0;
+  ctx.rollChallengeCheck("Perception", 20, { recordId: "c1", discover: true });
+  assert("Discover: rolled as the action", calls[0][10].action, "Discover");
   ctx.rollSkill = rollSkill;
   ctx.api.getSelectedOrDroppedToken = () => [];
 }
@@ -83,6 +88,11 @@ section("The result card's lines");
   assert("infiltration success: no Edge button", ctx.getChallengeResultLines({ ...base, type: "infiltration" }, 1).length, 2);
   const discover = ctx.getChallengeResultLines({ recordId: "c1", type: "influence", discover: true }, 2);
   assertIncludes("Discover: what it learns", discover[0], "Learns two");
+  assert("... for the GM only", [discover[0].startsWith("[gm]"), discover[0].endsWith("[/gm]")], [true, true]);
+  const dimCrit = ctx.getChallengeResultLines({ ...base, diminishing: true }, 2);
+  assertIncludes("diminishing critical success: only if regaining ground is possible", dimCrit[1], "regaining ground");
+  assert("... still a Score button", dimCrit[2].startsWith("```Score_+1_VP"), true);
+  assert("accumulating: no note", ctx.getChallengeResultLines(base, 2).length, 2);
   assert("no challenge: nothing", ctx.getChallengeResultLines(null, 1), []);
 }
 
@@ -97,6 +107,26 @@ section("Scoring: Victory Points and thresholds");
   assert("never below 0", down.values["data.points"], undefined);
   const diminishing = ctx.getChallengeScoreValues(challenge({ points: 3, scoring: "diminishing" }), null, -1);
   assert("diminishing: a critical failure loses 2", diminishing.values["data.points"], 1);
+
+  const falling = challenge({
+    points: 5,
+    scoring: "diminishing",
+    thresholds: [threshold(4, "The guards are alerted"), threshold(2, "The bridge collapses"), threshold(8, "Unused")],
+  });
+  const fell = ctx.getChallengeScoreValues(falling, null, -1);
+  assertIncludes("diminishing: a threshold reached on the way down", fell.lines.join("\n"), "[gm]Threshold 4 VP: The guards are alerted[/gm]");
+  assert("... only the ones passed", fell.lines.some((l) => l.includes("bridge")), false);
+  const twoDown = ctx.getChallengeScoreValues({ ...falling, data: { ...falling.data, points: 4 } }, null, -1);
+  assert("leaving a threshold doesn't fire it again", twoDown.lines.some((l) => l.includes("guards")), false);
+  assertIncludes("... the next one does", twoDown.lines.join("\n"), "The bridge collapses");
+  const rising = ctx.getChallengeScoreValues({ ...falling, data: { ...falling.data, points: 3 } }, null, 2);
+  assert("diminishing: regaining ground fires nothing", rising.lines.some((l) => l.includes("Threshold")), false);
+  const zero = ctx.getChallengeScoreValues({ ...falling, data: { ...falling.data, points: 1, thresholds: [] } }, null, -1);
+  assertIncludes("diminishing: all lost, a negative event", zero.lines.join("\n"), "No Victory Points left: a negative event occurs.");
+  const stillZero = ctx.getChallengeScoreValues({ ...falling, data: { ...falling.data, points: 0, thresholds: [] } }, null, -1);
+  assert("... once", stillZero.lines.some((l) => l.includes("negative event")), false);
+  const accDown = ctx.getChallengeScoreValues(challenge({ points: 5, thresholds: [threshold(4, "Listens")] }), null, -1);
+  assert("accumulating: falling back fires nothing", accDown.lines.some((l) => l.includes("Threshold")), false);
 }
 
 section("Scoring: a chase's obstacles");
