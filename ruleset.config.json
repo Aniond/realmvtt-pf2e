@@ -5731,6 +5731,9 @@
         },
         "CampaignTools": {
           "file": "rollhandlers/campaign-tools.js"
+        },
+        "Afflictions": {
+          "file": "rollhandlers/afflictions.js"
         }
       },
       "defaultDice": "default",
