@@ -28,7 +28,7 @@ const AFFLICTION_UNIT_ROUNDS = { round: 1, minute: 10, hour: 600, day: 14400, we
 const AFFLICTION_COUNTED_UNITS = new Set(["round", "minute"]);
 
 // Conditions with their own ending, kept when the stage changes (Player
-// Core pg. 431: they last their normal duration)
+// Core pg. 430: they last their normal duration)
 const AFFLICTION_LASTING_CONDITIONS = new Set(["drained", "doomed", "frightened", "sickened", "fatigued", "wounded"]);
 
 // Condition names read from a stage's text when it has no effect links
