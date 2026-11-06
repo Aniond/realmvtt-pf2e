@@ -58,10 +58,14 @@ function stripHtml(html) {
     .trim();
 }
 
-// "1 round", "6 rounds", "10 minutes": { value, unit }, or null (dice,
-// "varies"). The first time in the text.
+// "1 round", "6 rounds", "10 minutes": { value, unit }; "1d6 hours":
+// { dice, unit } for the GM to roll; or null ("varies"). The first time in
+// the text.
 function parseTime(text) {
-  const match = `${text || ""}`.toLowerCase().match(/(^|[^d\d])(\d+)\s*(round|minute|hour|day|week)s?\b/);
+  const lower = `${text || ""}`.toLowerCase();
+  const dice = lower.match(/(\d+d\d+)\s*(round|minute|hour|day|week)s?\b/);
+  const match = lower.match(/(^|[^d\d])(\d+)\s*(round|minute|hour|day|week)s?\b/);
+  if (dice && (!match || dice.index <= match.index)) return { dice: dice[1], unit: dice[2] };
   return match ? { value: parseInt(match[2], 10), unit: match[3] } : null;
 }
 
@@ -139,7 +143,8 @@ function parseRecordAffliction(record) {
   const data = record?.data || {};
   const html = data.description || "";
   const problems = [];
-  const traits = (data.traits || []).map((t) => `${t}`.toLowerCase());
+  // Some imports join the traits with hyphens ("Alchemical-…-Poison-Sleep")
+  const traits = (data.traits || []).flatMap((t) => `${t}`.toLowerCase().split("-"));
   const affliction = {
     name: record?.name || "",
     kind: null,
@@ -155,11 +160,13 @@ function parseRecordAffliction(record) {
   getSegments(html).forEach((segment) => {
     const label = segment.match(/^<strong>\s*(Saving Throw|Onset|Maximum Duration|Stage (\d+))\s*<\/strong>/i);
     if (!label) {
-      // A spell's affliction line: "<strong>Goblin Pox</strong> (disease) <strong>Level</strong> 1"
-      const header = stripHtml(segment).match(/^(.+?)\s*\((curse|disease|poison)[^)]*\)\s*Level\s+(\d+)/i);
+      // The affliction's own line: "<strong>Goblin Pox</strong> (disease)
+      // <strong>Level</strong> 1", or "<strong>Curse of Decadence</strong>
+      // (curse)" before its Saving Throw
+      const header = stripHtml(segment).match(/^(.+?)\s*\((curse|disease|poison)[^)]*\)(?:\s*Level\s+(\d+))?/i);
       if (header && !affliction.kind) {
         affliction.kind = header[2].toLowerCase();
-        affliction.level = parseInt(header[3], 10);
+        if (header[3]) affliction.level = parseInt(header[3], 10);
       }
       return;
     }
@@ -188,6 +195,12 @@ function parseRecordAffliction(record) {
   stageNumbers.forEach((n, i) => {
     if (n !== i + 1) problems.push(`stage ${n} is line ${i + 1}`);
   });
+  // "As stage 1, plus …": that stage's interval
+  affliction.stages.forEach((stage) => {
+    const as = stage.text.match(/^As stage (\d+)/i);
+    const source = as && affliction.stages[parseInt(as[1], 10) - 1];
+    if (!stage.interval && source?.interval) stage.interval = source.interval;
+  });
   affliction.stages.forEach((stage, i) => {
     if (!stage.interval) problems.push(`stage ${i + 1}: no interval${i === affliction.stages.length - 1 ? " (a final stage?)" : ""}`);
   });
@@ -196,7 +209,9 @@ function parseRecordAffliction(record) {
 
 // One line per affliction for the report
 function describeTime(time) {
-  return time ? `${time.value} ${time.unit}${time.value === 1 ? "" : "s"}` : "—";
+  if (!time) return "—";
+  if (time.dice) return `${time.dice} ${time.unit}s`;
+  return `${time.value} ${time.unit}${time.value === 1 ? "" : "s"}`;
 }
 
 function describeAffliction(affliction) {

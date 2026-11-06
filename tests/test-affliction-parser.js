@@ -136,6 +136,23 @@ section("The report");
   assertIncludes("a parse listed", text, "fortitude DC 18; poison; onset —; max —; 1 stage");
 }
 
+section("Treasure Vault cases from the dry run");
+{
+  const tv = (name, traits, body) => parseRecordAffliction({ name, recordType: "items", data: { traits, description: `<p>${body}</p>` } });
+  const stupor = tv("Stupor Poison", ["Uncommon", "Alchemical-Consumable-Incapacitation-Injury-Poison-Sleep"],
+    "<strong>Saving Throw</strong> DC 20 Fortitude; <strong>Maximum Duration</strong> 6 hours; <strong>Stage 1</strong> slowed 1 and off-guard (1 round); <strong>Stage 4</strong> unconscious with no Perception check to wake up (1d6 hours)");
+  assert("hyphen-joined traits: still a poison", stupor.affliction.kind, "poison");
+  assert("a dice interval kept for the GM", stupor.affliction.stages[1].interval, { dice: "1d6", unit: "hour" });
+  const bower = tv("Bower Fruit", ["Rare", "Consumable", "Cursed", "Primal"],
+    "<strong>Curse of Decadence</strong> (curse) <strong>Saving Throw</strong> DC 30 Fortitude; <strong>Stage 1</strong> You become fatigued. (1 week); <strong>Stage 2</strong> As stage 1, plus you're sickened 1; <strong>Stage 3</strong> As stage 1, plus you're drained 1 and sickened 1");
+  assert("kind from its (curse) line", bower.affliction.kind, "curse");
+  assert("As stage 1: its interval", [bower.affliction.stages[1].interval, bower.affliction.stages[2].interval], [{ value: 1, unit: "week" }, { value: 1, unit: "week" }]);
+  assert("nothing left to report", bower.problems, []);
+  const blister = tv("Blisterwort", ["Poison"],
+    "<strong>Saving Throw</strong> DC 30 Fortitude; <strong>Maximum Duration</strong> 6 rounds; <strong>Stage 1</strong> 4d6 poison damage and weakness 2 to physical and force damage; <strong>Stage 2</strong> 5d6 poison damage and weakness 4 to physical and force damage");
+  assert("no interval in the data: reported, not guessed", [blister.affliction.stages[0].interval, blister.problems], [null, ["stage 1: no interval", "stage 2: no interval (a final stage?)"]]);
+}
+
 section("Records: items, NPC abilities, the data to write");
 {
   const { getRecordAfflictions, getAfflictionData, getAfflictionEffect, isWritableAffliction } = require("../tools/afflictions/parse");
