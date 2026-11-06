@@ -214,6 +214,9 @@ section("Records: items, NPC abilities, the data to write");
   const effect = getAfflictionEffect({ ...noDcFound[0].affliction, dc: 30 }, { campaignId: "c1", portrait: "/x.webp" });
   assert("the effect: named without the prefix, stackable", [effect.name, effect.stackable, effect.durationUnit, effect.portrait], ["Graveknight's Curse", true, "indefinite", "/x.webp"]);
   assertIncludes("... says the stacks are the stage", effect.description, "Curse: the stacks are the stage (1 stage).");
+  assert("... no category unless given", effect.category, undefined);
+  const categorized = getAfflictionEffect({ ...noDcFound[0].affliction, dc: 30 }, { campaignId: "c1", category: "Pathfinder GM Core" });
+  assert("... the delivering record's category", categorized.category, "Pathfinder GM Core");
 }
 
 summary();

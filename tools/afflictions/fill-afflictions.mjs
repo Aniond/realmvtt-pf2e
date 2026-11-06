@@ -102,15 +102,22 @@ const endpointFor = (recordType) => (recordType === "npcs" ? "/npcs" : "/records
 // ------------------------------------------------------------------ Effects
 
 // The affliction's effect, found by name in the campaign first so a second
-// run creates nothing. Created only with --write, and logged to the backup
-// before the record that uses it is written.
-async function ensureEffect(campaignId, affliction, portrait, backup) {
+// run creates nothing. Created only with --write (in the delivering record's
+// category), and logged to the backup before the record that uses it is
+// written. A dry run says what it would create.
+async function ensureEffect(campaignId, affliction, { portrait, category }, backup) {
   const name = getAfflictionEffectName(affliction.name);
   const params = new URLSearchParams({ campaignId, name });
   const found = (await api("GET", `/effects?${params}`)).data?.[0];
-  if (found) return found._id;
-  if (!WRITE) return null;
-  const effect = await api("POST", "/effects", getAfflictionEffect(affliction, { campaignId, portrait }));
+  if (found) {
+    if (!WRITE) console.log(`  uses effect ${name} (${found.category || "no category"})`);
+    return found._id;
+  }
+  if (!WRITE) {
+    console.log(`  would create effect ${name} (${category || "no category"})`);
+    return null;
+  }
+  const effect = await api("POST", "/effects", getAfflictionEffect(affliction, { campaignId, portrait, category }));
   backup({ kind: "effect", _id: effect._id, name });
   console.log(`  created effect ${name}`);
   await sleep(150);
@@ -189,6 +196,7 @@ async function main() {
 
       if (!WRITE) {
         console.log(`would write ${fresh.name}`);
+        for (const f of writable) await ensureEffect(campaignId, f.affliction, { category: fresh.category }, backup);
         written += 1;
         continue;
       }
@@ -196,7 +204,7 @@ async function main() {
       backup({ kind: "record", recordType: fresh.recordType, _id: fresh._id, name: fresh.name, data: fresh.data });
       const effectIds = {};
       for (const f of writable) {
-        effectIds[getAfflictionEffectName(f.affliction.name)] = await ensureEffect(campaignId, f.affliction, fresh.portrait || "", backup);
+        effectIds[getAfflictionEffectName(f.affliction.name)] = await ensureEffect(campaignId, f.affliction, { portrait: fresh.portrait || "", category: fresh.category || "" }, backup);
       }
       const next = getAfflictionData(fresh, freshFound, effectIds);
       if (!next) continue;

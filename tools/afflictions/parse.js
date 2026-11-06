@@ -280,13 +280,15 @@ function getAfflictionData(record, found, effectIds) {
 // The effect the script creates for an affliction: stackable, the stacks are
 // the stage (as Monster Core's Bogwid Fever). Its duration is set when it's
 // applied (the maximum duration), so the record's is indefinite.
-function getAfflictionEffect(affliction, { campaignId, portrait = "" } = {}) {
+// category: the delivering record's, so the effect files with its book
+function getAfflictionEffect(affliction, { campaignId, portrait = "", category = "" } = {}) {
   const kind = affliction.kind || "affliction";
   return {
     campaignId,
     name: getAfflictionEffectName(affliction.name),
     description: `<p>${kind.charAt(0).toUpperCase()}${kind.slice(1)}: the stacks are the stage (${affliction.stages.length} stage${affliction.stages.length === 1 ? "" : "s"}).</p>`,
     portrait,
+    ...(category ? { category } : {}),
     stackable: true,
     allowsMultiple: false,
     tokenMenu: false,
