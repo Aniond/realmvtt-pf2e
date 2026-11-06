@@ -1,0 +1,40 @@
+<!-- An affliction the creature has (afflictions.js): its name, a line with
+     its save, stage and what comes next, and buttons for its save, applying
+     the stage its effect shows, and removing it. The rows are written by
+     afflictions.js; there's no Add. -->
+<script>
+  function getAfflictionRowName() {
+    return api.getValue(getNearestParentDataPath(dataPath))?.name;
+  }
+</script>
+
+<div style="display: flex; gap: 6px; align-items: center; min-height: 30px">
+  <div style="flex-grow: 1; min-width: 0">
+    <label field="namefield" size="sm" variant="bold"></label>
+    <label field="summary" size="xs" color="dimmed" textalign="left"></label>
+  </div>
+  <div style="display: flex; gap: 2px; flex-shrink: 0">
+    <button
+      size="xs"
+      variant="light"
+      icon="IconDice"
+      label="Save"
+      onclick="rollAfflictionSaveFromRow(getAfflictionRowName())"
+    ></button>
+    <button
+      size="xs"
+      variant="light"
+      icon="IconPlayerTrackNext"
+      label="Apply Stage"
+      onclick="applyAfflictionStageFromRow(getAfflictionRowName())"
+    ></button>
+    <button
+      size="xs"
+      variant="light"
+      color="red"
+      icon="IconTrash"
+      label="Remove"
+      onclick="removeAfflictionFromRow(getAfflictionRowName())"
+    ></button>
+  </div>
+</div>

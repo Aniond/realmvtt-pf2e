@@ -646,6 +646,35 @@
       "hideFromCompendium": false
     },
     {
+      "name": "Affliction List",
+      "type": "affliction_list",
+      "isList": true,
+      "minX": 500,
+      "minY": 60,
+      "tabs": [
+        {
+          "name": "Main",
+          "file": "affliction-list.html",
+          "fields": []
+        }
+      ],
+      "icon": "",
+      "showAddButton": false,
+      "showDeleteButton": false,
+      "addButtonText": "Add Affliction",
+      "allowedListTypes": [],
+      "newItemName": "New Affliction",
+      "newItemUnidentifiedName": "New Affliction",
+      "stackDuplicates": false,
+      "disableDrop": true,
+      "countFieldName": "",
+      "emptyListText": "None",
+      "orderCriteria": [],
+      "maxLength": 0,
+      "filterCriteria": [],
+      "singleRow": false
+    },
+    {
       "name": "Attached Item List",
       "type": "attached_item_list",
       "isList": true,

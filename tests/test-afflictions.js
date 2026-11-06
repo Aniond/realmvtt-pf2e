@@ -196,7 +196,7 @@ section("Applying: removals first, then conditions, then the stacks one at a tim
 section("Afflicted with an onset: the stage on the effect, conditions later");
 {
   const calls = [];
-  ctx.api.setValuesOnTokenById = (id, type, values) => calls.push(["write", values["data.afflictionState"].map((s) => [s.name, s.appliedStage])]);
+  ctx.api.setValuesOnTokenById = (id, type, values) => calls.push(["write", values["data.afflictionState"].map((s) => [s.name, s.data.appliedStage])]);
   ctx.api.addEffect = (name, t, duration) => calls.push(["addEffect", name, duration]);
   ctx.api.getToken = () => null;
   ctx.api.getOtherTokens = () => [];
@@ -265,7 +265,7 @@ section("Rolling and resolving a stage save");
   ctx.api.getToken = () => sick;
   ctx.resolveAfflictionSave(sick, "Filth Fever", 1);
   assert("the treatment used up first", calls[0], ["remove", "e-Treat Disease"]);
-  assert("virulent lone success: the count and next interval only", [calls[1][0].successes, calls[1][0].roundsLeft], [1, 0]);
+  assert("virulent lone success: the count and next interval only", [calls[1][0].data.successes, calls[1][0].data.roundsLeft], [1, 0]);
   assert("no stage card", ctx.__state.messages.some((m) => m.includes("stage 2**")), false);
 
   // A stage change waits for the treatment's removal: one effect write at a time
@@ -308,6 +308,67 @@ section("The hooks");
   assertIncludes("useInventoryItem", read("common.js"), "markdownDescription += getAfflictionExposeButton(item);");
   assertIncludes("useAction", read("common.js"), "${getAfflictionExposeButton(action)}");
   assert("a spell's card: no Expose button", read("spells.js").includes("getAfflictionExposeButton"), false);
+}
+
+section("The Afflictions list: rows, and nothing left stuck");
+{
+  // Written as list rows, read back the same
+  const writes = [];
+  ctx.api.setValuesOnTokenById = (id, type, values) => writes.push(values["data.afflictionState"]);
+  const state = { ...ctx.getAfflictionExposure([], 0, CURARE, 1).states[0], appliedStage: 2, roundsLeft: 3 };
+  ctx.writeAfflictionStates(token(), [state]);
+  const row = writes[0][0];
+  assert("a row: _id, name, data", [typeof row._id, row.name, row.data.appliedStage, row.data.affliction.name], ["string", "Curare", 2, "Curare"]);
+  assert("its line", row.data.summary, "Poison · Fortitude DC 25 · stage 2 of 3 · save in 3 rounds");
+  const back = ctx.getAfflictionStates({ data: { afflictionState: writes[0] } })[0];
+  assert("read back", [back._id, back.name, back.appliedStage, back.roundsLeft], [row._id, "Curare", 2, 3]);
+  ctx.writeAfflictionStates(token(), [back]);
+  assert("the same _id when written again", writes[1][0]._id, row._id);
+  const fever = { ...ctx.getAfflictionExposure([], 0, FEVER, 1).states[0], appliedStage: 1 };
+  assert("a day interval: the GM's save", ctx.getAfflictionSummary(fever), "Disease (virulent) · Fortitude DC 20 · stage 1 of 3 · save every day");
+  assert("an onset", ctx.getAfflictionSummary(ctx.getAfflictionExposure([], 0, FEVER, 1).states[0]), "Disease (virulent) · Fortitude DC 20 · onset (1 day)");
+  assert("its effect gone", ctx.getAfflictionSummary({ ...fever, ended: true }), "Disease (virulent) · Fortitude DC 20 · its effect is gone; Remove takes off its conditions");
+
+  // An entry whose effect is gone doesn't block a new exposure
+  const old = { ...fever, appliedStage: 2, ended: true };
+  const again = ctx.getAfflictionExposure([old], 0, FEVER, 1);
+  assert("a disease again after its effect is gone: afflicted", [again.states.length, !!again.state, again.state.ended], [1, true, undefined]);
+  assert("keeping the stage its conditions are from", again.state.appliedStage, 2);
+  const stillHas = ctx.getAfflictionExposure([fever], 1, FEVER, 1);
+  assert("a disease it still has: no effect", stillHas.apply, false);
+  const stage = ctx.getAfflictionStageValues(token([["Curare", 1]]), [{ ...state, ended: true }], "Curare", 1, 2);
+  assert("a stage change: no longer ended", stage.states[0].ended, false);
+
+  // The GM puts the effect back: the countdown goes on
+  const ended = [{ ...state, ended: true, roundsLeft: 2, tickRound: 3 }];
+  const turn = ctx.getAfflictionTurnEnd(token([["Curare", 2]]), ended, 4);
+  assert("the effect back: counted again", [turn.states[0].ended, turn.states[0].roundsLeft], [false, 1]);
+  const gone = ctx.getAfflictionTurnEnd(token(), ended, 4);
+  assert("still gone: no second Clear", [gone.changed, gone.messages.length], [false, 0]);
+
+  // Remove: the effect's stacks, the stage's conditions, the row
+  const calls = [];
+  ctx.api.setValuesOnTokenById = (id, type, values) => calls.push(["write", values["data.afflictionState"].length]);
+  ctx.api.deductEffectById = (effectId, t, cb) => {
+    calls.push(["deduct", effectId]);
+    cb();
+  };
+  ctx.api.addEffects = () => {};
+  ctx.__state.messages.length = 0;
+  const sick = token([["Curare", 2], ["Clumsy", 2], ["Enfeebled", 2], ["Slowed", 1]], [state]);
+  ctx.findSceneToken = () => sick;
+  ctx.removeAffliction(sick, "Curare");
+  assert("Remove: the row, the effect, then the conditions", calls.map((c) => c[1]), [0, "e-Curare", "e-Curare", "e-Clumsy", "e-Clumsy", "e-Enfeebled", "e-Enfeebled", "e-Slowed"]);
+  assertIncludes("posted", ctx.__state.messages.join("\n"), "Curare removed");
+
+  // The sheets
+  const read = (f) => fs.readFileSync(`${__dirname}/../${f}`, "utf8");
+  const config = JSON.parse(read("ruleset.config.json"));
+  const list = config.lists?.find?.((l) => l.type === "affliction_list") || JSON.stringify(config).includes('"type":"affliction_list"');
+  assert("the list type", !!list, true);
+  assertIncludes("on the Notes tab", read("characters-notes.html"), 'listtype="affliction_list"');
+  assertIncludes("on the NPC Description tab", read("npcs-description.html"), 'listtype="affliction_list"');
+  assertIncludes("the row's buttons", read("affliction-list.html"), "removeAfflictionFromRow(");
 }
 
 section("An affliction spell: one save");
