@@ -184,6 +184,7 @@ async function main() {
 
   // For the report: one row per affliction, an NPC's ability as its own
   const scanned = [];
+  const imported = [];
   let written = 0;
   const sources = [
     ["/records", { campaignId, recordType: "items" }],
@@ -194,6 +195,12 @@ async function main() {
 
   for (const [endpoint, query] of sources) {
     for await (const listed of pages(endpoint, query)) {
+      // A record imported from another module (moduleId) belongs to that
+      // module's own campaign: run the script there, not on the copy
+      if (listed.moduleId) {
+        if (getRecordAfflictions(listed).length) imported.push(`${listed.recordType} ${listed.name} (${listed.category || "?"})`);
+        continue;
+      }
       let found = getRecordAfflictions(listed);
       if (ONLY) found = found.filter((f) => f.name === ONLY || listed.name === ONLY);
       if (!found.length) continue;
@@ -254,6 +261,10 @@ async function main() {
   const notWritten = scanned.filter((row) => !isWritableAffliction(row.parsed));
   console.log(`${scanned.length} afflictions, ${scanned.length - notWritten.length} writable, ${notWritten.length} to fix by hand`);
   notWritten.forEach((row) => console.log(`  ${row.recordType} ${row.name} (${row.category || "?"}): ${row.parsed.problems.join("; ")}`));
+  if (imported.length) {
+    console.log(`Skipped ${imported.length} imported from other modules (run in their own campaigns):`);
+    imported.forEach((line) => console.log(`  ${line}`));
+  }
   console.log(`Report: ${reportFile}`);
   if (WRITE && written) console.log(`Wrote ${written}. Backup: ${backupFile} (undo with --rollback ${backupFile} --write)`);
   else if (WRITE) console.log("Wrote 0: everything already matches.");
