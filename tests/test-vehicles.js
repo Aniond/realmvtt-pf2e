@@ -51,7 +51,7 @@ section("The card");
   assertIncludes("the skills, no DCs", card, "Piloting: Arcana, Crafting, Nature, Piloting Lore (difficult terrain).");
   assertIncludes("the DCs for the GM", card, "[gm]Piloting DCs: Arcana 34, Crafting 34, Nature 34, Piloting Lore 32 (difficult terrain).");
   assertIncludes("momentum", card, "must Drive or Stop this round, or it's uncontrolled");
-  ["```Drive\n", "```Drive_2_actions_\n", "```Drive_3_actions_\n", "```Run_Over\n", "```Take_Control\n", "```Stop\n", "```Board\n"].forEach((button) =>
+  ["```Drive\n", "```Drive_2_actions\n", "```Drive_3_actions\n", "```Run_Over\n", "```Take_Control\n", "```Stop\n", "```Board\n"].forEach((button) =>
     assertIncludes(`button ${button.trim()}`, card, button),
   );
   assertIncludes("buttons carry the vehicle", card, 'pilotVehicle("drive3", {"name":"Airship"');

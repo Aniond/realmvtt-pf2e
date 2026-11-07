@@ -98,7 +98,7 @@ function getCollisionLines(vehicle) {
 // ---------------------------------------------------------------- The card
 
 function getVehicleButton(label, call) {
-  return `\`\`\`${label.replace(/[^\w]+/g, "_")}\n${call}\n\`\`\``;
+  return `\`\`\`${label.replace(/[^\w]+/g, "_").replace(/^_+|_+$/g, "")}\n${call}\n\`\`\``;
 }
 
 function getVehicleCardMessage(vehicle) {
