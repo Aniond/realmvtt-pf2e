@@ -82,15 +82,17 @@ function getCollisionFormula(damage) {
   return /[a-z]{3,}/i.test(damage) ? damage : `${damage} bludgeoning`;
 }
 
-// The collision's basic Reflex save and its damage, as buttons
+// The collision's basic Reflex save and its damage, as buttons. The DC is
+// the GM's, as the piloting DCs are: in the button's code and a [gm] line.
 function getCollisionLines(vehicle) {
   if (!vehicle.collisionDC || !vehicle.collisionDamage) {
     return ["The vehicle has no collision DC or damage."];
   }
   const formula = getCollisionFormula(vehicle.collisionDamage);
   return [
-    `**Collision:** ${formula} damage, DC ${vehicle.collisionDC} basic Reflex save.`,
-    getSaveMacro("reflex", vehicle.collisionDC, false, true, [], true),
+    `**Collision:** ${formula} damage, basic Reflex save.`,
+    `[gm]Collision DC ${vehicle.collisionDC}.[/gm]`,
+    getSaveMacro("reflex", vehicle.collisionDC, false, false, [], true),
     getDamageRollButton(formula, `${vehicle.name}: collision`),
   ];
 }
@@ -111,7 +113,7 @@ function getVehicleCardMessage(vehicle) {
     skills.length
       ? `Piloting: ${skills.join(", ")}${where}. Select the pilot's token, then click an action.`
       : "The vehicle has no piloting check.",
-    "A vehicle that moved last round must Drive or Stop this round, or it's uncontrolled: at its last pilot's initiative it moves 10 feet less than the round before, in a straight line, until it stops or crashes.",
+    "A vehicle that moved last round must Drive, Run Over or Stop this round, or it's uncontrolled: at its last pilot's initiative it moves 10 feet less than the round before, in a straight line, until it stops or crashes.",
     `[gm]Piloting DCs: ${vehicle.checks.map((check) => `${check.skill} ${check.dc}`).join(", ") || "none"}${where}${vehicle.broken ? ", +5 broken" : ""}. AC ${vehicle.ac}${vehicle.collisionDC ? `, collision DC ${vehicle.collisionDC} (${getCollisionFormula(vehicle.collisionDamage)})` : ""}${vehicle.broken ? "; broken: AC, saves and collision DC -2 (included)" : ""}.[/gm]`,
   ];
   if (skills.length) {
@@ -252,9 +254,8 @@ function getVehicleResultLines(vehicle, degree) {
   } else if (vehicle.action === "runOver") {
     const size = CREATURE_SIZES.indexOf(vehicle.size);
     const over = CREATURE_SIZES[Math.max(0, size - 2)];
-    const ramLow = CREATURE_SIZES[Math.max(0, size - 1)];
-    const ramHigh = CREATURE_SIZES[Math.min(CREATURE_SIZES.length - 1, size + 1)];
-    lines.push(`**Run Over:** the ${name} moves up to ${speed * action.multiple} feet in a straight line through ${over} and smaller creatures, and can ram one ${ramLow} to ${ramHigh} target. If the rammed target takes damage, the move ends and the pilot and the vehicle take collision damage, no save. A rammed vehicle's pilot can make a piloting check instead of the save.`);
+    const ram = CREATURE_SIZES[Math.max(0, size - 1)];
+    lines.push(`**Run Over:** the ${name} moves up to ${speed * action.multiple} feet in a straight line through ${over} and smaller creatures, and can ram one ${ram} or larger target. If the rammed target takes damage, the move ends and the pilot and the vehicle take collision damage, no save. A rammed vehicle's pilot can make a piloting check instead of the save.`);
   } else {
     lines.push(`**${action.label}:** the ${name} moves up to ${speed * action.multiple} feet in a straight line.`);
   }
